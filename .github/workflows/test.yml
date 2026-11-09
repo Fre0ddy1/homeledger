@@ -3,8 +3,6 @@ name: Regression checks
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: ['feat/apple-adaptive-ui']
   workflow_dispatch:
 
 permissions:

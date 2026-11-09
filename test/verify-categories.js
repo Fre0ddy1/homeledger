@@ -112,8 +112,9 @@ async function web(path,form){
  check('只读 API 禁止删除',(await api('/categories/'+root.id+'/delete',{})).status===403);
  check('只读网页禁止修改',(await web('/categories/'+root.id,{name:'不应改名'})).status===403);
  r=await web('/categories');check('只读不展示编辑表单',!r.text.includes('class="category-edit-form"'));
-  db.db.exec('DROP TABLE category_copies; ALTER TABLE categories DROP COLUMN deleted_at;');
-  db.reopenDatabase();
-  check('恢复旧版备份后补齐分类表和字段',db.tableColumns('categories').includes('deleted_at')&&!!db.get("SELECT name FROM sqlite_master WHERE name='category_copies'"));
+  // The HTTP server still owns this WAL database. Never remove its schema or
+  // reopen/unlink its WAL from a second process; restore needs an exclusive DB.
+  const legacyResult=require('node:child_process').execFileSync(process.execPath,[require('node:path').join(__dirname,'fixtures/category-legacy-restore.cjs')],{env:{...process.env,DATA_DIR:require('node:path').join(process.env.DATA_DIR,'category-legacy-restore')},encoding:'utf8'});
+  check('恢复旧版备份后补齐分类表和字段并保留数据',legacyResult.includes('legacy-category-restore-ok'));
  console.log(`\n${pass} 通过 / ${fail} 失败`);process.exit(fail?1:0);
 })().catch(e=>{console.error(e);process.exit(1);});
