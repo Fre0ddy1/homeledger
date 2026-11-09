@@ -47,12 +47,7 @@ function looksLikeQuery(text) {
  * 分类完整路径（按 kind 分列）、成员名、高频商户——既供规则匹配，也拼进模型提示词。
  */
 function buildQueryContext(ledgerId) {
-  const cats = all(
-    `SELECT c.id, c.name, c.kind, p.name AS parent FROM categories c
-     LEFT JOIN categories p ON p.id = c.parent_id
-     WHERE (c.ledger_id IS NULL OR c.ledger_id = ?) AND c.is_archived = 0`,
-    ledgerId
-  );
+  const cats = require('./categories').list(ledgerId).map(c => ({ ...c, parent: c.parent_name }));
   const members = all(
     `SELECT DISTINCT u.display_name AS name FROM ledger_members m JOIN users u ON u.id = m.user_id
      WHERE m.ledger_id = ? AND u.status = 'active'`,

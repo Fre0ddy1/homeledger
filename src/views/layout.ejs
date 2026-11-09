@@ -8,10 +8,12 @@
 <meta name="color-scheme" content="light dark">
 <title><%= title ? title + ' · ' + siteName : siteName %></title>
 <link rel="stylesheet" href="/static/css/app.css?v=<%= assetV.css %>">
+<link rel="stylesheet" href="/static/css/workspace.css?v=<%= typeof assetV !== 'undefined' ? (assetV.workspace || '') : '' %>">
 <link rel="manifest" href="/static/manifest.webmanifest">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233d6df5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 5v14H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2Z'/><path d='M8 3v18'/><path d='M13 8h3'/><path d='M13 12h3'/></svg>">
 </head>
-<body>
+<body data-page="<%= typeof activeNav !== 'undefined' ? activeNav : 'auth' %>">
+<a class="skip-link" href="#main-content">跳到主要内容</a>
 <%- include('partials/icons') %>
 <div class="shell">
 
@@ -44,7 +46,7 @@
         <% if (ledger && canWrite(ledger.role)) { %><a class="nav-item <%= activeNav === 'new' ? 'active' : '' %>" href="/transactions/new"><svg class="icon"><use href="#i-pencil"></use></svg>记一笔</a><% } %>
         <a class="nav-item <%= activeNav === 'transactions' ? 'active' : '' %>" href="/transactions"><svg class="icon"><use href="#i-list"></use></svg>账单明细</a>
         <a class="nav-item <%= activeNav === 'calendar' ? 'active' : '' %>" href="/calendar"><svg class="icon"><use href="#i-calendar-days"></use></svg>记账日历</a>
-        <a class="nav-item <%= activeNav === 'ai' ? 'active' : '' %>" href="/ai"><svg class="icon"><use href="#i-bot"></use></svg>AI 截图记账</a>
+        <% if (ledger && canWrite(ledger.role)) { %><a class="nav-item <%= activeNav === 'ai' ? 'active' : '' %>" href="/ai"><svg class="icon"><use href="#i-bot"></use></svg>AI 截图记账</a><% } %>
       </div>
 
       <div class="nav-group">
@@ -98,7 +100,7 @@
 
   <main class="main">
     <header class="topbar">
-      <button class="nav-burger" id="navBurger" type="button" aria-label="打开菜单" aria-controls="sidebarNav">
+      <button class="nav-burger" id="navBurger" type="button" aria-label="打开菜单" aria-controls="sidebarNav" aria-expanded="false">
         <svg class="icon"><use href="#i-menu"></use></svg>
       </button>
       <div style="flex:1;min-width:0">
@@ -111,7 +113,7 @@
         <button id="aiTopBtn" class="btn btn-sm btn-icon" type="button" title="AI 记账助手" aria-label="AI 记账助手"><svg class="icon sm"><use href="#i-bot"></use></svg></button>
       <% } %>
       <div class="user-menu" id="userMenu">
-        <button class="user-menu-btn" type="button" id="userMenuBtn" aria-haspopup="true">
+        <button class="user-menu-btn" type="button" id="userMenuBtn" aria-haspopup="true" aria-expanded="false" aria-controls="userMenuDrop">
           <% if (helpers.avatarUrl(user)) { %>
             <img id="userMenuAvatar" class="avatar avatar-img avatar-click" src="<%= helpers.avatarUrl(user) %>" alt="" title="点击更换头像">
           <% } else { %>
@@ -144,23 +146,23 @@
       </div>
     </header>
 
-    <div class="content">
+    <div class="content" id="main-content" tabindex="-1">
       <% if (flash) { %>
         <div class="flash <%= flash.type %>"><span><%= flash.message %></span></div>
       <% } %>
-      <%- body %>
+      <div class="page-body"><%- body %></div>
     </div>
   </main>
 </div>
 
 <div class="drawer-mask" id="drawerMask" aria-hidden="true"></div>
 
-<nav class="mobile-nav">
+<nav class="mobile-nav" aria-label="主导航">
   <a href="/" class="<%= activeNav === 'home' ? 'active' : '' %>"><svg class="icon"><use href="#i-house"></use></svg>总览</a>
   <a href="/transactions" class="<%= activeNav === 'transactions' ? 'active' : '' %>"><svg class="icon"><use href="#i-list"></use></svg>明细</a>
-  <a href="/transactions/new" class="fab"><svg class="icon"><use href="#i-plus"></use></svg></a>
+  <% if (ledger && canWrite(ledger.role)) { %><a href="/transactions/new" class="fab" aria-label="记一笔"><svg class="icon"><use href="#i-plus"></use></svg></a><% } %>
   <a href="/reports" class="<%= activeNav === 'reports' ? 'active' : '' %>"><svg class="icon"><use href="#i-chart-column"></use></svg>报表</a>
-  <a href="/ai" class="<%= activeNav === 'ai' ? 'active' : '' %>"><svg class="icon"><use href="#i-bot"></use></svg>AI</a>
+  <% if (ledger && canWrite(ledger.role)) { %><a href="/ai" class="<%= activeNav === 'ai' ? 'active' : '' %>"><svg class="icon"><use href="#i-bot"></use></svg>AI</a><% } %>
 </nav>
 
 <% if (ledger && canWrite(ledger.role)) { %>

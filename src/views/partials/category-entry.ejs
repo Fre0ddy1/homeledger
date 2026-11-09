@@ -1,0 +1,15 @@
+<details class="category-entry <%= !node.parent_id ? 'category-entry--root' : '' %>" data-name="<%= node.name %>" data-category-id="<%= node.id %>" style="--category-color:<%= helpers.safeColor(node.color) %>">
+  <summary><span class="category-entry-icon"><%= node.icon %></span><span class="category-entry-meta"><span class="category-entry-name"><%= node.name %></span><span class="category-entry-stats"><%= node.stat.cnt %> 笔 · <%= helpers.fmtAmount(node.stat.total) %></span></span><span class="category-edit-hint"><svg class="icon sm"><use href="#i-<%= ledger && canWrite(ledger.role)?'pencil':'chevron-down' %>"></use></svg></span></summary>
+  <% if(ledger && canWrite(ledger.role)){ %>
+  <form method="post" action="/categories/<%= node.id %>" class="category-edit-form">
+    <input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="return_to" value="<%= categoryBack %>">
+    <div class="field"><label for="cat-name-<%= node.id %>">名称</label><input id="cat-name-<%= node.id %>" name="name" maxlength="20" required value="<%= node.name %>"></div>
+    <div class="field"><label for="cat-icon-<%= node.id %>">图标</label><input id="cat-icon-<%= node.id %>" name="icon" maxlength="8" value="<%= node.icon %>"></div>
+    <div class="field"><label for="cat-color-<%= node.id %>">颜色</label><input id="cat-color-<%= node.id %>" name="color" type="color" value="<%= helpers.safeColor(node.color) %>"></div>
+    <button class="btn btn-sm btn-primary" type="submit">保存</button>
+  </form>
+  <form method="post" action="/categories/<%= node.id %>/delete" data-confirm="删除分类「<%= node.name %>」？其子分类也会隐藏，历史账单保留，之后可恢复。">
+    <input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="return_to" value="<%= categoryBack %>"><button class="btn btn-sm btn-ghost category-delete" type="submit">删除分类</button>
+  </form>
+  <% } else { %><p class="small muted mt8">当前账本为只读，可查看分类及使用统计。</p><% } %>
+</details>

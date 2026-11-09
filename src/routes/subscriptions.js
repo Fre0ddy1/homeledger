@@ -133,6 +133,7 @@ router.get('/subscriptions/:id/edit', auth.requireLogin, auth.requireLedgerWrite
 router.post('/subscriptions', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
   const d = readForm(req.body, req.session.userId);
+  d.category_id = require('../lib/categories').find(ledgerId, d.category_id, true)?.id || null;
   if (!d.name) { res.flash('error', '请填写订阅名称'); return res.redirect('/subscriptions'); }
   if (!d.amount_cents) { res.flash('error', '请填写每期扣费金额'); return res.redirect('/subscriptions'); }
   run(
@@ -157,6 +158,7 @@ router.post('/subscriptions/:id', auth.requireLogin, auth.requireLedgerWrite, (r
   const old = get('SELECT * FROM subscriptions WHERE id = ? AND ledger_id = ?', id, ledgerId);
   if (!old) { res.flash('error', '订阅不存在'); return res.redirect('/subscriptions'); }
   const d = readForm(req.body, req.session.userId, old.cycle_n);
+  d.category_id = require('../lib/categories').forUpdate(ledgerId, req.body.category_id === undefined ? old.category_id : d.category_id, old.category_id)?.id || null;
   if (!d.name || !d.amount_cents) { res.flash('error', '名称与金额不能为空'); return res.redirect(`/subscriptions/${id}/edit`); }
   // 已取消订阅不随表单复活：编辑页状态下拉没有「已取消」选项，保存时沿用原状态
   if (old.status === 'canceled') d.status = 'canceled';

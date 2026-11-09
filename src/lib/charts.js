@@ -9,13 +9,13 @@ const { esc, fmtAmount, monthShort, relDate, safeColor } = require('./util');
 const col = (v, fallback) => safeColor(v, fallback || '#8c8c8c');
 
 const C = {
-  grid: '#eceff4',
-  axis: '#98a2b3',
-  text: '#667085',
-  textStrong: '#1f2937',
-  income: '#52c41a',
-  expense: '#f5222d',
-  primary: '#4f7cff',
+  grid: 'var(--border, #e5e5ea)',
+  axis: 'var(--muted, #6e6e73)',
+  text: 'var(--text-2, #515158)',
+  textStrong: 'var(--text, #1d1d1f)',
+  income: '#248544',
+  expense: '#d83b42',
+  primary: '#0066cc',
 };
 
 function nf(n, d = 2) {
@@ -39,8 +39,8 @@ function niceMax(v) {
  * @param {string[]} o.labels   横轴标签
  * @param {Array<{name:string,color:string,data:number[],dashed?:boolean}>} o.series 数据（单位为元）
  */
-function barChart({ labels = [], series = [], height = 240, showLegend = true, valueUnit = '' } = {}) {
-  const W = 720, H = height;
+function barChart({ labels = [], series = [], height = 240, width = 720, showLegend = true, valueUnit = '' } = {}) {
+  const W = Number.isFinite(width) && width >= 320 ? width : 720, H = height;
   const padL = 52, padR = 16, padT = showLegend ? 34 : 16, padB = 30;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
@@ -164,7 +164,7 @@ function donutChart(items = [], { size = 200, thickness = 26, centerTitle = '', 
       if (v <= 0) return;
       const len = (v / total) * circ;
       s += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col(it.color)}"
-        stroke-width="${thickness}" stroke-dasharray="${(len - 2).toFixed(2)} ${(circ - len + 2).toFixed(2)}"
+        stroke-width="${thickness}" stroke-dasharray="${Math.max(0, len - 2).toFixed(2)} ${(circ - len + 2).toFixed(2)}"
         stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})" stroke-linecap="butt">
         <title>${esc(it.name)}：${nf(v)}${esc(valueUnit)}（${((v / total) * 100).toFixed(1)}%）</title></circle>`;
       offset += len;
@@ -270,7 +270,7 @@ function calendarHeatmap({ month, days = [], today = '' } = {}) {
 function progressBar(used, total, { color = C.primary, height = 8, warn = false } = {}) {
   const p = total > 0 ? Math.min((used / total) * 100, 100) : 0;
   const over = used > total;
-  const c = over || warn ? '#f5222d' : p > 80 ? '#fa8c16' : color;
+  const c = over || warn ? '#d83b42' : p > 80 ? '#fa8c16' : color;
   return `<div class="progress" style="height:${height}px"><i style="width:${p.toFixed(1)}%;background:${c}"></i></div>`;
 }
 

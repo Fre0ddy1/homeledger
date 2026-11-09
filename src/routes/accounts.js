@@ -6,6 +6,7 @@ const auth = require('../lib/auth');
 const txn = require('../lib/txn');
 const fd = require('../lib/formdata');
 const u = require('../lib/util');
+const categories = require('../lib/categories');
 
 const router = express.Router();
 
@@ -171,6 +172,7 @@ router.get('/accounts/:id', auth.requireLogin, (req, res) => {
 /* ---------------------------------- 分类 ---------------------------------- */
 
 router.get('/categories', auth.requireLogin, (req, res) => {
+  if (!res.locals.ledger) return res.redirect('/');
   const ledgerId = Number(res.locals.ledger.id);
   const expenseTree = fd.categoryTree(ledgerId, 'expense');
   const incomeTree = fd.categoryTree(ledgerId, 'income');
@@ -182,68 +184,53 @@ router.get('/categories', auth.requireLogin, (req, res) => {
     ledgerId
   );
   const statMap = new Map(stats.map((s) => [Number(s.category_id), s]));
-  const decorate = (node) => ({
-    ...node,
-    stat: statMap.get(Number(node.id)) || { cnt: 0, total: 0 },
-    children: (node.children || []).map(decorate),
-  });
+  const decorate = (node) => {
+    const children=(node.children||[]).map(decorate);
+    const direct=statMap.get(Number(node.id))||{cnt:0,total:0};
+    return {...node,children,stat:{cnt:Number(direct.cnt)+children.reduce((s,c)=>s+Number(c.stat.cnt),0),total:Number(direct.total)+children.reduce((s,c)=>s+Number(c.stat.total),0)}};
+  };
+  const decoratedExpense=expenseTree.map(decorate), decoratedIncome=incomeTree.map(decorate);
+  const categoryKind=req.query.kind==='income'?'income':'expense';
+  const activeTree=categoryKind==='income'?decoratedIncome:decoratedExpense;
+  const selectedId=categories.resolveId(ledgerId,req.query.group);
+  const selectedGroup=activeTree.find(c=>Number(c.id)===selectedId)||activeTree[0]||null;
+  const categorySearch=String(req.query.q||'').trim().slice(0,40);
+  const categoryBack='/categories?kind='+categoryKind+(selectedGroup?'&group='+selectedGroup.id:'');
   res.render('categories', {
     title: '分类管理', activeNav: 'categories',
-    expenseTree: expenseTree.map(decorate),
-    incomeTree: incomeTree.map(decorate),
+    expenseTree: decoratedExpense,
+    incomeTree: decoratedIncome,
+    categoryKind, activeTree, selectedGroup, categorySearch, categoryBack,
+    categoryFocus: categories.resolveId(ledgerId,req.query.focus),
+    deletedCategories: categories.list(ledgerId, null, true).filter(c => c.is_archived),
+    showDeleted: req.query.show === 'deleted',
   });
 });
 
-router.post('/categories', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
-  const ledgerId = Number(res.locals.ledger.id);
-  const name = String(req.body.name || '').trim();
-  const kind = req.body.kind === 'income' ? 'income' : 'expense';
-  if (!name) { res.flash('error', '请填写分类名称'); return res.redirect('/categories'); }
-  const parentId = req.body.parent_id ? Number(req.body.parent_id) : null;
-  const color = u.safeColor(req.body.color || (parentId ? (get('SELECT color FROM categories WHERE id = ?', parentId) || {}).color : null), '#8c8c8c');
-  run(
-    'INSERT INTO categories (ledger_id, name, kind, parent_id, icon, color, is_system, sort_order) VALUES (?,?,?,?,?,?,0,?)',
-    ledgerId, name.slice(0, 20), kind, parentId, req.body.icon || '🏷️', color, 999
-  );
-  auth.audit(req, 'category.create', { entity: 'category', ledgerId, detail: name });
-  res.flash('success', `分类「${name}」已添加`);
-  res.redirect('/categories');
-});
-
-router.post('/categories/:id', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
-  const ledgerId = Number(res.locals.ledger.id);
-  const id = Number(req.params.id);
-  const c = get('SELECT * FROM categories WHERE id = ?', id);
-  // 系统内置分类（ledger_id IS NULL）全站共享，一个账本改名会污染所有账本
-  if (!c || c.is_system || c.ledger_id === null || Number(c.ledger_id) !== ledgerId) {
-    res.flash('error', '系统内置分类不可修改（可新建自己的分类）');
-    return res.redirect('/categories');
-  }
-  run('UPDATE categories SET name=?, icon=?, color=? WHERE id = ?',
-    String(req.body.name || c.name).slice(0, 20), req.body.icon || c.icon, u.safeColor(req.body.color || c.color, c.color), id);
-  res.flash('success', '分类已更新');
-  res.redirect('/categories');
-});
-
-router.post('/categories/:id/delete', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
-  const ledgerId = Number(res.locals.ledger.id);
-  const id = Number(req.params.id);
-  const c = get('SELECT * FROM categories WHERE id = ?', id);
-  if (!c || Number(c.ledger_id) !== ledgerId) {
-    res.flash('error', '系统内置分类不可删除');
-    return res.redirect('/categories');
-  }
-  const used = Number(get('SELECT COUNT(*) AS c FROM transactions WHERE category_id = ?', id)?.c || 0);
-  if (used > 0) {
-    run('UPDATE categories SET is_archived = 1 WHERE id = ?', id);
-    res.flash('success', '该分类下已有记录，已改为「归档」不再出现在选择列表');
-  } else {
-    run('DELETE FROM categories WHERE id = ?', id);
-    run('DELETE FROM categories WHERE parent_id = ?', id);
-    res.flash('success', '分类已删除');
-  }
-  res.redirect('/categories');
-});
+function categoryAction(action, message) {
+  return (req,res) => {
+    const ledgerId=Number(res.locals.ledger.id);
+    let changedId=null;
+    try {
+      const id=action(ledgerId,req);
+      changedId=id;
+      auth.audit(req,'category.'+message,{entity:'category',entityId:id,ledgerId});
+      res.flash('success',message==='delete'?'分类已移入已删除分类，历史账单保留':message==='restore'?'分类已恢复':'分类已保存');
+    } catch(e) { res.flash('error',e.message); }
+    const back=String(req.body.return_to||'');
+    const target=/^\/categories(?:\?|$)/.test(back)?back:(message==='restore'?'/categories?show=deleted':'/categories');
+    const destination=new URL(target,'http://localhost');
+    if(changedId && (message==='create'||message==='update')) {
+      destination.searchParams.set('focus',String(changedId));
+      if(message==='create') { const c=categories.find(ledgerId,changedId); destination.searchParams.set('kind',c.kind); destination.searchParams.set('group',String(c.parent_id||c.id)); }
+    }
+    res.redirect(destination.pathname+destination.search);
+  };
+}
+router.post('/categories',auth.requireLogin,auth.requireLedgerWrite,categoryAction((lid,req)=>categories.create(lid,req.body),'create'));
+router.post('/categories/:id',auth.requireLogin,auth.requireLedgerWrite,categoryAction((lid,req)=>categories.update(lid,req.params.id,req.body),'update'));
+router.post('/categories/:id/delete',auth.requireLogin,auth.requireLedgerWrite,categoryAction((lid,req)=>categories.archive(lid,req.params.id),'delete'));
+router.post('/categories/:id/restore',auth.requireLogin,auth.requireLedgerWrite,categoryAction((lid,req)=>categories.restore(lid,req.params.id),'restore'));
 
 /* ---------------------------------- 标签 ---------------------------------- */
 

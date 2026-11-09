@@ -1,17 +1,21 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="<%= typeof user !== 'undefined' && user ? user.theme : 'light' %>">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="csrf" content="<%= csrf %>">
 <meta name="theme-color" content="#4f7cff">
+<meta name="color-scheme" content="light dark">
+<% if (typeof user === 'undefined' || !user) { %><script>if(window.matchMedia('(prefers-color-scheme: dark)').matches)document.documentElement.dataset.theme='dark';</script><% } %>
 <title><%= title ? title + ' · ' + siteName : siteName %></title>
 <link rel="stylesheet" href="/static/css/app.css?v=<%= typeof assetV !== 'undefined' ? assetV.css : '' %>">
+<link rel="stylesheet" href="/static/css/workspace.css?v=<%= typeof assetV !== 'undefined' ? (assetV.workspace || '') : '' %>">
 <link rel="manifest" href="/static/manifest.webmanifest">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📒</text></svg>">
 </head>
-<body>
-<div class="auth-wrap">
+<body data-page="auth">
+<a class="skip-link" href="#main-content">跳到主要内容</a>
+<main class="auth-wrap" id="main-content" tabindex="-1">
   <div class="auth-card">
     <div class="auth-brand">
       <div class="brand-logo">📒</div>
@@ -25,7 +29,7 @@
     <% } %>
     <%- body %>
   </div>
-</div>
+</main>
 <script src="/static/js/app.js?v=<%= typeof assetV !== 'undefined' ? assetV.js : '' %>" defer></script>
 </body>
 </html>

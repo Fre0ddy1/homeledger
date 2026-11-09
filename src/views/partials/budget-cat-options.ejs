@@ -4,6 +4,9 @@
   var selOf = function (id) { return Number(selectedId) === Number(id) ? 'selected' : ''; };
 %>
 <option value="">请选择…</option>
+<% if(Number(selectedId)>0 && !cats.some(function(c){return Number(c.id)===Number(selectedId);})){ %>
+<option value="<%= selectedId %>" selected>保留当前分类（已删除）</option>
+<% } %>
 <% cats.forEach(function(c){ if (!c.parent_id) { %>
   <optgroup label="<%= c.name %>">
     <option value="<%= c.id %>" <%= selOf(c.id) %>><%= c.icon %> <%= c.name %>（整个大分类）</option>

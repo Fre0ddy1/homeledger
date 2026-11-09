@@ -387,6 +387,7 @@ function deleteLedgerCascade(id) {
   run('DELETE FROM goals WHERE ledger_id = ?', id);
   run('DELETE FROM debts WHERE ledger_id = ?', id);
   run('DELETE FROM tags WHERE ledger_id = ?', id);
+  run('DELETE FROM category_copies WHERE ledger_id = ?', id);
   run('DELETE FROM categories WHERE ledger_id = ?', id);
   run('DELETE FROM ledger_members WHERE ledger_id = ?', id);
   run('DELETE FROM ledger_invites WHERE ledger_id = ?', id);
@@ -670,7 +671,7 @@ router.get('/export/json', auth.requireLogin, (req, res) => {
     app: 'homeledger', version: 1, exported_at: nowStr(),
     ledger: get('SELECT * FROM ledgers WHERE id = ?', ledgerId),
     accounts: all('SELECT * FROM accounts WHERE ledger_id = ?', ledgerId),
-    categories: all('SELECT * FROM categories WHERE ledger_id IS NULL OR ledger_id = ?', ledgerId),
+    categories: require('../lib/categories').list(ledgerId, null, true),
     tags: all('SELECT * FROM tags WHERE ledger_id = ?', ledgerId),
     transactions: all('SELECT * FROM transactions WHERE ledger_id = ?', ledgerId),
     splits: all('SELECT * FROM splits WHERE ledger_id = ?', ledgerId),

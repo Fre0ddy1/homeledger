@@ -24,6 +24,8 @@ const SUITES = [
   'verify-forecast.js',
   'verify-annual.js',
   'verify-reports.js',
+  'verify-dashboard.js',
+  'verify-categories.js',
   'verify-transactions.js',
   'verify-txn-detail.js',
   'verify-importers.js',
@@ -97,6 +99,7 @@ function run(cmd, args, opts) {
       await healthz(15000);
       // DATA_DIR 必须同步传给套件进程：部分套件（如 ai-attachments）要读服务端的上传目录核对落盘文件
       const { code, out } = await run(process.execPath, [path.join('test', suite)], { cwd: ROOT, env: { ...process.env, DATA_DIR: dataDir } });
+      if (code !== 0) console.error(`\n===== ${suite} 失败（退出码 ${code}）完整输出 =====\n${out}`);
       const m = out.match(/(\d+)\s*通过\s*\/\s*(\d+)\s*失败/);
       results.push({ suite, ok: code === 0, pass: m ? Number(m[1]) : null, fail: m ? Number(m[2]) : null, tail: out.trim().split('\n').slice(-3).join(' | ') });
     } catch (e) {

@@ -137,7 +137,7 @@ function validAccountId(ledgerId, id) {
 }
 function validCategoryId(ledgerId, id) {
   if (!id) return null;
-  const c = get('SELECT id FROM categories WHERE id = ? AND (ledger_id IS NULL OR ledger_id = ?)', Number(id), ledgerId);
+  const c = require('../lib/categories').find(ledgerId, id, true);
   return c ? Number(c.id) : null;
 }
 
@@ -194,7 +194,7 @@ const bad = (res, status, error) => res.status(status).json({ ok: false, error }
 const cents = (v) => u.parseAmountToCents(v);
 
 /** 交易请求体 → createTransaction/updateTransaction 的 d（支持账户/分类按名称解析） */
-function readTxnBody(ledgerId, body, { createdAccounts = [] } = {}) {
+function readTxnBody(ledgerId, body, { createdAccounts = [], existingCategoryId = null } = {}) {
   const type = TYPE_ALIASES[String(body.type || 'expense').trim()] || 'expense';
   let amountCents;
   if (body.amount_cents != null) amountCents = Math.round(Number(body.amount_cents) || 0);
@@ -203,7 +203,10 @@ function readTxnBody(ledgerId, body, { createdAccounts = [] } = {}) {
   const kind = type === 'income' || ['refund', 'interest', 'repay_receive', 'reimburse'].includes(type) ? 'income' : 'expense';
   let category = null;
   if (body.category_id != null && body.category_id !== '') {
-    category = get('SELECT id FROM categories WHERE id = ? AND (ledger_id IS NULL OR ledger_id = ?)', Number(body.category_id), ledgerId);
+    category = require('../lib/categories').find(ledgerId, body.category_id, true);
+    if (!category && existingCategoryId && require('../lib/categories').resolveId(ledgerId,body.category_id) === Number(existingCategoryId)) {
+      category = require('../lib/categories').find(ledgerId,body.category_id);
+    }
   } else if (body.category != null) {
     category = resolveCategory(ledgerId, body.category, kind);
   }
@@ -374,7 +377,7 @@ router.get('/accounts', (req, res) => {
 
 router.get('/categories', (req, res) => {
   const { ledgerId } = req.openAuth;
-  ok(res, { categories: fd.flatCategories(ledgerId).map((c) => ({ id: c.id, name: c.name, path: c.path, kind: c.kind, icon: c.icon, color: c.color, parent_id: c.parent_id, is_system: !!c.is_system })) });
+  ok(res, { categories: (req.query.show === 'deleted' ? require('../lib/categories').list(ledgerId,null,true).filter(c=>c.is_archived) : fd.flatCategories(ledgerId)).map((c) => ({ id: c.id, name: c.name, path: c.path, kind: c.kind, icon: c.icon, color: c.color, parent_id: c.parent_id, is_system: !!c.is_system })) });
 });
 
 router.get('/tags', (req, res) => {
@@ -567,7 +570,7 @@ router.post('/transactions/:id', requireWrite, (req, res) => {
       no_rhythm: body.no_rhythm != null ? (body.no_rhythm ? 1 : 0) : undefined,
       splits: body.splits,
     };
-    const txnId = txn.updateTransaction(id, ledgerId, userId, readTxnBody(ledgerId, merged, { createdAccounts }));
+    const txnId = txn.updateTransaction(id, ledgerId, userId, readTxnBody(ledgerId, merged, { createdAccounts, existingCategoryId: old.category_id }));
     auth.audit(req, 'api.txn.update', { ledgerId, entity: 'transaction', entityId: txnId, detail: `开放API·${req.openAuth.tokenName} 修改` });
     ok(res, { id: txnId, accounts_created: createdAccounts });
   } catch (e) {
@@ -825,62 +828,20 @@ router.post('/accounts/:id/adjust', requireWrite, (req, res) => {
 
 /* ------------------------------ 分类 / 标签 ------------------------------ */
 
-router.post('/categories', requireWrite, (req, res) => {
-  const { ledgerId } = req.openAuth;
-  const body = req.body || {};
-  const name = String(body.name || '').trim();
-  if (!name) return bad(res, 400, '请填写分类名称');
-  const kind = body.kind === 'income' ? 'income' : 'expense';
-  const parentId = body.parent_id ? Number(body.parent_id) : null;
-  let color = u.safeColor(body.color, '#8c8c8c');
-  if (parentId) {
-    const p = get('SELECT color, kind, ledger_id, is_system FROM categories WHERE id = ?', parentId);
-    if (!p || p.is_system || p.ledger_id === null || Number(p.ledger_id) !== ledgerId) return bad(res, 404, '父分类不存在（系统分类不可作为父级）');
-    if (p.kind !== kind) return bad(res, 400, '父分类与目标分类的收支类型不一致');
-    if (!body.color && p.color) color = p.color;
-  }
-  const info = run(
-    'INSERT INTO categories (ledger_id, name, kind, parent_id, icon, color, is_system, sort_order) VALUES (?,?,?,?,?,?,0,?)',
-    ledgerId, name.slice(0, 20), kind, parentId, String(body.icon || '🏷️').slice(0, 8), color, 999
-  );
-  auth.audit(req, 'api.category.create', { ledgerId, entity: 'category', entityId: info.lastInsertRowid, detail: name });
-  ok(res, { id: Number(info.lastInsertRowid) });
-});
-
-function findCategory(req, res) {
-  const c = get('SELECT * FROM categories WHERE id = ?', Number(req.params.id));
-  // 系统分类（ledger_id IS NULL）全站共享，读可以，改删不允许
-  if (!c || (c.ledger_id !== null && Number(c.ledger_id) !== req.openAuth.ledgerId)) { bad(res, 404, '分类不存在'); return null; }
-  return c;
+function apiCategoryAction(action,label) {
+  return (req,res) => {
+    const {ledgerId}=req.openAuth;
+    try {
+      const id=action(ledgerId,req);
+      auth.audit(req,'api.category.'+label,{ledgerId,entity:'category',entityId:id});
+      ok(res,{id,...(label==='delete'?{deleted:true,archived:true}:{}),...(label==='restore'?{restored:true}:{})});
+    } catch(e) { bad(res,400,e.message); }
+  };
 }
-
-router.post('/categories/:id', requireWrite, (req, res) => {
-  const c = findCategory(req, res);
-  if (!c) return;
-  if (c.is_system || c.ledger_id === null) return bad(res, 403, '系统内置分类不可修改（可新建自己的分类）');
-  const body = req.body || {};
-  run('UPDATE categories SET name=?, icon=?, color=? WHERE id = ?',
-    String(body.name || c.name).slice(0, 20), body.icon ? String(body.icon).slice(0, 8) : c.icon, u.safeColor(body.color, c.color), c.id);
-  auth.audit(req, 'api.category.update', { ledgerId: req.openAuth.ledgerId, entity: 'category', entityId: c.id });
-  ok(res, { id: c.id });
-});
-
-router.post('/categories/:id/delete', requireWrite, (req, res) => {
-  const { ledgerId } = req.openAuth;
-  const c = findCategory(req, res);
-  if (!c) return;
-  if (c.is_system || c.ledger_id === null) return bad(res, 403, '系统内置分类不可删除');
-  const used = Number(get('SELECT COUNT(*) AS c FROM transactions WHERE category_id = ?', c.id)?.c || 0);
-  if (used > 0) {
-    run('UPDATE categories SET is_archived = 1 WHERE id = ?', c.id);
-    auth.audit(req, 'api.category.archive', { ledgerId, entity: 'category', entityId: c.id, detail: `有 ${used} 笔流水，改为归档` });
-    return ok(res, { id: c.id, archived: true, used });
-  }
-  run('DELETE FROM categories WHERE id = ?', c.id);
-  run('DELETE FROM categories WHERE parent_id = ?', c.id);
-  auth.audit(req, 'api.category.delete', { ledgerId, entity: 'category', entityId: c.id, detail: c.name });
-  ok(res, { id: c.id, deleted: true });
-});
+router.post('/categories',requireWrite,apiCategoryAction((lid,req)=>require('../lib/categories').create(lid,req.body||{}),'create'));
+router.post('/categories/:id',requireWrite,apiCategoryAction((lid,req)=>require('../lib/categories').update(lid,req.params.id,req.body||{}),'update'));
+router.post('/categories/:id/delete',requireWrite,apiCategoryAction((lid,req)=>require('../lib/categories').archive(lid,req.params.id),'delete'));
+router.post('/categories/:id/restore',requireWrite,apiCategoryAction((lid,req)=>require('../lib/categories').restore(lid,req.params.id),'restore'));
 
 router.post('/tags', requireWrite, (req, res) => {
   const { ledgerId } = req.openAuth;
@@ -994,12 +955,14 @@ router.post('/budgets', requireWrite, (req, res) => {
   const amount = body.amount_cents != null ? Math.abs(Math.round(Number(body.amount_cents) || 0)) : Math.abs(cents(body.amount));
   if (!name || !amount) return bad(res, 400, '请填写预算名称与金额');
   const scope = ['overall', 'category', 'account'].includes(body.scope) ? body.scope : 'overall';
+  const categoryId = scope === 'category' ? validCategoryId(ledgerId,body.category_id) : null;
+  if(scope === 'category' && !categoryId)return bad(res,400,'请选择有效分类');
   const info = run(
     `INSERT INTO budgets (ledger_id, name, scope, category_id, account_id, period, amount_cents, currency,
       trigger_type, rollover, alert_pct, start_date, end_date, is_active, created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)`,
     ledgerId, name.slice(0, 30), scope,
-    scope === 'category' ? validCategoryId(ledgerId, body.category_id) : null,
+    categoryId,
     scope === 'account' ? validAccountId(ledgerId, body.account_id) : null,
     ['monthly', 'yearly', 'weekly', 'custom'].includes(body.period) ? body.period : 'monthly',
     amount, body.currency || 'CNY',
@@ -1025,12 +988,15 @@ router.post('/budgets/:id', requireWrite, (req, res) => {
   const b = findBudget(req, res);
   if (!b) return;
   const body = req.body || {};
+  const scope=['overall','category','account'].includes(body.scope)?body.scope:b.scope;
+  const categoryId=scope==='category'?(require('../lib/categories').forUpdate(ledgerId,body.category_id===undefined?b.category_id:body.category_id,b.scope==='category'?b.category_id:null)?.id||null):null;
+  if(scope==='category'&&!categoryId)return bad(res,400,'请选择有效分类，预算未修改');
   run(
     `UPDATE budgets SET name=?, scope=?, category_id=?, account_id=?, period=?, amount_cents=?, trigger_type=?,
       rollover=?, alert_pct=?, start_date=?, end_date=?, is_active=? WHERE id=?`,
     String(body.name || b.name).slice(0, 30),
-    ['overall', 'category', 'account'].includes(body.scope) ? body.scope : b.scope,
-    body.category_id != null ? validCategoryId(ledgerId, body.category_id) : b.category_id,
+    scope,
+    categoryId,
     body.account_id != null ? validAccountId(ledgerId, body.account_id) : b.account_id,
     ['monthly', 'yearly', 'weekly', 'custom'].includes(body.period) ? body.period : b.period,
     body.amount != null ? Math.abs(cents(body.amount)) : (body.amount_cents != null ? Math.abs(Math.round(Number(body.amount_cents) || 0)) : Number(b.amount_cents)),
@@ -1204,7 +1170,7 @@ router.post('/subscriptions/:id', requireWrite, (req, res) => {
   });
   if (!d.name || !d.amount_cents) return bad(res, 400, '名称与金额不能为空');
   d.account_id = validAccountId(ledgerId, d.account_id);
-  d.category_id = validCategoryId(ledgerId, d.category_id);
+  d.category_id = require('../lib/categories').forUpdate(ledgerId,d.category_id,old.category_id)?.id || null;
   run(
     `UPDATE subscriptions SET name=?, icon=?, plan=?, vendor_url=?, amount_cents=?, currency=?, cycle=?, cycle_n=?,
       anchor_month=?, anchor_day=?, account_id=?, category_id=?, auto_renew=?, trial_ends_on=?, next_charge_at=?,
@@ -1324,7 +1290,7 @@ router.post('/recurring/:id/run', requireWrite, (req, res) => {
         to_account_id, category_id, user_id, txn_date, note, merchant, status, source, created_at, updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       ledgerId, p.type || 'expense', amt, 'CNY', 1, amt, validAccountId(ledgerId, p.account_id), null,
-      validCategoryId(ledgerId, p.category_id),
+      require('../lib/categories').find(ledgerId,p.category_id)?.id || null,
       userId, todayStr(), p.note || r.name, null, 'cleared', 'recurring', nowStr(), nowStr()
     );
     ids.push(Number(info.lastInsertRowid));

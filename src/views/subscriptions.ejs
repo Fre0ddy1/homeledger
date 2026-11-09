@@ -285,6 +285,7 @@
           <div class="field" style="flex:1">
             <label>分类</label>
             <select name="category_id">
+              <% if(isEdit && val('category_id',0) && !form.expenseCats.some(function(c){return Number(c.id)===Number(val('category_id',0));})){ %><option value="<%= val('category_id',0) %>" selected>保留当前分类（已删除）</option><% } %>
               <option value="">未分类</option>
               <% form.expenseCats.forEach(function(c){ if (c.parent_id) { %>
                 <option value="<%= c.id %>" <%= Number(val('category_id', 0)) === Number(c.id) ? 'selected' : '' %>><%= c.path %></option>

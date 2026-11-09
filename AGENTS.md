@@ -24,8 +24,10 @@ ZCode 及其他编码代理在本仓库的工作指引（自动加载）。本�
 ```bash
 npm start                            # 起服务 :5111（数据 ./data；plain node 无 --watch，改码需重启）
 npm run dev                          # --watch 模式
-node test/run-all.js                 # 全量回归：19 套件，各自起独立实例 :8099（跑前确保 8099 无残留）
+node test/run-all.js                 # 全量回归：套件以 run-all.js 为准，各自起独立实例 :8099
 node test/selfcheck-static.js        # 静态自检
+npm run preview:ui                  # 独立演示 :5112，数据 .tmp/data-ui-preview，不碰真实账本
+node test/verify-ui-browser.cjs      # 可选浏览器验收：独立 :5113，安装与配置见 docs/ui-development.md
 DATA_DIR=./data-demo node scripts/seed-demo.js   # 演示数据（独立目录，不碰真实数据）
 ```
 
@@ -33,11 +35,13 @@ DATA_DIR=./data-demo node scripts/seed-demo.js   # 演示数据（独立目录�
 
 - `server.js` 入口：会话（SQLite store）/ CSRF / 零依赖布局机制（res.render 两段渲染）/ 路由挂载；
   **openapi 挂在 CSRF 之前**（Bearer 不走会话），改中间件顺序勿动这条
-- `src/db.js` 数据层：23 表、预编译语句缓存、可重入事务 `tx()`、余额重算引擎、`reopenDatabase`（备份热切换）
+- `src/db.js` 数据层：表结构以初始化与迁移代码为准、预编译语句缓存、可重入事务 `tx()`、余额重算引擎、`reopenDatabase`（备份热切换）
 - `src/lib/`：auth（scrypt/限流双键/RBAC/审计/通知）、ai（双引擎识别 + 习惯记忆 + 臆造核验，见 solutions）、
   txn（记账核心，软删除）、subscriptions（月末锚点/2-29 钳制，改前读注释）、scheduler（每日 + 30 分钟兜底）
 - `src/routes/openapi.js`：Bearer 令牌只存摘要、权限分层、分令牌频控、全量审计——安全语义勿放松
 - `public/js/`：原生 JS 渐进增强，服务端数据进 DOM 一律过 `esc()`；静态资源缓存戳 = 版本+mtime
+- UI 任务必读 `docs/ui-development.md`：`app.css` 基础组件 → `workspace.css` 页面约束/材质；三种 layout 均须保持资源缓存戳
+- 分类写入必须走 `src/lib/categories.js`，保留当前账本副本映射、软删除/恢复与历史引用；不得以 `is_system` 判定只读
 - **版本三件套**：发版必须同步 `package.json` + `src/lib/about.js` CHANGELOG + `README.md` 更新记录
 
 ## 必须 / 禁止（短句）
@@ -50,7 +54,9 @@ DATA_DIR=./data-demo node scripts/seed-demo.js   # 演示数据（独立目录�
 - 提交信息中文：发版 `vX.Y.Z: 要点`，过程提交 `docs:` / `fix:` / `feat:` / `test:` 前缀
 
 **质量**
-- 每个功能配 `test/verify-*.js` 套件并登记 `run-all.js`；**全量 19 套件全绿才算完成**（Windows 本地也要绿）
+- 每个业务功能配 `test/verify-*.js` 套件并登记 `run-all.js`；**全量套件全绿才算完成，数量以 run-all.js 为准**（Windows 本地也要绿）
+- 内容卡片必须自然高度、按任务约束宽度；分类与标签自动换行，禁止为保持紧凑给普通内容添加内部纵向限高滚动
+- 修改公共 UI 必须主动复核所有受影响页面与设置/编辑变体、明暗主题及移动断点；不能仅凭无溢出断言宣称视觉验收完成
 - 数字靠统计（SQL）、语言靠模型：模型不做任何算术；AI 产出必须可溯源（原文依据或习惯统计），标注如实
 - 出网内容仅限账单原文 + 分类/账户名称清单 + 聚合值，不发完整流水；无 AI Key 时功能必须有降级路径
 - 过程中发现「应调/可调」的事项（UX 口径、小优化、观察到的瑕疵）**当场登记 BOARD 或提 issue**，不口头一提了之——口头观察随会话丢失；**已实现/已顺手修掉的不登记**，提交信息说明即可
@@ -58,7 +64,8 @@ DATA_DIR=./data-demo node scripts/seed-demo.js   # 演示数据（独立目录�
 **操作纪律**
 - **严禁 taskkill 全部 node.exe**（会杀用户的 5111 实例）；按端口/PID 精确清理
 - 不直接修改用户真实账目数据（`data/homeledger.db`）；只建议或经确认后代做
-- 改完服务端代码重启 5111（无 watch）并告知；测试调试只用隔离 `DATA_DIR` 实例，临时 8099 实例用完即清
+- 改完服务端代码须按实际端口/PID重启本任务实例（无 watch）并告知；默认开发 5111、独立演示 5112；不得误重启他人实例
+- 测试调试只用隔离 `DATA_DIR` 实例；临时 8099/5113 实例用完即清，演示 5112 与真实 `data/` 分开
 - Windows 下删除数据目录前先停持有它的进程（文件锁）
 
 ---

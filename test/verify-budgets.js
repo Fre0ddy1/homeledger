@@ -197,12 +197,12 @@ const csrfOf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[1]
   const bid = (r.text.match(/\/budgets\/(\d+)"/) || [])[1];
   check('可解析到预算 id', !!bid, `id=${bid}`);
 
-  /* 非法分类 id 被置空 */
+  /* 非法分类拒绝建预算，避免空分类将范围扩大为总支出 */
   created = await req('POST', '/budgets', {
     form: { _csrf: csrf, name: '非法id', amount: '100', scope: 'category', category_id: '999999999', period: 'monthly', alert_pct: '80', trigger_type: 'expense' },
   });
   r = await req('GET', '/budgets');
-  check('非法分类 id 不落库（显示未指定）', r.text.includes('分类 · 未指定'), '');
+  check('非法分类不创建预算', !db.get("SELECT id FROM budgets WHERE name='非法id'"), '');
 
   /* 收入预算端到端 + 编辑保留统计对象 */
   created = await req('POST', '/budgets', {

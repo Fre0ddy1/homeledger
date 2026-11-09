@@ -4,7 +4,7 @@
     var parts = [];
     Object.keys(o).forEach(function(k){
       if (o[k] === '' || o[k] === null || o[k] === undefined) return;
-      var key = k === 'categoryId' ? 'category_id' : k === 'accountId' ? 'account_id' : k === 'memberId' ? 'member_id' : k === 'tagId' ? 'tag_id' : k;
+      var key = k === 'keyword' ? 'q' : k === 'pageSize' ? 'page_size' : k === 'categoryId' ? 'category_id' : k === 'accountId' ? 'account_id' : k === 'memberId' ? 'member_id' : k === 'tagId' ? 'tag_id' : k;
       parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(o[k]));
     });
     return parts.length ? '?' + parts.join('&') : '';
@@ -13,6 +13,8 @@
   var curMonth = monthNow.getFullYear() + '-' + String(monthNow.getMonth() + 1).padStart(2, '0');
 %>
 
+<div class="transactions-workspace">
+<div class="transactions-primary">
 <div class="card tight mb16">
   <div class="row wrap chip-row mb12" style="gap:6px">
     <a class="chip <%= !f.month && !f.from && !f.to ? 'primary' : '' %>" href="/transactions<%= qs({ month:'', from:'', to:'', page:1 }) %>">全部</a>
@@ -31,7 +33,10 @@
     <a class="chip <%= f.source === 'subscription' ? 'primary' : '' %>" href="/transactions<%= qs({ source:'subscription', page:1 }) %>">订阅</a>
   </div>
 
+  <details class="transaction-filters" <%= f.keyword || f.type || f.categoryId || f.accountId || f.memberId || f.owner || f.sort !== 'date_desc' ? 'open' : '' %>>
+    <summary>搜索与高级筛选 <span class="muted tiny">分类、账户、成员与排序</span></summary>
   <form method="get" action="/transactions" class="inline-form">
+    <% [['month',f.month],['from',f.from],['to',f.to],['kind',f.kind],['source',f.source],['reimbursable',f.reimbursable],['page_size',f.pageSize],['tag_id',f.tagId]].forEach(function(pair){if(pair[1]){ %><input type="hidden" name="<%= pair[0] %>" value="<%= pair[1] %>"><% }}); %>
     <div class="field" style="flex:1;min-width:150px">
       <input type="search" name="q" value="<%= f.keyword %>" placeholder="搜索备注 / 商家 / 分类 / 金额">
     </div>
@@ -81,16 +86,18 @@
       <div class="field"><a class="btn btn-ghost" href="/transactions">清空</a></div>
     <% } %>
   </form>
+  </details>
 </div>
 
-<div class="row between mb12">
-  <div class="row" style="gap:14px">
+<div class="row between wrap transactions-totals mb12">
+  <div class="row wrap" style="gap:14px">
     <span class="muted small">共 <b><%= result.total %></b> 笔</span>
     <span class="small">支出 <b class="amount expense"><%= helpers.fmtAmount(result.sum.expense) %></b></span>
     <span class="small">收入 <b class="amount income"><%= helpers.fmtAmount(result.sum.income) %></b></span>
     <span class="small">结余 <b class="amount <%= (result.sum.income - result.sum.expense) >= 0 ? 'income' : 'expense' %>"><%= helpers.fmtAmount(result.sum.income - result.sum.expense) %></b></span>
   </div>
-  <div class="row">
+  <div class="row wrap">
+    <nav class="transaction-page-size" aria-label="每页记录数"><span>每页</span><% [20,40,80].forEach(function(n){ %><a class="<%= result.pageSize===n?'active':'' %>" href="/transactions<%= qs({pageSize:n,page:1}) %>"><%= n %></a><% }); %></nav>
     <a class="btn btn-sm" href="/export"><svg class="icon sm"><use href="#i-upload"></use></svg>导出</a>
   </div>
 </div>
@@ -99,11 +106,11 @@
   <input type="hidden" name="_csrf" value="<%= csrf %>">
   <input type="hidden" name="back" value="<%= path + qs({}) %>">
   <div class="card">
-    <div class="row mb12">
+    <% if (ledger && canWrite(ledger.role)) { %><div class="row mb12">
       <label class="check"><input type="checkbox" id="bulk-all"> 全选本页</label>
       <span class="muted tiny">勾选后可用下方批量操作</span>
-    </div>
-    <%- include('partials/txn-list', { groups: groups, bulk: true }) %>
+    </div><% } %>
+    <%- include('partials/txn-list', { groups: groups, bulk: ledger && canWrite(ledger.role) }) %>
   </div>
 
   <% if (result.pages > 1) { %>
@@ -140,3 +147,19 @@
     </div>
   </div>
 </form>
+
+</div>
+<aside class="transactions-secondary" aria-label="筛选摘要与账单详情">
+  <section class="card transaction-summary">
+    <div class="eyebrow">AT A GLANCE</div><h2>当前筛选摘要</h2>
+    <p class="small muted mt8">共 <%= result.total %> 笔记录 · 按当前筛选范围统计</p>
+    <div class="summary-balance"><span class="small muted">结余</span><div class="amount <%= result.sum.income-result.sum.expense >= 0 ? 'income' : 'expense' %>"><%= helpers.money(result.sum.income-result.sum.expense) %></div></div>
+    <div class="row between small"><span class="muted">收入</span><span class="amount income"><%= helpers.money(result.sum.income) %></span></div>
+    <div class="row between small mt12"><span class="muted">支出</span><span class="amount expense"><%= helpers.money(result.sum.expense) %></span></div>
+  </section>
+  <section class="card transaction-inspector-card">
+    <div id="txnInspectorEmpty" class="inspector-empty"><span class="empty-symbol"><svg class="icon lg"><use href="#i-file-text"></use></svg></span><h2>账单详情</h2><p class="small muted mt8">选择左侧一笔记录，在这里查看完整信息。</p></div>
+    <div id="txnInspector"></div>
+  </section>
+</aside>
+</div>
