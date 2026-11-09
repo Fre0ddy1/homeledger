@@ -4,6 +4,7 @@
 
 | 主题 | 一句话 | 文档 | 首次踩坑 |
 |------|--------|------|----------|
+| Linux 分类迁移回归 | HTTP与测试共享WAL时模拟重开会丢表；旧库测试改为独占子进程 | [category-wal-ci.md](category-wal-ci.md) | 2026-11-09 |
 | Windows 测试基建 | 跑批端口竞态会让套件串数据；强退进程在 Windows 上偶发断言崩溃 | [windows-test-infra.md](windows-test-infra.md) | 2026-10-09（v1.8.0 批次） |
 | AI 臆造账户 | 模型在原文没提付款方式时自行填 acct，顶掉习惯推荐；三层防线（提示词/原文核验/统计兜底） | [ai-invented-account.md](ai-invented-account.md) | 2026-10-09（v1.8.0 批次） |
 | 路由遮蔽 | 参数路由 `/:id` 注册在前，`/transactions/bulk` 被吞进编辑分支，网页批量操作自 v1.0.0 全失效；核心写路径必须有 HTTP 层测试 | [route-shadowing.md](route-shadowing.md) | 2026-10-09（verify-transactions 套件首跑） |
