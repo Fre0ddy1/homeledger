@@ -187,7 +187,7 @@
                 <span class="chip cat-parent" data-target="root-<%= kind %>-<%= root.id %>" style="cursor:pointer"><%= root.icon %> <%= root.name %></span>
               <% }); %>
             </div>
-            <div class="scroll-x" style="max-height:460px;overflow-y:auto">
+            <div>
               <% (kind === 'expense' ? form.expenseTree : form.incomeTree).forEach(function(root){ %>
                 <div class="cat-group mb12">
                   <div class="small bold muted mb8"><%= root.icon %> <%= root.name %></div>

@@ -49,6 +49,34 @@
 
 ## 🚀 快速开始
 
+### 本地二次开发与新版界面预览
+
+需要 Node.js ≥22.5。首次运行 `npm ci`，常规开发运行 `npm run dev`。
+
+运行 `npm run preview:ui` 可打开独立的界面演示实例：[http://localhost:5112](http://localhost:5112)，
+账号 `admin`、密码 `admin123456`。演示数据保存在 `.tmp/data-ui-preview/`，与正式 `data/` 分开；
+按 Ctrl+C 停止。需要更换演示端口时，在 PowerShell 中先设置 `$env:PREVIEW_PORT='5113'`。
+
+本地界面改版采用全宽响应式布局、Apple 风格公共组件与明暗主题，首页新增收入构成并增强储蓄目标进度。
+大屏使用更多信息模块利用空间，表单维持合理阅读宽度。设计和验证说明见
+[设计文档](docs/superpowers/specs/2026-11-09-apple-adaptive-ui-design.md) 与
+[界面验收记录](docs/superpowers/validation/2026-11-09-ui.md)。
+
+第二轮优化：首页各列独立堆叠，明细采用紧凑流水与摘要/详情侧栏，默认每页 20 条（可选 40/80）；
+导航与菜单强化透光、边缘高光和悬浮效果。分类管理支持编辑内置分类、软删除和恢复，修改仅作用于当前账本，
+历史账单保留原分类。删除一级分类会隐藏子树，恢复时保留子分类各自的删除状态。
+开放 API 同样支持 `POST /api/open/categories/:id/restore`，已删除列表使用 `GET /api/open/categories?show=deleted`。
+
+第三轮优化：全页卡片改为自然高度，按任务限制页面和侧边表单宽度；分类改为分组导航、紧凑卡片和独立编辑窗口。
+浅色与深色分别调整玻璃导航、反射高光及对比度。采用 Apple HIG 原则的 Web 材质实现，不等同原生 Liquid Glass。
+逐页范围、官方规范对照及验证见 [全页复核记录](docs/superpowers/validation/2026-11-09-workspace-polish.md)。
+后续统一内容自然展开：一级分类在顶部完整平铺，设置/记账标签自动换行，排行、审计日志、记账分类及明细侧栏随页面滚动。
+
+回归：`node test/run-all.js`、`node test/selfcheck-static.js`。
+可选浏览器验收：先运行 `npm install --prefix .tmp/ui-qa --no-package-lock playwright`，再运行
+`node test/verify-ui-browser.cjs`（Windows 默认使用已安装的 Edge，也可设置 `UI_BROWSER_PATH`）。
+浏览器测试自动创建独立演示数据，截图与原始结果输出在 `.screenshots/`。
+
 新建空目录，保存为 `docker-compose.yml`：
 
 ```yaml
@@ -84,6 +112,9 @@ docker compose up -d
 1. 「设置 → 开放 API」生成令牌（`hl_` 开头，明文只展示一次）
 2. Hermes：把 `skills/homeledger-bookkeeping/` 复制到 `~/.hermes/skills/`；OpenClaw/PicoClaw：用 `openclaw-skill/homeledger-bookkeeping/`
 3. 技能读 `HOMELEDGER_URL` 与 `HOMELEDGER_TOKEN` 两个环境变量，之后发截图或说"午饭 35"即可自动记账
+
+两处技能内容相同，只需安装一份。`skills/homeledger-bookkeeping/` 是维护主副本，
+`openclaw-skill/homeledger-bookkeeping/` 保留为兼容安装路径；使用其他支持 SKILL.md 的助手也可选主副本。
 
 AI 截图/文本识别使用 OpenAI 兼容接口（智谱 GLM、通义、DeepSeek、本地 Ollama 均可），在「设置 → AI 记账」中配置。
 

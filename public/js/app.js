@@ -11,6 +11,26 @@
   const money = (cents) => '¥' + (Math.abs(Number(cents) || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+  // A dialog owns keyboard focus until it closes; nested confirmations restore
+  // focus into the underlying detail dialog rather than the page behind it.
+  function containFocus(container, initial) {
+    const previous = document.activeElement;
+    const elements = () => $$('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]', container).filter(el => el.getClientRects().length);
+    const onKey = (e) => {
+      if (e.key !== 'Tab') return;
+      const list = elements();
+      if (!list.length) { e.preventDefault(); container.focus(); return; }
+      const first = list[0], last = list[list.length - 1];
+      if (e.shiftKey && (document.activeElement === first || !container.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || !container.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
+    };
+    container.tabIndex = -1;
+    container.addEventListener('keydown', onKey);
+    (initial || elements()[0] || container).focus();
+    return () => { container.removeEventListener('keydown', onKey); if (previous && previous.isConnected) previous.focus(); };
+  }
+  const topDialog = (mask) => $$('.modal-mask').slice(-1)[0] === mask;
+
   /* ------------------------------ Toast ------------------------------ */
   function toast(message, type) {
     let box = $('#toast-box');
@@ -50,6 +70,7 @@
     return (opt ? opt.textContent : '').replace(/\s+/g, ' ').trim();
   }
 
+  let selectLabelId = 0;
   function enhanceSelect(sel) {
     if (sel.dataset.hlEnhanced || sel.multiple || sel.closest('.hl-select')) return;
     sel.dataset.hlEnhanced = '1';
@@ -64,6 +85,12 @@
     btn.className = 'hl-select-trigger';
     btn.setAttribute('aria-haspopup', 'listbox');
     btn.setAttribute('aria-expanded', 'false');
+    const nativeLabel = (sel.labels && sel.labels[0]) || (sel.closest('.field') && sel.closest('.field').querySelector('label'));
+    if (sel.getAttribute('aria-label')) btn.setAttribute('aria-label', sel.getAttribute('aria-label'));
+    else if (nativeLabel) {
+      if (!nativeLabel.id) nativeLabel.id = 'hl-field-label-' + (++selectLabelId);
+      btn.setAttribute('aria-labelledby', nativeLabel.id);
+    }
     btn.innerHTML =
       '<span class="hl-select-label"></span>' +
       '<span class="hl-select-caret"><svg class="icon sm"><use href="#i-chevron-down"></use></svg></span>';
@@ -163,9 +190,7 @@
       if (open) {
         $$('body .hl-select.open').forEach((w) => {
           if (w !== wrap) {
-            w.classList.remove('open');
-            const b = $('.hl-select-trigger', w);
-            if (b) b.setAttribute('aria-expanded', 'false');
+            if (w._hlClose) w._hlClose();
           }
         });
         ensureMenu();
@@ -187,7 +212,7 @@
         do { i += dir; } while (i >= 0 && i < opts.length && opts[i].disabled); // 跳过 disabled 项
         return i >= 0 && i < opts.length ? opts[i] : null;
       };
-      if (e.key === 'Escape') { e.preventDefault(); toggle(false); btn.focus(); }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); toggle(false); btn.focus(); }
       else if (e.key === 'ArrowDown') { e.preventDefault(); const n = step(idx, 1) || step(-1, 1); if (n) n.focus(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); const n = step(idx, -1) || step(-1, -1); if (n) n.focus(); }
       else if (e.key === 'Tab') { toggle(false); }
@@ -195,21 +220,20 @@
 
     // 触发器获得焦点时按 Esc 也能收回（键盘用户的第二收回路）
     btn.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && open) { e.preventDefault(); toggle(false); return; }
+      if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); toggle(false); return; }
       if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) { e.preventDefault(); toggle(true); }
     });
     btn.addEventListener('click', () => toggle());
     // 外部点击关闭 / 窗口缩放重定位：用单例委托（注册一次），避免每个实例往 document/window
     // 挂常驻监听——AI 页反复识别会不断新建实例，逐实例监听只增不减（内存泄漏）
     wrap._hlPlace = place;
+    wrap._hlClose = () => toggle(false);
     if (!document._hlSelectDelegated) {
       document._hlSelectDelegated = true;
       document.addEventListener('click', (e) => {
         $$('.hl-select.open').forEach((w) => {
           if (!w.contains(e.target)) {
-            w.classList.remove('open');
-            const b = $('.hl-select-trigger', w);
-            if (b) b.setAttribute('aria-expanded', 'false');
+            if (w._hlClose) w._hlClose();
           }
         });
       });
@@ -247,8 +271,9 @@
           '</div>' +
         '</div>';
       document.body.appendChild(mask);
-      const done = (val) => { mask.remove(); document.removeEventListener('keydown', onKey); resolve(val); };
-      const onKey = (e) => { if (e.key === 'Escape') done(false); };
+      const releaseFocus = containFocus($('.modal', mask), $('[data-act="' + (danger ? 'cancel' : 'ok') + '"]', mask));
+      const done = (val) => { mask.remove(); document.removeEventListener('keydown', onKey); releaseFocus(); resolve(val); };
+      const onKey = (e) => { if (e.key === 'Escape' && topDialog(mask)) done(false); };
       mask.addEventListener('click', (e) => {
         if (e.target === mask) return done(false);
         const act = e.target.closest && e.target.closest('[data-act]');
@@ -930,10 +955,20 @@
   const TXN_SOURCE_LABEL = { manual: '手动', ai_screenshot: 'AI 截图', ai_text: 'AI 文本', import: '导入', recurring: '周期账单', subscription: '订阅' };
   const fmtCents = (c) => (Number(c) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+  let detailVersion = 0;
+  let activeDetail = null;
+  const inspectorMedia = window.matchMedia('(min-width: 1200px)');
+  inspectorMedia.addEventListener('change', () => {
+    if (activeDetail && activeDetail.inline) activeDetail.close();
+  });
   function showTxnDetail(id) {
+    const version = ++detailVersion;
+    const origin = document.activeElement;
+    if (activeDetail) activeDetail.close(false);
     fetch('/transactions/' + id + '/json', { headers: { Accept: 'application/json' } })
       .then((r) => r.json())
       .then((data) => {
+        if (version !== detailVersion) return;
         if (!data.ok) return toast(data.error || '加载失败', 'error');
         const t = data.txn;
         const rows = [];
@@ -961,10 +996,14 @@
 
         // 写权限：与列表行的操作按钮同源（只读成员行内没有编辑/删除钮）
         const canWrite = !!document.querySelector('[data-del-txn="' + t.id + '"]');
+        const inspector = $('#txnInspector');
+        const inline = !!inspector && inspectorMedia.matches;
+        const placeholder = $('#txnInspectorEmpty');
+        const selectedRow = document.querySelector('.txn[data-txn-id="' + t.id + '"]');
         const mask = document.createElement('div');
-        mask.className = 'modal-mask';
+        mask.className = inline ? 'inspector-detail' : 'modal-mask';
         mask.innerHTML =
-          '<div class="modal txn-detail" role="dialog" aria-modal="true">' +
+          '<div class="modal txn-detail" ' + (inline ? 'role="region" aria-label="账单详情"' : 'role="dialog" aria-modal="true" aria-label="账单详情"') + '>' +
             '<div class="modal-title">' + esc(t.category_icon || t.type_icon) + ' ' + esc(t.type === 'transfer' ? '转账' : (t.category_name || t.type_label)) + '</div>' +
             '<div class="txn-detail-amt amount ' + signCls + '">' + sign + fmtCents(t.amount_cents) + (t.currency !== 'CNY' ? ' <span class="tiny muted">' + esc(t.currency) + '</span>' : '') + '</div>' +
             '<div class="modal-body">' + rows.join('') +
@@ -976,8 +1015,22 @@
               (canWrite ? '<a class="btn btn-primary" href="/transactions/' + t.id + '/edit">编辑</a>' : '') +
             '</div>' +
           '</div>';
-        document.body.appendChild(mask);
-        const close = () => mask.remove();
+        if (inline) {
+          inspector.replaceChildren(mask);
+          if (placeholder) placeholder.hidden = true;
+          if (selectedRow) selectedRow.classList.add('is-selected');
+          const region = $('.txn-detail', mask); region.tabIndex = -1; region.focus({ preventScroll: true });
+        } else document.body.appendChild(mask);
+        const releaseFocus = inline ? () => { if (origin && origin.isConnected) origin.focus({ preventScroll: true }); } : containFocus($('.modal', mask));
+        const onKey = (e) => { if (e.key === 'Escape' && (inline ? !$('.modal-mask') && mask.contains(e.target) : topDialog(mask))) close(); };
+        const close = (restore = true) => {
+          mask.remove(); document.removeEventListener('keydown', onKey);
+          if (inline && placeholder) placeholder.hidden = false;
+          if (selectedRow) selectedRow.classList.remove('is-selected');
+          if (activeDetail && activeDetail.close === close) activeDetail = null;
+          if (restore) releaseFocus();
+        };
+        activeDetail = { close, inline };
         mask.addEventListener('click', async (e) => {
           if (e.target === mask) return close();
           const img = e.target.closest('[data-zoom]');
@@ -997,9 +1050,7 @@
             } else toast('删除失败', 'error');
           }
         });
-        document.addEventListener('keydown', function onKey(e) {
-          if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
-        });
+        document.addEventListener('keydown', onKey);
       })
       .catch(() => toast('加载失败', 'error'));
   }
@@ -1009,7 +1060,12 @@
     document.addEventListener('click', (e) => {
       if (e.target.closest('a, button, input, select, textarea, label')) return;
       const row = e.target.closest('.txn[data-txn-id]');
-      if (row) showTxnDetail(row.dataset.txnId);
+      if (row) { row.focus({ preventScroll: true }); showTxnDetail(row.dataset.txnId); }
+    });
+    document.addEventListener('keydown', (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.txn[data-txn-id]')) {
+        e.preventDefault(); showTxnDetail(e.target.dataset.txnId);
+      }
     });
   }
 
@@ -1316,29 +1372,45 @@
     const burger = $('#navBurger');
     const mask = $('#drawerMask');
     const closeBtn = $('#navDrawerClose');
-    const close = () => document.body.classList.remove('nav-open');
+    let releaseDrawerFocus = null;
+    const close = () => { document.body.classList.remove('nav-open'); if (burger) burger.setAttribute('aria-expanded', 'false'); if (releaseDrawerFocus) { releaseDrawerFocus(); releaseDrawerFocus = null; } };
     if (burger && mask) {
-      burger.addEventListener('click', () => document.body.classList.toggle('nav-open'));
+      burger.addEventListener('click', () => {
+        if (document.body.classList.contains('nav-open')) return close();
+        document.body.classList.add('nav-open');
+        burger.setAttribute('aria-expanded', 'true');
+        releaseDrawerFocus = containFocus(sb, closeBtn);
+      });
       mask.addEventListener('click', close);
       if (closeBtn) closeBtn.addEventListener('click', close);
       sb.addEventListener('click', (e) => { if (e.target.closest('a, select')) close(); });
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+      const drawerMedia = window.matchMedia('(max-width: 820px), (pointer: coarse) and (max-width: 1024px)');
+      drawerMedia.addEventListener('change', (e) => {
+        if (!e.matches && document.body.classList.contains('nav-open')) {
+          close();
+          const content = $('#main-content');
+          if (content) content.focus({ preventScroll: true });
+        }
+      });
     }
 
     const KEY = 'hl-sidebar-scroll';
+    const scroller = sb.querySelector('nav') || sb;
     // 跳转后恢复上次的内部滚动位置，菜单不会"跳回开头"
     const saved = sessionStorage.getItem(KEY);
-    if (saved) sb.scrollTop = Number(saved) || 0;
-    sb.addEventListener('scroll', () => {
-      try { sessionStorage.setItem(KEY, String(sb.scrollTop)); } catch (e) { /* 隐私模式下忽略 */ }
+    if (document.body.dataset.page === 'home') scroller.scrollTop = 0;
+    else if (saved) scroller.scrollTop = Number(saved) || 0;
+    scroller.addEventListener('scroll', () => {
+      try { sessionStorage.setItem(KEY, String(scroller.scrollTop)); } catch (e) { /* 隐私模式下忽略 */ }
     }, { passive: true });
     // 保证当前高亮项在可视范围内
     const active = sb.querySelector('.nav-item.active');
     if (active) {
       const r = active.getBoundingClientRect();
-      const sr = sb.getBoundingClientRect();
-      if (r.top < sr.top + 8) sb.scrollTop += r.top - sr.top - 8;
-      else if (r.bottom > sr.bottom - 8) sb.scrollTop += r.bottom - sr.bottom + 8;
+      const sr = scroller.getBoundingClientRect();
+      if (r.top < sr.top + 8) scroller.scrollTop += r.top - sr.top - 8;
+      else if (r.bottom > sr.bottom - 8) scroller.scrollTop += r.bottom - sr.bottom + 8;
     }
   }
 
@@ -1350,12 +1422,13 @@
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       drop.classList.toggle('hidden');
+      btn.setAttribute('aria-expanded', String(!drop.classList.contains('hidden')));
     });
     document.addEventListener('click', (e) => {
-      if (!drop.classList.contains('hidden') && !drop.contains(e.target)) drop.classList.add('hidden');
+      if (!drop.classList.contains('hidden') && !drop.contains(e.target)) { drop.classList.add('hidden'); btn.setAttribute('aria-expanded', 'false'); }
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') drop.classList.add('hidden');
+      if (e.key === 'Escape' && !drop.classList.contains('hidden')) { drop.classList.add('hidden'); btn.setAttribute('aria-expanded', 'false'); btn.focus(); }
     });
   }
 
@@ -1402,7 +1475,88 @@
     }
   }
 
+  // Columns own their vertical flow; no shared rows or artificial card heights.
+  function initDashboardColumns() {
+    const grid = $('.dashboard-grid');
+    if (!grid) return;
+    const cards = Array.from(grid.children);
+    const wide = window.matchMedia('(min-width: 1600px)');
+    const medium = window.matchMedia('(min-width: 1101px)');
+    let current = 0;
+    const layout = () => {
+      const count = wide.matches ? 3 : medium.matches ? 2 : 1;
+      if (count === current) return;
+      // Moving focused descendants preserves focus across breakpoint changes.
+      const focused = document.activeElement;
+      const columns = Array.from({ length: count }, () => {
+        const column = document.createElement('div'); column.className = 'dashboard-column'; return column;
+      });
+      cards.forEach(card => {
+        const name = card.dataset.dashboardColumn || 'plans';
+        const index = count === 1 ? 0 : name === 'main' ? 0 : count === 2 || name === 'analysis' ? 1 : 2;
+        columns[index].appendChild(card);
+      });
+      grid.replaceChildren(...columns);
+      grid.classList.add('has-columns'); grid.style.setProperty('--dashboard-columns', count);
+      if (focused && focused !== document.body && focused.isConnected) focused.focus({ preventScroll: true });
+      current = count;
+    };
+    wide.addEventListener('change', layout); medium.addEventListener('change', layout); layout();
+  }
+
+  function initGlassHighlights() {
+    const pointer = window.matchMedia('(pointer: fine)');
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let pending = false, surface = null, x = 0, y = 0;
+    document.addEventListener('pointermove', e => {
+      if (!pointer.matches || reduced.matches) return;
+      const target = e.target.closest('.topbar,.sidebar,.mobile-nav,.m-head,.m-tabbar,.hl-select-menu,.hl-date-menu,.user-menu-drop,.category-navigation,.category-toolbar,.tabs');
+      if (!target) return;
+      const box = target.getBoundingClientRect(); surface = target; x = e.clientX-box.left; y = e.clientY-box.top;
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(() => { pending = false; if (surface && surface.isConnected) { surface.style.setProperty('--glass-x', x+'px'); surface.style.setProperty('--glass-y', y+'px'); } });
+    }, { passive: true });
+  }
+
+  function initCategoryWorkbench() {
+    $$('.category-entry,.category-create-disclosure').forEach(entry => {
+      const trigger = entry.querySelector(':scope > summary');
+      const forms = Array.from(entry.querySelectorAll(':scope > form'));
+      if (!trigger || !forms.length) return;
+      trigger.addEventListener('click', e => {
+        e.preventDefault();
+        const mask = document.createElement('div'); mask.className = 'modal-mask category-modal';
+        const panel = document.createElement('section'); panel.className = 'modal category-editor-modal';
+        panel.setAttribute('role','dialog'); panel.setAttribute('aria-modal','true'); panel.setAttribute('aria-label',entry.matches('.category-create-disclosure')?'新建分类':'编辑分类');
+        const head = document.createElement('div'); head.className = 'modal-title';
+        const title = document.createElement('span'); title.textContent = entry.matches('.category-create-disclosure')?'新建分类':entry.dataset.name;
+        const closeButton = document.createElement('button'); closeButton.type = 'button'; closeButton.className = 'btn btn-sm btn-ghost'; closeButton.textContent = '关闭'; closeButton.setAttribute('aria-label','关闭分类编辑');
+        head.append(title,closeButton);
+        const note = document.createElement('p'); note.className = 'category-editor-note'; note.textContent = '修改仅影响当前账本。删除后，历史账单仍保留分类关联。';
+        panel.append(head,note,...forms); mask.appendChild(panel); document.body.appendChild(mask);
+        const releaseFocus = containFocus(panel,$('input[name="name"]',panel));
+        const close = () => { $$('.hl-select.open',panel).forEach(w=>w._hlClose&&w._hlClose()); forms.forEach(form => { form.reset(); $$('select',form).forEach(sel=>sel.dispatchEvent(new Event('change',{bubbles:true}))); entry.appendChild(form); }); mask.remove(); document.removeEventListener('keydown',onKey); releaseFocus(); };
+        const onKey = e => { if(e.key==='Escape' && topDialog(mask)) close(); };
+        closeButton.addEventListener('click',close);
+        mask.addEventListener('click',e=>{if(e.target===mask)close();}); document.addEventListener('keydown',onKey);
+      });
+    });
+    const focusId = $('.category-workspace')?.dataset.focusCategory;
+    if (focusId) { const summary = $('.category-entry[data-category-id="'+focusId+'"] > summary'); if(summary)summary.focus(); }
+    const kind = $('#new-cat-kind'), parent = $('#new-cat-parent');
+    if (kind && parent) {
+      const update = () => {
+        Array.from(parent.options).forEach(option => { const label=option.parentElement.label; option.disabled=!!option.value && label !== (kind.value==='income'?'收入':'支出'); });
+        if(parent.selectedOptions[0]?.disabled) { parent.value=''; parent.dispatchEvent(new Event('change',{bubbles:true})); }
+      };
+      kind.addEventListener('change',update); update();
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
+    initDashboardColumns();
+    initGlassHighlights();
     initSidebar();
     initUserMenu();
     initAvatarUpload();
@@ -1420,6 +1574,7 @@
     initDatePickers();
     initCurrencySymbol();
     enhanceSelects();
+    initCategoryWorkbench();
     // 记一笔/编辑页本身就是记账界面，AI 悬浮球会遮挡底部按钮，不出现
     if ($('#txn-form')) { const f = $('#aiFab'); if (f) f.remove(); }
   });

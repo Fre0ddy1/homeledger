@@ -389,12 +389,7 @@ async function callModel(messages, cfg = getAiConfig()) {
 
 /** 组装给模型的上下文（分类、账户、成员） */
 function buildContext(ledgerId) {
-  const cats = all(
-    `SELECT c.id, c.name, c.kind, p.name AS parent FROM categories c
-     LEFT JOIN categories p ON p.id = c.parent_id
-     WHERE (c.ledger_id IS NULL OR c.ledger_id = ?) AND c.is_archived = 0`,
-    ledgerId
-  );
+  const cats = require('./categories').list(ledgerId).map(c => ({ ...c, parent: c.parent_name }));
   const expensePaths = cats
     .filter((c) => c.kind === 'expense')
     .map((c) => (c.parent ? `${c.parent}/${c.name}` : c.name));
@@ -478,7 +473,7 @@ function buildHabitSummary(ledgerId) {
   const catRows = all(
     `SELECT c.name AS cname, p.name AS parent, a.name AS aname, COUNT(*) AS cnt
      FROM transactions t
-     JOIN categories c ON c.id = t.category_id AND c.is_archived = 0
+     JOIN categories c ON c.id = t.category_id AND c.is_archived = 0 AND NOT EXISTS (SELECT 1 FROM categories cp WHERE cp.id=c.parent_id AND cp.is_archived=1)
      LEFT JOIN categories p ON p.id = c.parent_id
      JOIN accounts a ON a.id = t.account_id AND a.is_archived = 0
      WHERE t.ledger_id = ? AND t.deleted_at IS NULL AND t.txn_date >= ?
@@ -497,7 +492,7 @@ function buildHabitSummary(ledgerId) {
   const merchRows = all(
     `SELECT t.merchant, c.name AS cname, p.name AS parent, COUNT(*) - 2 * COALESCE(f.neg, 0) AS cnt
      FROM transactions t
-     JOIN categories c ON c.id = t.category_id AND c.is_archived = 0
+     JOIN categories c ON c.id = t.category_id AND c.is_archived = 0 AND NOT EXISTS (SELECT 1 FROM categories cp WHERE cp.id=c.parent_id AND cp.is_archived=1)
      LEFT JOIN categories p ON p.id = c.parent_id
      LEFT JOIN (SELECT merchant AS fm, recommended AS rid, COUNT(*) AS neg FROM habit_feedback
                 WHERE ledger_id = ? AND field = 'category' AND created_at >= ?
@@ -582,12 +577,7 @@ function buildUserPrompt({ text, ctx, today }) {
 function resolveCategoryId(ledgerId, nameHint, kind) {
   if (!nameHint) return null;
   const hint = String(nameHint).trim();
-  const rows = all(
-    `SELECT c.id, c.name, c.kind, p.name AS parent FROM categories c
-     LEFT JOIN categories p ON p.id = c.parent_id
-     WHERE (c.ledger_id IS NULL OR c.ledger_id = ?) AND c.kind = ? AND c.is_archived = 0`,
-    ledgerId, kind
-  );
+  const rows = require('./categories').list(ledgerId, kind).map(c => ({ ...c, parent: c.parent_name }));
   const norm = (s) => String(s || '').replace(/\s/g, '');
   const target = norm(hint);
   // 1) 完整路径精确匹配
@@ -718,7 +708,7 @@ function habitCategoryId(ledgerId, merchant, type = 'expense') {
                 WHERE ledger_id = ? AND merchant = ? AND field = 'category' AND created_at >= ?
                 GROUP BY recommended) f ON CAST(f.rid AS INTEGER) = t.category_id
      WHERE t.ledger_id = ? AND t.deleted_at IS NULL AND t.category_id IS NOT NULL
-       AND t.category_id NOT IN (SELECT id FROM categories WHERE is_archived = 1 AND (ledger_id = ? OR ledger_id IS NULL))
+       AND t.category_id NOT IN (SELECT c.id FROM categories c LEFT JOIN categories p ON p.id=c.parent_id WHERE (c.is_archived = 1 OR p.is_archived = 1) AND (c.ledger_id = ? OR c.ledger_id IS NULL))
        AND t.merchant = ? AND t.type = ? AND t.txn_date >= ?
      GROUP BY t.category_id HAVING w >= 1
      ORDER BY w DESC, MAX(t.txn_date) DESC, MAX(t.id) DESC LIMIT 1`,

@@ -137,6 +137,7 @@ app.use((req, res, next) => {
   // 拼上 mtime 后任何一次文件改动都会自动失效旧缓存。
   res.locals.assetV = {
     css: APP_VERSION + '-' + assetStamp('css/app.css'),
+    workspace: APP_VERSION + '-' + assetStamp('css/workspace.css'),
     js: APP_VERSION + '-' + assetStamp('js/app.js'),
     assistant: APP_VERSION + '-' + assetStamp('js/assistant.js'),
     m: APP_VERSION + '-' + assetStamp('js/m.js'),

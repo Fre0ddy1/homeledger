@@ -140,7 +140,7 @@
     <% if (!subcats.length) { %>
       <div class="empty"><span class="big">🏆</span>没有数据</div>
     <% } else { %>
-      <div class="scroll-x" style="max-height:340px;overflow-y:auto">
+      <div>
         <%- charts.rankBars(subcats.slice(0, 30).map(function(c){
               var name = c.parent_id ? c.parent + '/' + c.name : (c.name || c.parent || '未分类');
               var canDrill = !top && !c.parent_id && c.name;

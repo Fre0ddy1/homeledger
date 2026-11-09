@@ -260,12 +260,8 @@ function importRecords({
         } else {
           const kind = rec.type === 'income' ? 'income' : 'expense';
           // P8：预览阶段富化的分类直接采信（服务端 previewCache 产生，提交侧仍校验存在/未归档/kind 相符——纵深防御）
-          const pre = Number(rec.category_id);
-          if (pre && get(
-            'SELECT id FROM categories WHERE id = ? AND is_archived = 0 AND kind = ?', pre, kind
-          )) {
-            categoryId = pre;
-          }
+          const pre = require('./categories').find(ledgerId, rec.category_id, true);
+          if (pre && pre.kind === kind) categoryId = pre.id;
           const kw = classifyByKeywords(rec.text);
           if (rec.category_hint) {
             // hint 解析成功才覆盖（可能覆盖 pre——但富化本就跳过 hint 可解析的记录，两者互斥）；

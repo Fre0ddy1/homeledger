@@ -80,7 +80,7 @@ router.get('/', auth.requireLogin, (req, res) => {
     reimbursable: req.query.reimbursable || '',
     sort: req.query.sort || 'date_desc',
     page: Number(req.query.page) || 1,
-    pageSize: 40,
+    pageSize: [20,40,80].includes(Number(req.query.page_size)) ? Number(req.query.page_size) : 20,
   };
   const result = txn.listTransactions(ledgerId, f);
   const form = fd.txFormData(ledgerId, req.session.userId);
@@ -167,8 +167,8 @@ router.post('/bulk', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
       break;
     }
     case 'category': {
-      const cid = req.body.category_id ? Number(req.body.category_id) : null;
-      const c = cid ? get('SELECT id FROM categories WHERE id = ? AND (ledger_id IS NULL OR ledger_id = ?)', cid, ledgerId) : null;
+      const cid = require('../lib/categories').resolveId(ledgerId, req.body.category_id);
+      const c = cid ? require('../lib/categories').find(ledgerId, cid, true) : null;
       if (!c) { res.flash('error', '请选择要改成的分类'); break; }
       run(`UPDATE transactions SET category_id = ?, updated_at = ? WHERE ledger_id = ? AND id IN (${placeholders})`, cid, require('../db').nowStr(), ledgerId, ...ids);
       res.flash('success', `已修改 ${ids.length} 笔的分类`);

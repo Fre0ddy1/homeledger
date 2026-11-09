@@ -7,6 +7,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const db = require('../src/db');
+db.init();
 const auth = require('../src/lib/auth');
 const util = require('../src/lib/util');
 const txn = require('../src/lib/txn');

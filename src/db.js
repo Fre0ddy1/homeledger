@@ -188,6 +188,13 @@ CREATE TABLE IF NOT EXISTS categories (
   sort_order INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_cat_kind ON categories(kind, parent_id);
+CREATE TABLE IF NOT EXISTS category_copies (
+  ledger_id INTEGER NOT NULL,
+  source_id INTEGER NOT NULL,
+  category_id INTEGER NOT NULL,
+  PRIMARY KEY (ledger_id, source_id),
+  UNIQUE (ledger_id, category_id)
+);
 
 CREATE TABLE IF NOT EXISTS tags (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -471,6 +478,7 @@ function ensureColumn(table, column, ddl) {
 }
 
 const migrated = [];
+if (ensureColumn('categories', 'deleted_at', 'TEXT')) migrated.push('categories.deleted_at');
 if (ensureColumn('transactions', 'subscription_id', 'INTEGER')) migrated.push('transactions.subscription_id');
 if (ensureColumn('users', 'avatar_path', 'TEXT')) migrated.push('users.avatar_path');
 if (ensureColumn('users', 'avatar_ver', 'INTEGER')) migrated.push('users.avatar_ver');
@@ -750,6 +758,12 @@ function recalcBalances(ledgerId) {
 let initialized = false;
 function init() {
   if (initialized) return;
+  // A restored pre-upgrade backup also needs the new category schema; module
+  // top-level migrations only run once per process, while reopenDatabase doesn't.
+  db.exec(`CREATE TABLE IF NOT EXISTS category_copies (
+    ledger_id INTEGER NOT NULL, source_id INTEGER NOT NULL, category_id INTEGER NOT NULL,
+    PRIMARY KEY(ledger_id,source_id), UNIQUE(ledger_id,category_id))`);
+  ensureColumn('categories', 'deleted_at', 'TEXT');
   seedSystemCategories();
   seedSettings();
   seedExchangeRates();

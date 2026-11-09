@@ -22,7 +22,7 @@
         </span>
       </div>
       <% g.items.forEach(function(t){ %>
-        <div class="txn <%= t.status === 'pending' ? 'pending' : '' %>" data-txn-id="<%= t.id %>" title="点击查看详情">
+        <div class="txn <%= t.status === 'pending' ? 'pending' : '' %>" data-txn-id="<%= t.id %>" title="点击查看详情" tabindex="0" role="group" aria-label="交易记录，按回车查看详情">
           <% if (showCheckbox) { %>
             <input type="checkbox" class="bulk-item" name="ids" value="<%= t.id %>" form="bulk-form">
           <% } %>
@@ -75,10 +75,10 @@
             <% } %>
             <% if (t.currency !== 'CNY') { %><div class="tiny muted"><%= t.currency %></div><% } %>
           </div>
-          <div class="txn-act">
+          <% if (ledger && canWrite(ledger.role)) { %><div class="txn-act">
             <a class="btn btn-sm btn-ghost" href="/transactions/<%= t.id %>/edit" title="编辑" aria-label="编辑"><svg class="icon sm"><use href="#i-pencil"></use></svg></a>
             <button class="btn btn-sm btn-ghost" type="button" data-del-txn="<%= t.id %>" title="删除" aria-label="删除"><svg class="icon sm"><use href="#i-trash-2"></use></svg></button>
-          </div>
+          </div><% } %>
         </div>
       <% }); %>
     </div>

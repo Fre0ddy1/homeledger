@@ -1,70 +1,45 @@
-<div class="notice info mb16">
-  系统内置了 <%= expenseTree.length + incomeTree.length %> 个一级分类、数百个二级分类，覆盖市面主流记账场景。你可以自由新建自己的分类；内置分类不可修改，但可以归档掉不用的。
-</div>
-
-<div class="grid grid-2">
-  <% [ { title:'支出分类', tree: expenseTree, kind:'expense' }, { title:'收入分类', tree: incomeTree, kind:'income' } ].forEach(function(sec){ %>
-    <div class="card">
-      <div class="card-head"><h2><%= sec.title %></h2>
-        <span class="muted small">近一年使用统计</span>
-      </div>
-      <% sec.tree.forEach(function(root){ %>
-        <div style="border-bottom:1px dashed var(--border);padding:8px 0">
-          <div class="row between">
-            <span class="bold"><%= root.icon %> <%= root.name %></span>
-            <span class="muted tiny">合计 <%= helpers.fmtAmount(root.children.reduce(function(s,c){ return s + Number(c.stat.total); }, 0) + Number(root.stat.total)) %></span>
-          </div>
-          <div class="row wrap mt8" style="gap:6px">
-            <% root.children.forEach(function(c){ %>
-              <span class="chip" title="<%= c.stat.cnt %> 笔 · <%= helpers.fmtAmount(c.stat.total) %>">
-                <%= c.icon %> <%= c.name %>
-                <% if (Number(c.stat.cnt) > 0) { %><span class="muted tiny"><%= c.stat.cnt %></span><% } %>
-                <% if (Number(c.ledger_id) === ledger.id) { %>
-                  <form method="post" action="/categories/<%= c.id %>/delete" style="display:inline" data-confirm="删除分类「<%= c.name %>」？">
-                    <input type="hidden" name="_csrf" value="<%= csrf %>">
-                    <button class="btn btn-sm btn-ghost" style="padding:0 2px;font-size:10px">✕</button>
-                  </form>
-                <% } %>
-              </span>
-            <% }); %>
-          </div>
-        </div>
-      <% }); %>
+<header class="category-heading">
+  <div><div class="eyebrow">YOUR CATEGORIES</div><h2>把收支整理得更清楚</h2><p>按自己的习惯分类。删除后仍保留历史账单，随时可以恢复。</p></div>
+  <% if(ledger && canWrite(ledger.role) && !showDeleted){ %>
+  <details class="category-create-disclosure" data-name="新建分类"><summary class="btn btn-primary"><svg class="icon"><use href="#i-plus"></use></svg>新建分类</summary>
+    <form method="post" action="/categories" class="category-create-form card">
+      <input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="return_to" value="<%= categoryBack %>">
+      <div class="field"><label for="new-cat-name">分类名称</label><input id="new-cat-name" name="name" placeholder="例如：咖啡时光" maxlength="20" required></div>
+      <div class="field"><label for="new-cat-kind">收支类型</label><select id="new-cat-kind" name="kind"><option value="expense" <%= categoryKind==='expense'?'selected':'' %>>支出</option><option value="income" <%= categoryKind==='income'?'selected':'' %>>收入</option></select></div>
+      <div class="field"><label for="new-cat-parent">所属一级分类</label><select id="new-cat-parent" name="parent_id"><option value="">作为一级分类</option><% [{title:'支出',tree:expenseTree},{title:'收入',tree:incomeTree}].forEach(function(sec){ %><optgroup label="<%= sec.title %>"><% sec.tree.forEach(function(r){ %><option value="<%= r.id %>" <%= selectedGroup && Number(selectedGroup.id)===Number(r.id)?'selected':'' %>><%= r.icon %> <%= r.name %></option><% }); %></optgroup><% }); %></select></div>
+      <div class="field"><label for="new-cat-icon">图标</label><input id="new-cat-icon" name="icon" value="🏷️" maxlength="8"></div>
+      <div class="field"><label for="new-cat-color">颜色</label><input id="new-cat-color" name="color" type="color" value="#0071e3"></div>
+      <button class="btn btn-primary" type="submit">创建分类</button>
+    </form>
+  </details><% } %>
+</header>
+<nav class="category-toolbar" aria-label="分类类型">
+  <a href="/categories?kind=expense" <%- !showDeleted && categoryKind==='expense'?'aria-current="page"':'' %>>支出分类<span class="count"><%= expenseTree.length %></span></a>
+  <a href="/categories?kind=income" <%- !showDeleted && categoryKind==='income'?'aria-current="page"':'' %>>收入分类<span class="count"><%= incomeTree.length %></span></a>
+  <a href="/categories?show=deleted" <%- showDeleted?'aria-current="page"':'' %>>已删除<span class="count"><%= deletedCategories.length %></span></a>
+</nav>
+<% if(showDeleted) { %>
+<section class="card"><div class="card-head"><h2>已删除分类</h2></div>
+<% if(!deletedCategories.length){ %><div class="empty">还没有删除的分类</div><% } %>
+<% deletedCategories.forEach(function(c){ %><div class="category-deleted-row"><div><b><%= c.icon %> <%= c.parent_name ? c.parent_name+' / ' : '' %><%= c.name %></b><p class="tiny muted mt8"><%= c.kind==='income'?'收入':'支出' %> · <%= c.deleted_at || '此前已归档' %><%= c.parent_archived ? ' · 请先恢复一级分类' : '' %></p></div>
+<% if(ledger && canWrite(ledger.role)){ %><form method="post" action="/categories/<%= c.id %>/restore"><input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="return_to" value="/categories?show=deleted"><button class="btn btn-sm" <%= c.parent_archived ? 'disabled' : '' %>>恢复</button></form><% } %></div><% }); %>
+</section>
+<% } else { %>
+<div class="category-workspace" data-focus-category="<%= categoryFocus || '' %>">
+  <nav class="category-navigation" aria-label="一级分类"><div class="category-navigation-label">选择一级分类</div>
+    <% activeTree.forEach(function(r){ %><a href="/categories?kind=<%= categoryKind %>&amp;group=<%= r.id %>" <%- selectedGroup && Number(selectedGroup.id)===Number(r.id)?'aria-current="page"':'' %>><span><%= r.icon %></span><span><%= r.name %></span><span class="count"><%= r.children.length %></span></a><% }); %>
+  </nav>
+  <section class="category-stage" aria-label="当前分类">
+    <% if(selectedGroup){ %>
+    <%- include('partials/category-entry',{node:selectedGroup}) %>
+    <div class="category-section-head"><h3>子分类 <span class="muted tiny">· <%= selectedGroup.children.length %> 个</span></h3>
+      <form class="category-search" method="get" action="/categories"><input type="hidden" name="kind" value="<%= categoryKind %>"><input type="hidden" name="group" value="<%= selectedGroup.id %>"><input name="q" type="search" value="<%= categorySearch %>" placeholder="搜索当前分类" aria-label="搜索当前分类"><button class="btn btn-sm" type="submit">搜索</button></form>
     </div>
-  <% }); %>
+    <% var visibleChildren=selectedGroup.children.filter(function(c){return !categorySearch||c.name.toLowerCase().includes(categorySearch.toLowerCase());}); %>
+    <div class="category-children-grid"><% visibleChildren.forEach(function(c){ %><%- include('partials/category-entry',{node:c}) %><% }); %></div>
+    <% if(!visibleChildren.length){ %><div class="category-empty"><%= categorySearch?'没有找到匹配的子分类':'这里还没有子分类，点击「新建分类」添加。' %></div><% } %>
+    <p class="tiny muted mt16">仅修改当前账本的分类 · 近一年使用统计</p>
+    <% } else { %><div class="category-empty">还没有分类，从新建一个一级分类开始。</div><% } %>
+  </section>
 </div>
-
-<div class="card">
-  <div class="card-head"><h2>新建分类</h2></div>
-  <form method="post" action="/categories">
-    <input type="hidden" name="_csrf" value="<%= csrf %>">
-    <div class="row wrap" style="gap:12px">
-      <div class="field" style="flex:1;min-width:140px">
-        <label>分类名称</label>
-        <input type="text" name="name" placeholder="例如：代驾" required>
-      </div>
-      <div class="field" style="flex:1;min-width:120px">
-        <label>收支类型</label>
-        <select name="kind">
-          <option value="expense">支出</option>
-          <option value="income">收入</option>
-        </select>
-      </div>
-      <div class="field" style="flex:2;min-width:150px">
-        <label>归属一级分类</label>
-        <select name="parent_id">
-          <option value="">作为一级分类</option>
-          <optgroup label="支出">
-            <% expenseTree.forEach(function(r){ %><option value="<%= r.id %>"><%= r.icon %> <%= r.name %></option><% }); %>
-          </optgroup>
-          <optgroup label="收入">
-            <% incomeTree.forEach(function(r){ %><option value="<%= r.id %>"><%= r.icon %> <%= r.name %></option><% }); %>
-          </optgroup>
-        </select>
-      </div>
-      <div class="field" style="flex:0 0 80px"><label>图标</label><input type="text" name="icon" value="🏷️"></div>
-      <div class="field" style="flex:0 0 80px"><label>颜色</label><input type="color" name="color" value="#4f7cff"></div>
-      <div class="field"><button class="btn btn-primary" type="submit">添加</button></div>
-    </div>
-  </form>
-</div>
+<% } %>

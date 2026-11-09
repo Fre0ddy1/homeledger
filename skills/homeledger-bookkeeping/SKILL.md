@@ -88,6 +88,20 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 
 用户问「刚才那笔记上了吗」时用 `/transactions/recent` 回答，不要凭记忆编。
 
+## 分类编辑、删除与恢复
+
+内置分类与自建分类都可由当前账本的可写成员修改。先查询分类清单并按名称、收支类型及父级确认对象；不能把 `is_system: true` 当作只读标记。
+
+- `GET /api/open/categories`：返回当前有效分类的扁平清单，含 `id/parent_id/path/kind`；新记账从此清单选择。
+- `GET /api/open/categories?show=deleted`：查询已删除分类；不要依赖此清单一定有 `path`，用名称、类型与父级 ID 识别。
+- `POST /api/open/categories/:id`：修改名称、图标、颜色，例如 `{"name":"咖啡时光","icon":"☕","color":"#99704b"}`。
+- `POST /api/open/categories/:id/delete`：软删除；历史账单与分类引用保留。删除一级分类会隐藏其子分类。
+- `POST /api/open/categories/:id/restore`：恢复；子分类须先恢复父级。恢复父级不会撤销子分类各自的删除状态。
+
+修改只影响令牌绑定的当前账本。服务会为共享内置分类建立当前账本副本，返回的 ID 可能变化；操作后重新查询清单，不跨账本复用缓存 ID。旧 ID 的对应由服务处理，不直接修改数据库。
+
+仅在用户要求编辑、删除或恢复时执行对应操作；查到历史已删分类不代表可以自动恢复，也不要为绕过已删除状态另建同名分类。已有记录可以保留原已删分类，新建记录不能选用已删分类。依据响应结果汇报，不能仅凭 HTTP 请求已发送就称成功。
+
 ## 能力总览（v1.2.0+，除令牌管理与跨账本外全量开放）
 
 权限随令牌走：**读取**=账本任意成员；**写入**=可写成员（member+）；**站点设置**=站点管理员。
@@ -103,7 +117,7 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 | `GET /api/open/reports/categories?kind=expense&from=&to=` | 分类构成（`top=分类名` 下钻二级） |
 | `GET /api/open/reports/trend?months=6` | 近 N 月收支趋势 |
 | `GET /api/open/accounts` / `GET /api/open/accounts` 含净资产 | 账户余额、净资产 |
-| `GET /api/open/categories` / `GET /api/open/tags` | 分类树、标签 |
+| `GET /api/open/categories` / `GET /api/open/tags` | 有效分类扁平清单、标签；分类可用 `show=deleted` 查询已删除项 |
 | `GET /api/open/debts` / `GET /api/open/budgets` / `GET /api/open/goals` / `GET /api/open/subscriptions` / `GET /api/open/recurring` | 借贷台账 / 预算 / 目标 / 订阅 / 周期账单 |
 | `GET /api/open/settings` | 站点与 AI 配置（API Key 永不回显，只有 `api_key_set`） |
 
@@ -117,7 +131,7 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 | `POST /api/open/transactions/:id/restore` | 恢复已删除记录 |
 | `POST /api/open/transactions/bulk-delete` / `bulk-category` / `bulk-tag` / `bulk-reimburse` | 批量删除 / 改分类 / 加标签 / 报销入账（body: `ids` 数组） |
 | `POST /api/open/accounts` / `:id` / `:id/archive` / `:id/delete` / `:id/adjust` | 账户增改停删；`adjust` 传 `actual_balance` 对齐余额（差额自动记余额调整） |
-| `POST /api/open/categories` / `:id` / `:id/delete`；`POST /api/open/tags` / `:id/delete` | 自定义分类、标签管理（系统内置分类只读） |
+| `POST /api/open/categories` / `:id` / `:id/delete` / `:id/restore`；`POST /api/open/tags` / `:id/delete` | 内置/自建分类的增改、软删除与恢复；标签管理 |
 | `POST /api/open/debts`（`create_txn:true` 同时记借出/借入流水）/ `:id/settle`（收还款，缺省金额=全部余额）/ `:id/delete` | 借贷台账 |
 | `POST /api/open/budgets` / `:id` / `:id/toggle` / `:id/delete` | 预算管理 |
 | `POST /api/open/goals` / `:id/deposit`（`amount` 负数为取出；`create_txn:true` 记流水）/ `:id/delete` | 储蓄目标 |

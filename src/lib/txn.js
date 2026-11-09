@@ -61,7 +61,8 @@ function buildWhere(ledgerId, f = {}) {
 
   if (f.categoryId) {
     where.push('(t.category_id = ? OR t.category_id IN (SELECT id FROM categories WHERE parent_id = ?))');
-    params.push(f.categoryId, f.categoryId);
+    const cid = require('./categories').resolveId(ledgerId, f.categoryId);
+    params.push(cid, cid);
   }
   if (f.accountId) {
     where.push('(t.account_id = ? OR t.to_account_id = ?)');
@@ -155,7 +156,7 @@ function pickAccount(ledgerId, id) {
 }
 function pickCategory(ledgerId, id) {
   if (!id) return null;
-  const c = get('SELECT id FROM categories WHERE id = ? AND (ledger_id IS NULL OR ledger_id = ?)', Number(id), ledgerId);
+  const c = require('./categories').find(ledgerId, id, true);
   return c ? Number(c.id) : null;
 }
 
@@ -214,6 +215,9 @@ function createTransaction(ledgerId, userId, d) {
 function updateTransaction(id, ledgerId, userId, d) {
   const old = get('SELECT * FROM transactions WHERE id = ? AND ledger_id = ? AND deleted_at IS NULL', id, ledgerId);
   if (!old) throw new Error('记录不存在');
+  const existingCategory = require('./categories').find(ledgerId, d.category_id);
+  const categoryId = existingCategory && Number(existingCategory.id) === Number(old.category_id)
+    ? Number(existingCategory.id) : pickCategory(ledgerId, d.category_id);
   const type = TXN_TYPE_MAP[d.type] ? d.type : old.type;
   const rawAmount = Math.round(Number(d.amount_cents) || 0);
   const amount = type === 'adjust' ? rawAmount : Math.abs(rawAmount);
@@ -237,7 +241,7 @@ function updateTransaction(id, ledgerId, userId, d) {
        owner_label=?, no_rhythm=?, updated_at=? WHERE id=?`,
     type, amount, d.currency || old.currency, rate, toBase(amount, rate),
     accountId, toAccountId,
-    pickCategory(ledgerId, d.category_id),
+    categoryId,
     /^\d{4}-\d{2}-\d{2}$/.test(String(d.txn_date || '')) ? d.txn_date : old.txn_date,
     d.note ? String(d.note).slice(0, 300) : null,
     d.merchant ? String(d.merchant).slice(0, 60) : null,

@@ -24,6 +24,8 @@ const SUITES = [
   'verify-forecast.js',
   'verify-annual.js',
   'verify-reports.js',
+  'verify-dashboard.js',
+  'verify-categories.js',
   'verify-transactions.js',
   'verify-txn-detail.js',
   'verify-importers.js',

@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node --no-warnings server.js",
-    "dev": "node --no-warnings --watch server.js"
+    "dev": "node --no-warnings --watch server.js",
+    "preview:ui": "node --no-warnings scripts/preview-ui.js"
   },
   "engines": {
     "node": ">=22.5.0"

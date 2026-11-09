@@ -39,7 +39,7 @@ function sediment(ledgerId, merchant) {
     if (!kw) return false;
     const rows = all(
       `SELECT t.category_id AS cid, c.kind AS kind, COUNT(*) AS cnt
-       FROM transactions t JOIN categories c ON c.id = t.category_id AND c.is_archived = 0
+       FROM transactions t JOIN categories c ON c.id = t.category_id AND c.is_archived = 0 AND NOT EXISTS (SELECT 1 FROM categories cp WHERE cp.id=c.parent_id AND cp.is_archived=1)
        WHERE t.ledger_id = ? AND t.deleted_at IS NULL AND t.merchant = ?
          AND t.category_id IS NOT NULL AND t.type IN ('expense','income')
        GROUP BY t.category_id ORDER BY cnt DESC, cid DESC`,
@@ -86,9 +86,7 @@ function lookup(ledgerId, merchant, text, kind) {
   const entries = load(ledgerId)
     .filter((e) => !e.dismissed && e.kind === kind)
     .sort((a, b) => effective(b) - effective(a));
-  const alive = (e) => get(
-    'SELECT id FROM categories WHERE id = ? AND is_archived = 0 AND kind = ?', e.category_id, kind
-  );
+  const alive = (e) => { const c=require('./categories').find(ledgerId,e.category_id,true); return c && c.kind===kind; };
   if (kw) {
     for (const e of entries) if (e.kw === kw && alive(e)) return e;
   }

@@ -3,11 +3,7 @@
 const { all, get } = require('../db');
 
 function categoryTree(ledgerId, kind = 'expense') {
-  const rows = all(
-    `SELECT * FROM categories WHERE kind = ? AND is_archived = 0 AND (ledger_id IS NULL OR ledger_id = ?)
-     ORDER BY sort_order, id`,
-    kind, ledgerId
-  );
+  const rows = require('./categories').list(ledgerId, kind);
   const roots = rows.filter((r) => !r.parent_id);
   return roots.map((r) => ({
     ...r,
@@ -16,15 +12,7 @@ function categoryTree(ledgerId, kind = 'expense') {
 }
 
 function flatCategories(ledgerId, kind = null) {
-  let sql = `SELECT c.*, p.name AS parent_name FROM categories c LEFT JOIN categories p ON p.id = c.parent_id
-             WHERE c.is_archived = 0 AND (c.ledger_id IS NULL OR c.ledger_id = ?)`;
-  const params = [ledgerId];
-  if (kind) { sql += ' AND c.kind = ?'; params.push(kind); }
-  sql += ' ORDER BY c.kind DESC, COALESCE(p.sort_order, c.sort_order), c.sort_order, c.id';
-  return all(sql, ...params).map((c) => ({
-    ...c,
-    path: c.parent_name ? `${c.parent_name}/${c.name}` : c.name,
-  }));
+  return require('./categories').list(ledgerId, kind).map((c) => ({ ...c, path: c.parent_name ? `${c.parent_name}/${c.name}` : c.name }));
 }
 
 function accounts(ledgerId) {
