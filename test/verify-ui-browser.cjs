@@ -205,7 +205,7 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   const returnNavigation=results.every(r=>r.hasReturn!==false);
   const financeLayout=results.filter(r=>r.commonWidth).every(r=>r.actionAlignment!==false&&r.createAligned!==false)&&[390,820,1280,1920,2560].every(w=>{const rows=results.filter(r=>r.commonWidth&&r.width===w);return rows.every(r=>Math.abs(r.commonWidth-rows[0].commonWidth)<=1);});
   const naturalCards=results.filter(r=>r.cards).every(r=>r.cards.every(c=>c.slack<=80))&&results.every(r=>r.contentScrollers.length===0&&r.flatCategories!==false)&&variants.every(r=>r.contentScrollers.length===0);
-  const boundedPages=results.filter(r=>r.width>=1920&&!['/','/more','/not-found'].includes(r.route)).every(r=>r.pageWidth<=1465);
+  const boundedPages=results.filter(r=>r.width>=1920&&!['/','/more','/not-found'].includes(r.route.split('?')[0])).every(r=>r.pageWidth<=1465);
   const variantLayouts=variants.every(v=>!v.overflow&&v.visible!==false&&v.cardsFit!==false&&(!v.pageWidth||v.pageWidth<=1281));
   const darkAuth=await browser.newContext({colorScheme:'dark',viewport:{width:390,height:844}});const darkLogin=await darkAuth.newPage();
   await darkLogin.goto('http://127.0.0.1:5113/login');

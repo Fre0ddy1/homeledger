@@ -142,6 +142,7 @@ const enc = encodeURIComponent;
   check('收入视角 200 且出「职业收入/工资」', r.status === 200 && r.text.includes('职业收入/工资'), `HTTP ${r.status}`);
   check('收入视角一级「职业收入」可点', r.text.includes(`kind=income&amp;top=${enc('职业收入')}"`), '');
 
+  r=await req('GET','/reports?basis=cashflow&month=2026-11');check('资金流日期区间使用真实月末，不生成无效日期',r.text.includes('name="to" value="2026-11-30"'));
   console.log(`\n=== 结果：${pass} 通过 / ${fail} 失败 ===`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error('FATAL', e); process.exit(1); });

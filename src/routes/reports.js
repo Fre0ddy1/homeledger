@@ -29,7 +29,7 @@ function parseRange(q, ledgerId = 0) {
     const y = curMonth.slice(0, 4);
     return {
       start: `${y}-${u.pad(startM)}-01`,
-      end: `${y}-${u.pad(startM + 2)}-31`,
+      end: `${y}-${u.pad(startM + 2)}-${u.pad(u.daysInMonth(y+'-'+u.pad(startM+2)))}`,
       label: `${y}年 第${qn + 1} 季度`, preset, key: `${y}Q${qn + 1}`,
     };
   }
@@ -39,7 +39,7 @@ function parseRange(q, ledgerId = 0) {
     return { start: first?.d || `${curMonth}-01`, end: today, label: '全部时间', preset, key: 'all' };
   }
   const month = /^\d{4}-\d{2}$/.test(String(q.month || '')) ? q.month : curMonth;
-  return { start: `${month}-01`, end: `${month}-31`, label: u.monthLabel(month), preset: 'month', key: month, month };
+  return { start: `${month}-01`, end: `${month}-${u.pad(u.daysInMonth(month))}`, label: u.monthLabel(month), preset: 'month', key: month, month };
 }
 
 router.get('/reports', auth.requireLogin, (req, res) => {

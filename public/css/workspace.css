@@ -90,6 +90,10 @@ body { background: radial-gradient(ellipse 720px 960px at 0 0,var(--ambient-blue
 .page-body:has(.repayment-entry) { max-width:960px; }
 .repayment-entry .help { font-size:13px; line-height:1.7; color:var(--muted); }
 .detail-navigation { display:flex; flex-wrap:wrap; gap:8px; }
+.cashflow-filters { display:flex; flex-wrap:wrap; align-items:center; gap:16px; }
+.cashflow-range { display:grid; grid-template-columns:180px 180px auto; align-items:center; gap:10px; }
+.cashflow-range > * { min-width:0; }
+@media(max-width:700px) { .cashflow-range { width:100%; grid-template-columns:repeat(2,minmax(0,1fr)); } .cashflow-range .btn { grid-column:1 / -1; justify-self:start; } }
 [data-layout="m"] > .detail-navigation { margin:12px 16px; }
 .finance-form:has(select[name="method"] option[value="manual"]:checked) .finance-manual-fields { display:block; }
 .finance-form .check { align-items:flex-start; line-height:1.6; }
