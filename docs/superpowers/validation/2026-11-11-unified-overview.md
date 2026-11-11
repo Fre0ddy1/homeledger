@@ -14,11 +14,11 @@
 
 - Windows Node 24.14.0 / 22.23.4：`node test/run-all.js`，均 27 套、1316 断言通过。日志 `.tmp/unified-accepted-win24.log` / `.tmp/unified-accepted-win22.log`。
 - `node test/selfcheck-static.js`：15项通过；`git diff --check`通过，两份技能及参考文件分别哈希一致。
-- `node test/verify-ui-browser.cjs`：360视图、25起始状态、68设置/编辑变体、4组无JS金融操作通过，无溢出和pageerror。新增全页控件字体、报表两口径工具栏计算样式、上下文、实际增强下拉切换检查均通过。日志 `.tmp/unified-browser-final.log`。
+- `node test/verify-ui-browser.cjs`：360视图、25起始状态、68设置/编辑变体、4组无JS金融操作通过，无溢出和pageerror。新增全页控件字体、报表两口径工具栏计算样式、上下文、实际增强下拉切换及窄屏日历检查均通过。最终日志 `.tmp/unified-browser-accepted.log`。
 - 最后定点检查手机/桌面、明/暗报表工具栏及总览，修正日期控件撑宽、辅助标签隐藏和手机金额断行；查看实际截图 `.screenshots/proof-*.png`，桌面工具栏257px、手机437px，自然高度，无横向溢出。
 - 独立审查发现的1项P1和3项P2全部修复并复核，无剩余P1/P2。涉及集合遍历、趋势月份、借钱下拉资格，以及窄屏报表按钮规则须限定直接子元素；已实际打开窄屏日期弹层检查七列日历，对应交互及业务断言已补充。
 - 仅使用8099/5113隔离实例及5112演示数据。预览按已核验PID重启，未操作真实账本或5111。
 
 ## 发布边界
 
-按维护者既有授权，经PR及Linux Node22/24 CI后直接合并main。合并证据见PR；本轮不涉及版本标签或镜像发布。
+按维护者既有授权，经PR及Linux Node22/24 CI后直接合并main。远端门禁、提交及最终合并证据见[PR #3](https://github.com/Fre0ddy1/homeledger/pull/3)的检查与合并记录；发布文件树已与本地验证提交逐项核对。本轮不涉及版本标签或镜像发布。
