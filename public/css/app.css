@@ -98,6 +98,7 @@ html, body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+html { scrollbar-gutter:stable; }
 
 body {
   background:

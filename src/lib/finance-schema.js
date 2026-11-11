@@ -31,6 +31,7 @@ function ensure(db,column){
   `);
   column('finance_payments','sources_json',"TEXT NOT NULL DEFAULT '[]'");
   column('finance_payments','external_mode','TEXT');
+  column('finance_payments','allocation_mode',"TEXT NOT NULL DEFAULT 'manual'");
   column('finance_payments','replaced_by','INTEGER');
   column('credit_profiles','rules_json',"TEXT NOT NULL DEFAULT '[]'");
   column('credit_profiles','opening_closing','TEXT');

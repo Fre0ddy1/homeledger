@@ -18,6 +18,14 @@ POST /transactions 及编辑、订阅、定期规则会在服务端检查，不�
 
 首页两套口径同屏，不相加；GET /summary 及 /cashflow 等 API 统计口径保持原约定。
 
+## 自动还款（2026-11-12）
+
+- GET /finance/repayment-options 的信用卡对象新增 due_cents、prepaid_cents、suggested_amount_cents；贷款新增 next_installment（id/due_date/本金、利息、费用和amount_cents）及建议金额。
+- 信用卡付款省略 allocations 时使用自动模式：按最早到期已出账账单抵扣，余款作为预还款，出账、退款、撤销/恢复及更正后自动重算关联。负账单退款余额在出账后自动抵扣后续待还。自动抵扣仅改变关联，不重复生成资金流水，不要求先确认银行账单。
+- POST /finance/repayments 及 /finance/loans/:id/payments，正常贷款可省略principal_cents/interest_cents/fee_cents，提供amount_cents（须等于最近未还期总额）或完全使用该期计划。服务端带出分项及期次；同operation_key重试先返回原付款，不会因期次变化重复记账。实际分项与计划不同时必须明确提供分项。
+- 付款响应新增 allocation_mode（auto/manual）；账单新增 credit_applied_cents（退款余额抵扣），remaining_cents已扣除它。普通调用不需要手动allocate；明确传allocations（含空数组）才转手动模式，后续仅改日期不能静默覆盖该安排。手工改额不足原指定账单金额时须明确调整分配。
+- 银行金额校正是可选例外，已校正的金额/版本仍保留；不会因为简化界面擅自改回本地归集值。实际资金、更正、来源替换及撤销的既有保护继续有效。
+
 ## 借钱台账
 
 `GET /debts`返回有效条目及应收/应还；`?show=deleted`查询已归档。`GET /debts/:id`含稳定ID、余额、历史关联流水，已归档也可查。

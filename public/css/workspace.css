@@ -122,7 +122,26 @@ body { background: radial-gradient(ellipse 720px 960px at 0 0,var(--ambient-blue
 .finance-form { margin-top:18px; }
 .finance-form .field { min-width:0; }
 .finance-manual-fields { display:none; }
-.page-body:has(.repayment-entry) { max-width:960px; }
+.page-body:has(.entry-workspace) { max-width:1280px; }
+.entry-workspace .grid-main { grid-template-columns:minmax(0,740px) minmax(360px,520px); }
+.entry-navigation { margin-bottom:20px; }
+.entry-workspace .entry-navigation .type-tabs { margin:0; }
+.asset-summary { margin:20px 0; }
+.asset-metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:24px; }
+.asset-value { font-size:clamp(22px,2vw,32px); font-weight:650; overflow-wrap:anywhere; }
+.asset-summary .help { margin-bottom:0; }
+.account-groups { display:grid; gap:20px; }
+.account-groups > .card { margin:0; }
+.account-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; align-items:start; }
+.account-cards .account-entry { margin:0; padding:16px; border:1px solid var(--border); border-radius:var(--radius-sm); }
+@media(max-width:1100px) {
+  .entry-workspace .grid-main { grid-template-columns:minmax(0,1fr); }
+}
+@media(max-width:820px) {
+  .account-cards { grid-template-columns:minmax(0,1fr); }
+  .asset-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+  .asset-metrics > div:first-child { grid-column:1/-1; }
+}
 .repayment-entry .help { font-size:13px; line-height:1.7; color:var(--muted); }
 .detail-navigation { display:flex; flex-wrap:wrap; gap:8px; }
 .cashflow-filters { display:flex; flex-wrap:wrap; align-items:center; gap:16px; }

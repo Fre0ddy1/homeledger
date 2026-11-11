@@ -1,0 +1,7 @@
+<div class="entry-workspace" data-initial-type="<%= initialType %>" data-base-currency="<%= ledger.currency||baseCurrency %>">
+<section class="card entry-navigation"><nav class="type-tabs" aria-label="记账类型">
+<% [['expense','支出'],['income','收入'],['transfer','转账'],['repayment','还款'],['lend','借出'],['borrow','借入'],['repay_receive','收回借款'],['repay_pay','偿还借款']].forEach(([key,label])=>{ %><a data-entry-type="<%= key %>" class="<%= initialType===key?'active':'' %>" href="/transactions/new?type=<%= key %>" <%- initialType===key?'aria-current="page"':'' %>><%= label %></a><% }); %>
+</nav></section>
+<div id="ordinary-entry" class="<%= initialType==='repayment'?'hidden':'' %>"><%- include('txn-form',{embeddedEntry:true}) %></div>
+<div id="repayment-entry-panel" class="<%= initialType==='repayment'?'':'hidden' %>"><%- include('repayment-form',{embeddedEntry:true}) %></div>
+</div>

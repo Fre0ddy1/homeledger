@@ -19,7 +19,7 @@ function prepareSources(lid,body,funding,target,amount,principal,kind){
  return {rows,mode:'replace'};
 }
 function sourcePreview(lid,kind,targetId,body){if(!sourceIds(body).length)throw Error('请先选择已有来源流水；尚未记账时直接记录实际付款');const funding=c.account(lid,body.account_id,{funding:true}),target=kind==='loan'?require('./loans').detail(lid,targetId).account:c.account(lid,targetId,{type:'credit',currency:funding.currency});const amount=kind==='loan'?Number(body.principal_cents||0)+Number(body.interest_cents||0)+Number(body.fee_cents||0):Number(body.amount_cents);const sources=prepareSources(lid,{...body,confirm_sources:true},funding,target,c.cents(amount),Number(body.principal_cents||0),kind);return {mode:sources.mode,source_ids:sources.rows.map(t=>t.id),original_outflow_cents:amount,new_outflow_cents:amount,new_expense_cents:kind==='loan'?Number(body.interest_cents||0)+Number(body.fee_cents||0):0,requires_confirmation:sources.mode==='replace'};}
-function createRow(lid,kind,targetId,funding,p,i,f,date,request,sources){const id=db.run('INSERT INTO finance_payments(ledger_id,target_kind,target_id,account_id,principal_cents,interest_cents,fee_cents,amount_cents,txn_date,operation_key,signature,external_txn_id,created_at,sources_json,external_mode)VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',lid,kind,Number(targetId),funding.id,p,i,f,p+i+f,date,request.key,request.sig,sources.rows[0]?.id||null,db.nowStr(),JSON.stringify(sources.rows),sources.mode).lastInsertRowid;return id;}
+function createRow(lid,kind,targetId,funding,p,i,f,date,request,sources,body={}){const id=db.run('INSERT INTO finance_payments(ledger_id,target_kind,target_id,account_id,principal_cents,interest_cents,fee_cents,amount_cents,txn_date,operation_key,signature,external_txn_id,created_at,sources_json,external_mode)VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',lid,kind,Number(targetId),funding.id,p,i,f,p+i+f,date,request.key,request.sig,sources.rows[0]?.id||null,db.nowStr(),JSON.stringify(sources.rows),sources.mode).lastInsertRowid;db.run('UPDATE finance_payments SET allocation_mode=? WHERE id=?',kind==='card'&&!body.allocations?'auto':'manual',id);return id;}
 function linkTxn(id,tid,role){db.run('INSERT INTO finance_payment_txns VALUES(?,?,?)',id,tid,role);}
 function cashRows(lid,uid,paymentId,funding,target,p,i,f,date,body,sources,label){
  const txn=require('../txn');
@@ -41,23 +41,32 @@ function allocateLoan(lid,paymentId,loan,body,p,i,f){
 }
 function payLoan(lid,uid,id,body){return db.tx(()=>{
  const request=begin(lid,'loan',id,body);if(request.existing)return request.existing;
- const loan=require('./loans').detail(lid,id),funding=c.account(lid,body.account_id,{currency:loan.account.currency,funding:true}),p=c.cents(body.principal_cents||0,{zero:true}),i=c.cents(body.interest_cents||0,{zero:true}),f=c.cents(body.fee_cents||0,{zero:true}),amount=c.cents(p+i+f),date=c.date(body.date||db.todayStr());
+ const loan=require('./loans').detail(lid,id);
+ if(body.principal_cents===undefined){
+   if(['interest_cents','fee_cents'].some(key=>body[key]!==undefined&&Number(body[key])!==0))throw Error('请明确提供本金及实际费用分项，不能只修改利息或手续费');
+   const period=loan.installments.find(row=>(!body.installment_id||row.id===Number(body.installment_id))&&row.remaining_principal+row.remaining_interest+row.remaining_fee>0);
+   if(!period)throw Error('贷款已结清或所选期次不存在');
+   const planned=period.remaining_principal+period.remaining_interest+period.remaining_fee;
+   if(body.amount_cents!==undefined&&Number(body.amount_cents)!==planned)throw Error('实付与本期计划不同，请展开调整实际分项：本金、利息及手续费');
+   body={...body,installment_id:period.id,principal_cents:period.remaining_principal,interest_cents:period.remaining_interest,fee_cents:period.remaining_fee};
+ }
+ const funding=c.account(lid,body.account_id,{currency:loan.account.currency,funding:true}),p=c.cents(body.principal_cents||0,{zero:true}),i=c.cents(body.interest_cents||0,{zero:true}),f=c.cents(body.fee_cents||0,{zero:true}),amount=c.cents(p+i+f),date=c.date(body.date||db.todayStr());
  if(body.amount_cents!==undefined&&Number(body.amount_cents)!==amount)throw Error('本金、利息和费用之和不等于付款总额');
  const sources=prepareSources(lid,body,funding,loan.account,amount,p,'loan');const sourceDelta=sources.rows.reduce((s,t)=>s+db.txnEffects(t).filter(e=>e.accountId===loan.account.id).reduce((v,e)=>v+e.delta,0),0);if(p>Math.max(0,-(Number(loan.account.balance_cents)-sourceDelta)))throw Error('还款本金超过剩余负债');
- const paymentId=createRow(lid,'loan',id,funding,p,i,f,date,request,sources);
+ const paymentId=createRow(lid,'loan',id,funding,p,i,f,date,request,sources,body);
  allocateLoan(lid,paymentId,loan,body,p,i,f);cashRows(lid,uid,paymentId,funding,loan.account,p,i,f,date,body,sources,'贷款还款 · '+loan.name);db.recalcBalances(lid);return detail(lid,paymentId);
 });}
 function allocateCard(lid,paymentId,cardId,body,amount){
  const cards=require('./cards'),statements=cards.statements(lid,cardId).sort((a,b)=>a.due_date.localeCompare(b.due_date));
  const allocations=body.allocations?(typeof body.allocations==='string'?JSON.parse(body.allocations):body.allocations):null;
- if(allocations){let total=0;const used=new Set();for(const a of allocations){const s=statements.find(x=>x.id===Number(a.statement_id));if(!s||used.has(s.id)||s.dirty)throw Error('账单不属于当前信用卡、待核对或分配重复');used.add(s.id);const v=c.cents(a.amount_cents,{zero:true});if(v>s.remaining_cents)throw Error('分配超过该账单待还金额');if(v)putAllocation(lid,paymentId,'card',s.id,v);total+=v;}if(total>amount)throw Error('账单分配超过付款金额');return;}
- let remaining=amount;for(const s of statements.filter(s=>!s.dirty&&s.closing_date<=db.todayStr())){const value=Math.min(remaining,s.remaining_cents);if(value>0)putAllocation(lid,paymentId,'card',s.id,value);remaining-=value;if(!remaining)break;}
+ if(allocations){let total=0;const used=new Set();for(const a of allocations){const s=statements.find(x=>x.id===Number(a.statement_id));if(!s||used.has(s.id)||s.dirty)throw Error('账单不属于当前信用卡、待核对或分配重复');used.add(s.id);const v=c.cents(a.amount_cents,{zero:true});if(v>Math.max(0,s.total_cents-s.manual_paid_cents))throw Error('分配超过该账单可指定金额');if(v)putAllocation(lid,paymentId,'card',s.id,v);total+=v;}if(total>amount)throw Error('账单分配超过付款金额');return;}
+ require('./card-allocation').reconcile(lid,cardId);
 }
 function payCard(lid,uid,id,body){return db.tx(()=>{
  const request=begin(lid,'card',id,body);if(request.existing)return request.existing;
  const card=c.account(lid,id,{type:'credit'});c.baseCurrency(lid,card.currency);require('./cards').profile(lid,id);const funding=c.account(lid,body.account_id,{currency:card.currency,funding:true}),amount=c.cents(body.amount_cents),date=c.date(body.date||db.todayStr());
- require('./cards').refresh(lid,id);const sources=prepareSources(lid,body,funding,card,amount,amount,'card'),paymentId=createRow(lid,'card',id,funding,amount,0,0,date,request,sources);
- cashRows(lid,uid,paymentId,funding,card,amount,0,0,date,body,sources,'信用卡还款 · '+card.name);allocateCard(lid,paymentId,id,body,amount);db.recalcBalances(lid);return detail(lid,paymentId);
+ require('./cards').refresh(lid,id);const sources=prepareSources(lid,body,funding,card,amount,amount,'card'),paymentId=createRow(lid,'card',id,funding,amount,0,0,date,request,sources,body);
+ cashRows(lid,uid,paymentId,funding,card,amount,0,0,date,body,sources,'信用卡还款 · '+card.name);allocateCard(lid,paymentId,id,body,amount);require('./cards').refresh(lid,id);db.recalcBalances(lid);return detail(lid,paymentId);
 });}
 function reverse(lid,id){return db.tx(()=>{
  const p=c.row('finance_payments',lid,id,true);if(p.deleted_at)return detail(lid,id);const rows=detail(lid,id).transactions;
@@ -67,14 +76,19 @@ function reverse(lid,id){return db.tx(()=>{
 function restore(lid,id){return db.tx(()=>{
  const p=c.row('finance_payments',lid,id,true);if(!p.deleted_at)return detail(lid,id);if(p.replaced_by)throw Error('此付款已经更正，请查看更正记录');const allocations=detail(lid,id).allocations;
  if(p.target_kind==='loan'){const loan=require('./loans').detail(lid,p.target_id),sourceDelta=JSON.parse(p.sources_json||'[]').reduce((s,t)=>s+db.txnEffects(t).filter(e=>e.accountId===loan.account.id).reduce((v,e)=>v+e.delta,0),0);if(p.principal_cents>Math.max(0,-(Number(loan.account.balance_cents)-sourceDelta)))throw Error('恢复后会超过贷款剩余本金');for(const a of allocations){const row=loan.installments.find(i=>i.id===a.target_id);if(!row||a.principal_cents>row.remaining_principal||a.interest_cents>row.remaining_interest||a.fee_cents>row.remaining_fee)throw Error('原期次已调整或已被其他付款核销，不能自动恢复');}}
- else{const statements=require('./cards').statements(lid,p.target_id);for(const a of allocations){const s=statements.find(s=>s.id===a.target_id);if(!s||s.dirty||a.principal_cents>s.remaining_cents)throw Error('账单待核对或待还金额已变化，请重新分配');}}
+ else if(p.allocation_mode!=='auto'){const statements=require('./cards').statements(lid,p.target_id);for(const a of allocations){const s=statements.find(s=>s.id===a.target_id);if(!s||s.dirty||a.principal_cents>Math.max(0,s.total_cents-s.manual_paid_cents))throw Error('账单待核对或待还金额已变化，请重新分配');}}
  const snapshot=JSON.parse(p.sources_json||'[]');for(const old of snapshot){guardTransaction(lid,old.id);require('./cards').guardTransaction(lid,old.id);const t=db.get('SELECT * FROM transactions WHERE ledger_id=? AND id=? AND deleted_at IS NULL',lid,old.id);if(!t||t.type!==old.type||t.account_id!==old.account_id||t.to_account_id!==old.to_account_id||t.amount_cents!==old.amount_cents||t.currency!==old.currency||t.rate!==old.rate||t.amount_base_cents!==old.amount_base_cents||t.status!==old.status||t.txn_date!==old.txn_date||t.debt_id)throw Error('来源流水已变化，不能自动恢复');}
  for(const t of detail(lid,id).transactions){if(t.role==='linked')continue;db.run('UPDATE transactions SET deleted_at=?,updated_at=? WHERE id=?',t.role==='original'?db.nowStr():null,db.nowStr(),t.id);}
  db.run('UPDATE finance_payments SET deleted_at=NULL WHERE id=?',p.id);db.recalcBalances(lid);require('../borrowing').recalculate(lid);if(p.target_kind==='card')require('./cards').refresh(lid,p.target_id);return detail(lid,id);
 });}
-function allocate(lid,id,body){return db.tx(()=>{const p=c.row('finance_payments',lid,id);if(p.target_kind!=='card')throw Error('贷款期次须通过整体付款修改');db.run('DELETE FROM finance_allocations WHERE ledger_id=? AND payment_id=?',lid,p.id);allocateCard(lid,p.id,p.target_id,body,p.amount_cents);return detail(lid,id);});}
+function allocate(lid,id,body){return db.tx(()=>{const p=c.row('finance_payments',lid,id);if(p.target_kind!=='card')throw Error('贷款期次须通过整体付款修改');db.run('UPDATE finance_payments SET allocation_mode=? WHERE id=?',body.allocations?'manual':'auto',p.id);db.run('DELETE FROM finance_allocations WHERE ledger_id=? AND payment_id=?',lid,p.id);allocateCard(lid,p.id,p.target_id,body,p.amount_cents);require('./cards').refresh(lid,p.target_id);return detail(lid,id);});}
 function amend(lid,uid,id,body){return db.tx(()=>{
  const old=c.row('finance_payments',lid,id,true);
+ if(old.target_kind==='card'&&old.allocation_mode==='manual'&&body.allocations===undefined){
+   const allocations=detail(lid,old.id).allocations.map(a=>({statement_id:a.target_id,amount_cents:a.principal_cents}));
+   if(allocations.reduce((sum,a)=>sum+a.amount_cents,0)>Number(body.amount_cents??old.amount_cents))throw Error('更正金额小于已指定账单金额，请先明确调整对应账单');
+   body={...body,allocations};
+ }
  const params={...body,account_id:body.account_id??old.account_id,principal_cents:body.principal_cents??old.principal_cents,interest_cents:body.interest_cents??old.interest_cents,fee_cents:body.fee_cents??old.fee_cents,amount_cents:body.amount_cents??(old.target_kind==='card'?old.amount_cents:undefined),date:body.date||old.txn_date,existing_transaction_ids:JSON.parse(old.sources_json||'[]').map(t=>t.id),confirm_sources:true};
  if(old.replaced_by){const next=detail(lid,old.replaced_by);if(next.operation_key===body.operation_key&&next.signature===signature(old.target_kind,old.target_id,params))return next;throw Error('此付款已更正，请从最新更正记录继续操作');}
  if(old.deleted_at)throw Error('请先恢复付款再修改');
@@ -83,6 +97,18 @@ function amend(lid,uid,id,body){return db.tx(()=>{
  if(next.id===old.id)throw Error('更正须使用新的操作标识');db.run('UPDATE finance_payments SET replaced_by=? WHERE id=?',next.id,old.id);return next;
 });}
 
-function repaymentOptions(lid){return {targets:[...require('./cards').list(lid).filter(a=>a.due_month_offset!==null).map(a=>({target_kind:'card',target_id:a.id,name:a.name,remaining_principal_cents:Math.max(0,-a.balance_cents)})),...require('./loans').list(lid).map(l=>({target_kind:'loan',target_id:l.id,name:l.name,remaining_principal_cents:Math.max(0,-l.balance_cents)}))]};}
+function repaymentOptions(lid){
+ const cards=require('./cards'),loans=require('./loans');
+ const cardTargets=cards.list(lid).filter(account=>account.due_month_offset!==null).map(account=>{
+   const card=cards.detail(lid,account.id),due=card.statements.filter(bill=>bill.closing_date<=db.todayStr()).reduce((sum,bill)=>sum+bill.remaining_cents,0);
+   return {target_kind:'card',target_id:account.id,name:account.name,remaining_principal_cents:card.outstanding_cents,due_cents:due,prepaid_cents:card.unallocated_cents,suggested_amount_cents:due};
+ });
+ const loanTargets=loans.list(lid).map(loan=>{
+   const period=loans.installments(lid,loan.id).find(row=>row.remaining_principal+row.remaining_interest+row.remaining_fee>0);
+   const next=period?{id:period.id,due_date:period.due_date,principal_cents:period.remaining_principal,interest_cents:period.remaining_interest,fee_cents:period.remaining_fee,amount_cents:period.remaining_principal+period.remaining_interest+period.remaining_fee}:null;
+   return {target_kind:'loan',target_id:loan.id,name:loan.name,remaining_principal_cents:Math.max(0,-loan.balance_cents),next_installment:next,suggested_amount_cents:next?.amount_cents||0};
+ });
+ return {targets:[...cardTargets,...loanTargets]};
+}
 function repay(lid,uid,body){if(!['loan','card'].includes(body.target_kind))throw Error('请选择贷款或信用卡还款对象');return body.target_kind==='loan'?payLoan(lid,uid,body.target_id,body):payCard(lid,uid,body.target_id,body);}
 module.exports={detail,guardTransaction,payLoan,payCard,repaymentOptions,repay,reverse,restore,allocate,amend,sourcePreview,expenseCategory};

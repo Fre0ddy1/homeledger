@@ -44,7 +44,7 @@
     <div>
       <div class="card">
         <div class="row between mb12">
-          <div class="type-tabs" style="flex:1">
+          <div class="type-tabs <%= typeof embeddedEntry!=='undefined'&&embeddedEntry?'hidden':'' %>" style="flex:1">
             <% typeList.forEach(function(x){ %>
               <% if(x.key==='repayment'){ %><a href="/transactions/new?type=repayment">还款</a><% }else{ %>
               <button type="button" data-type="<%= x.key %>" class="<%= cur === x.key ? 'active' : '' %>"><%= x.label %></button>
