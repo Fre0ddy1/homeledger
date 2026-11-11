@@ -25,8 +25,8 @@ function cashRows(lid,uid,paymentId,funding,target,p,i,f,date,body,sources,label
  const txn=require('../txn');
  if(sources.mode==='link'){linkTxn(paymentId,sources.rows[0].id,'linked');return;}
  for(const t of sources.rows){db.run('UPDATE transactions SET deleted_at=? WHERE id=?',db.nowStr(),t.id);linkTxn(paymentId,t.id,'original');}
- if(p){const tid=txn.createTransaction(lid,uid,{type:'transfer',amount_cents:p,account_id:funding.id,to_account_id:target.id,currency:funding.currency,txn_date:date,note:label+' · 本金',source:'finance'});linkTxn(paymentId,tid,'principal');}
- for(const [role,value,categoryName] of [['interest',i,'贷款利息'],['fee',f,'金融手续费']])if(value){const tid=txn.createTransaction(lid,uid,{type:role==='fee'?'fee':'expense',amount_cents:value,account_id:funding.id,currency:funding.currency,category_id:expenseCategory(lid,body[role+'_category_id'],categoryName),txn_date:date,note:label+' · '+(role==='fee'?'手续费':'利息'),source:'finance'});linkTxn(paymentId,tid,role);}
+ if(p){const tid=txn.createTransaction(lid,uid,{type:'transfer',amount_cents:p,account_id:funding.id,to_account_id:target.id,currency:funding.currency,txn_date:date,note:label+' · 本金',source:'finance'},{channel:'finance'});linkTxn(paymentId,tid,'principal');}
+ for(const [role,value,categoryName] of [['interest',i,'贷款利息'],['fee',f,'金融手续费']])if(value){const tid=txn.createTransaction(lid,uid,{type:role==='fee'?'fee':'expense',amount_cents:value,account_id:funding.id,currency:funding.currency,category_id:expenseCategory(lid,body[role+'_category_id'],categoryName),txn_date:date,note:label+' · '+(role==='fee'?'手续费':'利息'),source:'finance'},{channel:'finance'});linkTxn(paymentId,tid,role);}
 }
 function putAllocation(lid,paymentId,kind,id,p,i=0,f=0){db.run('INSERT INTO finance_allocations(ledger_id,payment_id,target_kind,target_id,principal_cents,interest_cents,fee_cents)VALUES(?,?,?,?,?,?,?)',lid,paymentId,kind,id,p,i,f);}
 function allocateLoan(lid,paymentId,loan,body,p,i,f){

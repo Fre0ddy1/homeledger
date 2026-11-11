@@ -5,17 +5,7 @@
   <script type="application/json" id="mCats"><%- JSON.stringify(mCats || []).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029') %></script>
   <!-- 本月大数字 + 预算条 -->
   <section class="m-card m-hero">
-    <div class="m-hero-month"><%= monthLabel %><a class="btn btn-sm" href="/?month=<%= month %>&basis=<%= basis==='cashflow'?'consumption':'cashflow' %>">切换<%= basis==='cashflow'?'消费收支':'资金流' %></a></div>
-    <div class="m-hero-nums">
-      <div class="m-hero-num expense">
-        <span class="k"><%= basis==='cashflow'?'资金流出':'消费支出' %></span>
-        <b class="v"><%= helpers.fmtAmount(cur.expense) %></b>
-      </div>
-      <div class="m-hero-num income">
-        <span class="k"><%= basis==='cashflow'?'资金流入':'收入' %></span>
-        <b class="v"><%= helpers.fmtAmount(cur.income) %></b>
-      </div>
-    </div>
+    <div class="m-hero-month"><%= monthLabel %></div><%- include('partials/overview-pair') %>
     <% if (budgets && budgets.length) { %>
     <% const b = budgets[0]; %>
     <div class="m-budget">

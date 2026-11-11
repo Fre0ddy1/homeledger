@@ -16,7 +16,7 @@
       <a class="chip <%= y === year ? 'primary' : '' %>" href="/annual?year=<%= y %>"><%= y %> 年</a>
     <% }); %>
     <span class="spacer"></span>
-    <a class="chip" href="/reports?preset=year&year=<%= year %>">报表视角 →</a>
+    <a class="btn btn-sm" href="/reports?basis=consumption&preset=year&year=<%= year %>">查看消费报表</a>
   </div>
 </div>
 

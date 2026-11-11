@@ -391,16 +391,12 @@
 
     // 账户（可改下拉）：默认选中习惯推荐/识别出的账户，没有则第一项——
     // 只读地显示「（按习惯推荐）」而不给名字与改法，用户没法判断该不该确认（维护者反馈）
-    const accs = (() => { try { return JSON.parse((document.getElementById('mAccounts') || {}).textContent || '[]'); } catch { return []; } })();
+    const accs = (() => { try { return JSON.parse((document.getElementById('mAccounts') || {}).textContent || '[]'); } catch { return []; } })().filter(a=>(a.transaction_types||'').split(',').includes(it.type));
     let accountSel = null;
     if (accs.length) {
       accountSel = document.createElement('select');
       accountSel.className = 'm-draft-acc';
-      // 推荐的账户不在可选清单（如已归档）时补一个原生选项，推荐值不被静默换掉
-      const options = accs.slice();
-      if (it.account_id && !options.some((a) => Number(a.id) === Number(it.account_id))) {
-        options.unshift({ id: it.account_id, name: it.account_name_resolved || '账户 #' + it.account_id });
-      }
+      const options = [{id:'',name:'请选择账户'},...accs];
       for (const a of options) {
         const o = document.createElement('option');
         o.value = a.id;

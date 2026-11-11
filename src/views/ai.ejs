@@ -1,7 +1,7 @@
 <script>
   window.__AI_FORM__ = {
     categories: <%- helpers.jsonForScript(form.expenseCats.concat(form.incomeCats).map(function(c){ return { id: c.id, name: c.name, path: c.parent_id ? c.path : c.name, kind: c.kind }; })) %>,
-    accounts: <%- helpers.jsonForScript(form.accounts.map(function(a){ return { id: a.id, name: a.name, icon: a.icon }; })) %>
+    accounts: <%- helpers.jsonForScript(form.accounts.map(function(a){ return { id: a.id, name: a.name, icon: a.icon, transaction_types:a.transaction_types }; })) %>
   };
 </script>
 

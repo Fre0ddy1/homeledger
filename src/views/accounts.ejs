@@ -106,7 +106,7 @@
         <span class="chip"><%= a.icon %> <%= a.name %>
           <form method="post" action="/accounts/<%= a.id %>/archive" style="display:inline">
             <input type="hidden" name="_csrf" value="<%= csrf %>">
-            <button class="btn btn-sm btn-ghost" style="padding:0 2px;font-size:11px">恢复</button>
+            <button class="btn btn-sm btn-ghost">恢复</button>
           </form>
         </span>
       <% }); %>

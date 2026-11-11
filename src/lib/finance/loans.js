@@ -36,7 +36,7 @@ function create(lid,uid,body){return db.tx(()=>{
   insertPlan(lid,id,schedule,1);
   if(body.opening_mode==='disbursement'){
     if(body.account_id)throw Error('已有账户请使用余额接管模式，不能重复放款');
-    const funding=c.account(lid,body.funding_account_id,{currency,funding:true});const tid=require('../txn').createTransaction(lid,uid,{type:'transfer',amount_cents:remaining,account_id:account.id,to_account_id:funding.id,currency,txn_date:c.date(body.start_date),note:'贷款放款 · '+name,source:'loan'});db.run('UPDATE finance_contracts SET disbursement_txn_id=? WHERE id=?',tid,id);
+    const funding=c.account(lid,body.funding_account_id,{currency,funding:true});const tid=require('../txn').createTransaction(lid,uid,{type:'transfer',amount_cents:remaining,account_id:account.id,to_account_id:funding.id,currency,txn_date:c.date(body.start_date),note:'贷款放款 · '+name,source:'loan'},{channel:'finance'});db.run('UPDATE finance_contracts SET disbursement_txn_id=? WHERE id=?',tid,id);
   }
   if(key)db.run('INSERT INTO finance_create_operations VALUES(?,?,?,?)',lid,key,id,signature);
   return detail(lid,id);

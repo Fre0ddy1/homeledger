@@ -1,0 +1,26 @@
+<%
+  const reportBasis = basis;
+  function reportLink(changes) {
+    const q = new URLSearchParams({basis:reportBasis,preset:range.preset,year:range.start.slice(0,4),kind,from:range.start,to:range.end});
+    if(range.month) q.set('month',range.month);
+    Object.entries(changes || {}).forEach(([key,value])=>q.set(key,value));
+    return '/reports?' + q.toString();
+  }
+%>
+<section class="card report-toolbar" aria-label="报表筛选">
+  <div class="report-toolbar-head">
+    <nav class="type-tabs" aria-label="统计口径">
+      <% [['cashflow','资金流'],['consumption','消费收支']].forEach(([key,label])=>{ %><a class="<%= reportBasis===key?'active':'' %>" <%- reportBasis===key?'aria-current="page"':'' %> href="<%= reportLink({basis:key}) %>"><%= label %></a><% }); %>
+    </nav>
+    <a class="btn btn-sm" href="/annual">年度消费账单</a>
+  </div>
+  <p class="help report-basis-help"><%= reportBasis==='cashflow'?'实际资金账户变化，自有资金账户互转与余额调整不重复统计。':'按消费发生统计，还本和信用卡还款不重复计消费。' %></p>
+  <div class="report-filter-row">
+    <nav class="type-tabs" aria-label="统计区间"><% [['month','本月'],['quarter','本季度'],['year','本年'],['all','全部']].forEach(([key,label])=>{ %><a class="<%= range.preset===key?'active':'' %>" <%- range.preset===key?'aria-current="page"':'' %> href="<%= reportLink({preset:key,month:today.slice(0,7),year:today.slice(0,4)}) %>"><%= label %></a><% }); %></nav>
+    <nav class="type-tabs" aria-label="收支方向"><% [['expense',reportBasis==='cashflow'?'流出视角':'支出视角'],['income',reportBasis==='cashflow'?'流入视角':'收入视角']].forEach(([key,label])=>{ %><a class="<%= kind===key?'active':'' %>" <%- kind===key?'aria-current="page"':'' %> href="<%= reportLink({kind:key}) %>"><%= label %></a><% }); %></nav>
+  </div>
+  <div class="report-filter-row">
+    <form method="get" action="/reports" class="report-month-form"><input type="hidden" name="basis" value="<%= reportBasis %>"><input type="hidden" name="kind" value="<%= kind %>"><input type="hidden" name="preset" value="month"><label class="sr-only" for="report-month">统计月份</label><input id="report-month" type="month" name="month" value="<%= range.month||today.slice(0,7) %>" required><button class="btn btn-sm">查看月份</button></form>
+    <form method="get" action="/reports" class="report-range-form"><input type="hidden" name="basis" value="<%= reportBasis %>"><input type="hidden" name="kind" value="<%= kind %>"><input type="hidden" name="preset" value="custom"><label class="sr-only" for="report-from">起始日期</label><input id="report-from" type="date" name="from" value="<%= range.start %>" required><span class="muted">至</span><label class="sr-only" for="report-to">结束日期</label><input id="report-to" type="date" name="to" value="<%= range.end %>" required><button class="btn btn-sm">查看区间</button></form>
+  </div>
+</section>

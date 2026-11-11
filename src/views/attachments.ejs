@@ -19,7 +19,7 @@
               <% if (a.txn_id) { %><a href="/transactions/<%= a.txn_id %>/edit" class="tiny">查看记录</a><% } %>
               <form method="post" action="/attachments/<%= a.id %>/delete" data-confirm="删除这张截图？">
                 <input type="hidden" name="_csrf" value="<%= csrf %>">
-                <button class="btn btn-sm btn-ghost tiny" style="padding:0;color:var(--expense)">删除</button>
+                <button class="btn btn-sm btn-danger tiny">删除</button>
               </form>
             </div>
           </figcaption>

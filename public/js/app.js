@@ -248,7 +248,26 @@
     renderLabel();
   }
 
+  function filterRecurringAccounts(root) {
+    const template = document.getElementById('rec-account-options');
+    if (!template) return;
+    $$('[data-account-policy]', root || document).forEach(select => {
+      const type = select.dataset.accountPolicy === 'rec-target' ? 'transfer'
+        : select.closest('.rec-item').querySelector('[name=item_type]').value;
+      const selected = select.value;
+      select.replaceChildren(template.content.cloneNode(true));
+      Array.from(select.options).forEach(option => {
+        if (option.value && !option.dataset.types.split(',').includes(type)) option.remove();
+      });
+      select.value = Array.from(select.options).some(option => option.value === selected) ? selected : '';
+      select._hlRefresh?.();
+    });
+  }
+  document.addEventListener('change', event => {
+    if (event.target.matches('[name=item_type]')) filterRecurringAccounts(event.target.closest('.rec-item'));
+  });
   function enhanceSelects(root) {
+    filterRecurringAccounts(root);
     if (isTouch()) return;
     $$('select:not([data-native])', root || document).forEach(enhanceSelect);
   }
@@ -316,13 +335,25 @@
   function initTxnForm() {
     const form = $('#txn-form');
     if (!form) return;
-    // 类型切换（保留已填内容）
+    const accountTemplate = $('#transaction-account-options',form);
+    function filterAccounts(type) {
+      if(!accountTemplate) return;
+      $$('select[name="account_id"],select[name="to_account_id"]',form).forEach(sel=>{
+        const selected=sel.value;
+        sel.replaceChildren(accountTemplate.content.cloneNode(true));
+        Array.from(sel.options).forEach(opt=>{if(opt.value&&!opt.dataset.types.split(',').includes(type))opt.remove();});
+        sel.value=Array.from(sel.options).some(o=>o.value===selected)?selected:'';
+        sel._hlRefresh?.();
+      });
+    }
+    // 类型切换（仅保留仍然符合规则的账户）
     $$('[data-type]',form).forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.preventDefault();
         const type = btn.dataset.type;
         $('#f-type').value = type;
-        $$('.type-tabs [data-type]').forEach((b) => b.classList.toggle('active', b === btn));
+        filterAccounts(type);
+        $$('[data-type]',form).forEach(b=>{b.classList.toggle('active',b===btn);if(b.classList.contains('chip'))b.classList.toggle('primary',b===btn);});
         $$('[data-for-type]').forEach((el) => {
           const kinds = el.dataset.forType.split(',');
           el.classList.toggle('hidden', !kinds.includes(type));
@@ -558,7 +589,9 @@
         accSel.innerHTML = '<option value="">未指定</option>' + cfg.accounts
           .map((a) => '<option value="' + a.id + '"' + (Number(a.id) === Number(it.account_id) ? ' selected' : '') + '>' + esc(a.icon + ' ' + a.name) + '</option>').join('');
         const toSel=$('.d-to-account',card);toSel.innerHTML='<option value="">请选择转入账户</option>'+cfg.accounts.map(a=>'<option value="'+Number(a.id)+'">'+esc(a.name)+'</option>').join('');
-        function typeFields(){const type=$('.d-type',card).value;catSel.closest('.field').classList.toggle('hidden',!['expense','income','fee'].includes(type));toSel.closest('.field').classList.toggle('hidden',type!=='transfer');if(type!=='expense'&&type!=='income')catSel.value='';}
+        function typeFields(){const type=$('.d-type',card).value;
+          [accSel,toSel].forEach(sel=>{const selected=sel.value;sel.innerHTML='<option value="">请选择账户</option>'+cfg.accounts.filter(a=>(a.transaction_types||'').split(',').includes(type)).map(a=>'<option value="'+Number(a.id)+'">'+esc(a.icon+' '+a.name)+'</option>').join('');sel.value=Array.from(sel.options).some(o=>o.value===selected)?selected:'';sel._hlRefresh?.();});
+          catSel.closest('.field').classList.toggle('hidden',!['expense','income','fee'].includes(type));toSel.closest('.field').classList.toggle('hidden',type!=='transfer');if(type!=='expense'&&type!=='income')catSel.value='';}
         typeFields();
         // 切换类型时联动分类
         $('.d-type', card).addEventListener('change', (e) => {
