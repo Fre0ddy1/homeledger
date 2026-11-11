@@ -21,14 +21,15 @@ router.get('/', auth.requireLogin, (req, res, next) => {
   const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? req.query.month : monthOfToday();
   const range = { start: `${month}-01`, end: `${month}-31` };
 
-  const cur = txn.summary(ledgerId, range.start, range.end);
+  const basis=req.query.basis==='consumption'?'consumption':'cashflow',flow=require('../lib/cashflow');
+  const cur=basis==='cashflow'?flow.summary(ledgerId,range.start,range.end):txn.summary(ledgerId,range.start,range.end);
   const prevMonth = u.addMonths(month, -1);
-  const prev = txn.summary(ledgerId, `${prevMonth}-01`, `${prevMonth}-31`);
+  const prev = basis==='cashflow'?flow.summary(ledgerId,`${prevMonth}-01`,`${prevMonth}-31`):txn.summary(ledgerId,`${prevMonth}-01`,`${prevMonth}-31`);
 
-  const daily = txn.dailyBreakdown(ledgerId, range.start, range.end);
-  const trend = txn.monthlyTrend(ledgerId, 6);
-  const cats = txn.categoryBreakdown(ledgerId, range.start, range.end, 'expense');
-  const incomeCats = txn.categoryBreakdown(ledgerId, range.start, range.end, 'income');
+  const daily = basis==='cashflow'?flow.daily(ledgerId,range.start,range.end):txn.dailyBreakdown(ledgerId,range.start,range.end);
+  const trend = basis==='cashflow'?flow.monthly(ledgerId,6,month):txn.monthlyTrend(ledgerId,6);
+  const cats = basis==='cashflow'?flow.breakdown(ledgerId,range.start,range.end,'expense'):txn.categoryBreakdown(ledgerId,range.start,range.end,'expense');
+  const incomeCats = basis==='cashflow'?flow.breakdown(ledgerId,range.start,range.end,'income'):txn.categoryBreakdown(ledgerId,range.start,range.end,'income');
   const overview = txn.accountOverview(ledgerId);
 
   const budgets = all(
@@ -56,7 +57,7 @@ router.get('/', auth.requireLogin, (req, res, next) => {
     return res.render('home-m', {
       title: '记一笔', activeNav: 'home',
       month, monthLabel: u.monthLabel(month),
-      cur, budgets: budgetsWithForecast, recent,
+      basis,cur, budgets: budgetsWithForecast, recent,
       // 草稿缺账户时捕获区要能选账户（规则引擎草稿常无账户，不能让确认卡死）
       mAccounts: fd.accounts(ledgerId).map((a) => ({ id: a.id, name: a.name, icon: a.icon })),
       // 草稿卡分类下拉候选（P11 批次）
@@ -66,7 +67,7 @@ router.get('/', auth.requireLogin, (req, res, next) => {
   const todayList = txn.listTransactions(ledgerId, { from: todayStr(), to: todayStr(), pageSize: 100 }).rows;
 
   const debts = all(
-    "SELECT direction, COUNT(*) AS cnt, COALESCE(SUM(balance_cents),0) AS total FROM debts WHERE ledger_id = ? AND status = 'open' GROUP BY direction",
+    "SELECT direction, COUNT(*) AS cnt, COALESCE(SUM(balance_cents),0) AS total FROM debts WHERE ledger_id = ? AND status = 'open' AND deleted_at IS NULL GROUP BY direction",
     ledgerId
   );
   const goals = all("SELECT * FROM goals WHERE ledger_id = ? AND status = 'active' ORDER BY id LIMIT 3", ledgerId);
@@ -86,7 +87,7 @@ router.get('/', auth.requireLogin, (req, res, next) => {
     activeNav: 'home',
     month,
     monthLabel: u.monthLabel(month),
-    cur, prev, prevMonth,
+    basis,cur, prev, prevMonth,todaySummary:basis==='cashflow'?flow.summary(ledgerId,todayStr(),todayStr()):txn.summary(ledgerId,todayStr(),todayStr()),
     daily,
     trend,
     cats: cats,

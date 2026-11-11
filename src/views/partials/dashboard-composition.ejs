@@ -6,10 +6,10 @@
   <% if(!items.length) { %>
     <div class="empty"><span class="empty-symbol"><svg class="icon lg"><use href="#i-chart-column"></use></svg></span><b>本月还没有<%= kind === 'income' ? '收入' : '支出' %>记录</b><p class="small mt8">记下第一笔，就能看见资金的去向。</p></div>
   <% } else { %>
-    <div class="composition-body"><div class="composition-chart"><%- charts.donutChart(chartItems,{size:156,thickness:16,centerValue:helpers.compactMoney(total),centerTitle:kind === 'income' ? '本月收入' : '本月支出'}) %></div>
+    <div class="composition-body"><div class="composition-chart"><%- charts.donutChart(chartItems,{size:156,thickness:16,centerValue:helpers.compactMoney(total),centerTitle:basis==='cashflow'?(kind==='income'?'资金流入':'资金流出'):(kind==='income'?'本月收入':'本月支出')}) %></div>
       <div class="composition-list">
       <% items.forEach(function(c){ %>
-        <a class="composition-item" href="/reports?kind=<%= kind %>&amp;preset=month&amp;month=<%= encodeURIComponent(month) %>&amp;top=<%= encodeURIComponent(c.name) %>">
+        <a class="composition-item" href="/reports?basis=<%= basis %>&amp;kind=<%= kind %>&amp;preset=month&amp;month=<%= encodeURIComponent(month) %>&amp;top=<%= encodeURIComponent(c.name) %>">
           <span class="composition-name"><%= c.icon %> <%= c.name %></span><span class="amount"><%= helpers.fmtAmount(c.total) %></span><span class="composition-share muted"><%= total > 0 ? (c.total/total*100).toFixed(1) : '0.0' %>%</span>
         </a>
       <% }); %>

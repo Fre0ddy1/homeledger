@@ -119,11 +119,13 @@ router.post('/api/ai/confirm', auth.requireLogin, auth.requireLedgerWrite, (req,
     try {
       // 桌面路径提交对象无 raw：兜底留档时剥离客户端快照，保持 ai_json「识别原始结果」的口径
       const { rec_snapshot, ...rest } = it;
+      require('../lib/financial-intent').assertOrdinary(it);
       const id = txn.createTransaction(ledgerId, req.session.userId, {
         type: it.type || 'expense',
         amount_cents: Number(it.amount_cents) || 0,
         currency: it.currency || 'CNY',
         account_id: it.account_id || null,
+        to_account_id:it.to_account_id||null,debt_id:it.debt_id||null,
         category_id: it.category_id || null,
         txn_date: it.txn_date || todayStr(),
         note: it.note || '',
@@ -294,11 +296,13 @@ router.post('/api/ai/chat', auth.requireLogin, async (req, res) => {
     const errors = [];
     for (const it of items) {
       try {
+        require('../lib/financial-intent').assertOrdinary(it);
         created.push(txn.createTransaction(ledgerId, req.session.userId, {
           type: it.type || 'expense',
           amount_cents: Number(it.amount_cents) || 0,
           currency: it.currency || 'CNY',
           account_id: it.account_id || null,
+        to_account_id:it.to_account_id||null,debt_id:it.debt_id||null,
           category_id: it.category_id || null,
           txn_date: it.txn_date || todayStr(),
           note: it.note || '',

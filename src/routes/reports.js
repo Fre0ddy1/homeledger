@@ -29,7 +29,7 @@ function parseRange(q, ledgerId = 0) {
     const y = curMonth.slice(0, 4);
     return {
       start: `${y}-${u.pad(startM)}-01`,
-      end: `${y}-${u.pad(startM + 2)}-31`,
+      end: `${y}-${u.pad(startM + 2)}-${u.pad(u.daysInMonth(y+'-'+u.pad(startM+2)))}`,
       label: `${y}年 第${qn + 1} 季度`, preset, key: `${y}Q${qn + 1}`,
     };
   }
@@ -39,7 +39,7 @@ function parseRange(q, ledgerId = 0) {
     return { start: first?.d || `${curMonth}-01`, end: today, label: '全部时间', preset, key: 'all' };
   }
   const month = /^\d{4}-\d{2}$/.test(String(q.month || '')) ? q.month : curMonth;
-  return { start: `${month}-01`, end: `${month}-31`, label: u.monthLabel(month), preset: 'month', key: month, month };
+  return { start: `${month}-01`, end: `${month}-${u.pad(u.daysInMonth(month))}`, label: u.monthLabel(month), preset: 'month', key: month, month };
 }
 
 router.get('/reports', auth.requireLogin, (req, res) => {
@@ -48,6 +48,11 @@ router.get('/reports', auth.requireLogin, (req, res) => {
   const ledgerId = Number(ledger.id);
   const range = parseRange(req.query, ledgerId);
   const kind = req.query.kind === 'income' ? 'income' : 'expense';
+  const basis=req.query.basis==='cashflow'?'cashflow':req.query.basis==='consumption'||req.query.kind||req.query.top?'consumption':'cashflow';
+  if(basis==='cashflow'){
+    const flow=require('../lib/cashflow');
+    return res.render('cashflow-report',{title:'资金流报表',activeNav:'reports',range,kind,basis,sum:flow.summary(ledgerId,range.start,range.end),trend:flow.monthly(ledgerId,12),outflow:flow.breakdown(ledgerId,range.start,range.end,'expense'),inflow:flow.breakdown(ledgerId,range.start,range.end,'income'),top:String(req.query.top||''),entries:req.query.top?flow.entries(ledgerId,range.start,range.end,{kind,group:req.query.top,page:req.query.page}):null,groupCashDates:flow.groupDates});
+  }
 
   const sum = txn.summary(ledgerId, range.start, range.end);
   const cats = txn.categoryBreakdown(ledgerId, range.start, range.end, kind);

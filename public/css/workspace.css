@@ -60,6 +60,59 @@ body { background: radial-gradient(ellipse 720px 960px at 0 0,var(--ambient-blue
 [data-page="export"] { --page-width: 1120px; }
 [data-page="categories"] { --page-width: 1280px; }
 .grid { align-items: start; }
+[data-page="finance"] { --page-width: 1360px; }
+[data-page="accounts"], [data-page="debts"] { --page-width:1360px; }
+.debt-entry { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px 20px; padding:18px 0; border-bottom:1px solid var(--border); align-items:start; }
+.debt-entry:last-child { border-bottom:0; }
+.debt-identity { min-width:0; overflow-wrap:anywhere; }
+.debt-amount { text-align:right; font-variant-numeric:tabular-nums; }
+.debt-amount p { margin:6px 0 0; }
+.entry-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
+.entry-actions form { margin:0; display:flex; }
+.debt-entry > .entry-actions { grid-column:1 / -1; }
+.account-entry { padding:18px 0; border-bottom:1px solid var(--border); }
+.account-entry:last-child { border-bottom:0; }
+.account-entry-head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:16px; align-items:start; }
+.account-entry-head > * { min-width:0; overflow-wrap:anywhere; }
+.account-entry .entry-actions { margin-top:14px; }
+.account-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr)); gap:0 16px; align-items:start; }
+.account-fields > .field { min-width:0 !important; }
+.acc-edit-form .account-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.account-editor { background:var(--card-2); padding:16px; border-radius:var(--radius-sm); }
+@media(max-width:540px) { .account-entry-head { grid-template-columns:1fr; gap:10px; } .account-entry-head .right { text-align:left; } .acc-edit-form .account-fields { grid-template-columns:1fr; } }
+.finance-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; align-items:start; }
+.finance-create { grid-column:1 / -1; width:100%; }
+.finance-detail { display:grid; grid-template-columns:minmax(0,1fr) minmax(320px,400px); gap:20px; align-items:start; }
+.finance-grid > *, .finance-detail > *, .finance-fields > * { min-width:0; }
+.finance-form { margin-top:18px; }
+.finance-form .field { min-width:0; }
+.finance-manual-fields { display:none; }
+.page-body:has(.repayment-entry) { max-width:960px; }
+.repayment-entry .help { font-size:13px; line-height:1.7; color:var(--muted); }
+.detail-navigation { display:flex; flex-wrap:wrap; gap:8px; }
+.cashflow-filters { display:flex; flex-wrap:wrap; align-items:center; gap:16px; }
+.cashflow-range { display:grid; grid-template-columns:180px 180px auto; align-items:center; gap:10px; }
+.cashflow-range > * { min-width:0; }
+@media(max-width:700px) { .cashflow-range { width:100%; grid-template-columns:repeat(2,minmax(0,1fr)); } .cashflow-range .btn { grid-column:1 / -1; justify-self:start; } }
+[data-layout="m"] > .detail-navigation { margin:12px 16px; }
+.finance-form:has(select[name="method"] option[value="manual"]:checked) .finance-manual-fields { display:block; }
+.finance-form .check { align-items:flex-start; line-height:1.6; }
+.finance-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)); gap:0 16px; }
+.finance-item { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:16px 0; border-bottom:1px solid var(--border); color:var(--text); text-decoration:none; }
+.finance-item > * { min-width:0; overflow-wrap:anywhere; }
+.finance-item:last-child { border-bottom:0; }
+.finance-item p { margin:6px 0 0; }
+.finance-total { font-size:32px; margin:16px 0; }
+[data-page="finance"] .stats, [data-page="debts"] .stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; padding:8px 0; }
+[data-page="finance"] .stats .amount, [data-page="debts"] .stats .amount { font-size:24px; margin:10px 0 0; }
+[data-page="finance"] .stats .muted, [data-page="debts"] .stats .muted { font-size:12px; }
+[data-page="finance"] .help { color:var(--muted); font-size:12px; font-weight:400; line-height:1.7; margin:12px 0; }
+[data-page="finance"] .table { font-size:13px; white-space:nowrap; }
+[data-page="finance"] .table-wrap { overflow-x:auto; }
+[data-page="finance"] details > summary { cursor:pointer; font-weight:600; line-height:1.6; }
+@media(max-width:1000px) { .finance-detail { grid-template-columns:1fr; } }
+@media(max-width:700px) { .finance-grid { grid-template-columns:1fr; } .finance-item { gap:12px; } .finance-total { font-size:28px; } }
+@media(max-width:540px) { [data-page="finance"] .stats, [data-page="debts"] .stats { grid-template-columns:1fr; gap:16px; } }
 .page-body > *, .page-body .grid > * { min-width: 0; }
 .page-body > .grid > .card { margin-bottom: 0; }
 .page-body > .grid { margin-bottom: 20px; }
@@ -70,7 +123,7 @@ body { background: radial-gradient(ellipse 720px 960px at 0 0,var(--ambient-blue
 .page-body .chart-box > svg[width="100%"] { height: auto; max-height: 340px; }
 [data-page="accounts"] .page-body > .grid-2 { grid-template-columns: repeat(auto-fit,minmax(min(100%,420px),1fr)); }
 [data-page="accounts"] .page-body > .card:has(#new-account),
-[data-page="accounts"] .page-body > .card#new-account { max-width: 980px; }
+[data-page="accounts"] .page-body > .card#new-account { width:100%; }
 [data-page="settings"] .page-body .card > form { max-width: none; }
 [data-page="settings"] .page-body > .card[data-tab],
 [data-page="settings"] .page-body > [data-tab] > .card { max-width: 960px; }
@@ -93,7 +146,6 @@ body { background: radial-gradient(ellipse 720px 960px at 0 0,var(--ambient-blue
   [data-page="recurring"] .page-body .grid-main { grid-template-columns: minmax(0,1fr) 420px; }
   #txn-form .grid-main { grid-template-columns: minmax(0,740px) minmax(360px,520px); }
   [data-page="ai"] .page-body .grid-main { grid-template-columns: minmax(0,1.3fr) minmax(320px,1fr); }
-  [data-page="accounts"] .page-body > .card > form,
   [data-page="ledgers"] .page-body > .card > form { max-width: 900px; }
 }
 @media (max-width: 1100px) {

@@ -8,6 +8,7 @@ const attach = require('./attachments');
 const INCOME_TYPES = ['income', 'interest', 'refund', 'reimburse'];
 /** 计入「支出」统计的类型（转账、借贷、投资不计入，避免虚增） */
 const EXPENSE_TYPES = ['expense', 'fee'];
+const PRINCIPAL_TYPES = ['transfer','lend','borrow','repay_receive','repay_pay','adjust','invest_buy','invest_sell'];
 
 const TXN_SELECT = `
 SELECT t.*,
@@ -31,7 +32,8 @@ function decorate(t) {
   t.type_icon = TXN_TYPE_MAP[t.type]?.icon || '•';
   t.type_color = TXN_TYPE_MAP[t.type]?.color || '#8c8c8c';
   t.flow = TXN_TYPE_MAP[t.type]?.flow || 'out';
-  t.category_path = t.category_parent ? `${t.category_parent}/${t.category_name}` : (t.category_name || '未分类');
+  t.category_path = PRINCIPAL_TYPES.includes(t.type) ? t.type_label : (t.category_parent ? `${t.category_parent}/${t.category_name}` : (t.category_name || '未分类'));
+  t.has_category = !PRINCIPAL_TYPES.includes(t.type);
   // is_income/is_expense = 余额方向（供 UI 符号/配色用，含借入/收还款等入出账类型），
   // 统计口径仍以 INCOME_TYPES/EXPENSE_TYPES 为准（borrow 等不计收支）
   t.is_income = INCOME_TYPES.includes(t.type) || ['repay_receive', 'borrow'].includes(t.type);
@@ -144,6 +146,7 @@ function groupByDate(rows) {
 
 function getTransaction(id, ledgerId) {
   const t = get(`${TXN_SELECT} WHERE t.id = ? AND t.ledger_id = ? AND t.deleted_at IS NULL`, id, ledgerId);
+  if(t){t.finance_payments=all('SELECT p.id,p.target_kind,p.target_id,p.deleted_at,p.replaced_by,l.role FROM finance_payment_txns l JOIN finance_payments p ON p.id=l.payment_id WHERE p.ledger_id=? AND l.transaction_id=? ORDER BY p.id DESC',ledgerId,t.id);t.credit_statements=require('./finance/cards').statementForTransaction(ledgerId,t.id);t.credit_plan=get('SELECT * FROM credit_plans WHERE ledger_id=? AND transaction_id=? AND deleted_at IS NULL',ledgerId,t.id)||null;}
   return decorate(t);
 }
 
@@ -164,21 +167,23 @@ function pickCategory(ledgerId, id) {
  * 写入一笔交易
  * @param {object} d 表单数据
  */
-function createTransaction(ledgerId, userId, d) {
+function createTransaction(ledgerId,userId,d){return tx(()=>createTransactionUnchecked(ledgerId,userId,d));}
+function createTransactionUnchecked(ledgerId, userId, d) {
   const type = TXN_TYPE_MAP[d.type] ? d.type : 'expense';
   // 余额调整（adjust）的金额是带符号的差额（调减为负），其余类型一律取绝对值
   const isAdjust = type === 'adjust';
   const rawAmount = Math.round(Number(d.amount_cents) || 0);
   const amount = isAdjust ? rawAmount : Math.abs(rawAmount);
   if (!amount) throw new Error('金额必须大于 0');
-  const rate = Number(d.rate) > 0 ? Number(d.rate) : 1;
+  const rate = (d.currency||'CNY')===(get('SELECT currency FROM ledgers WHERE id=?',ledgerId)?.currency||'CNY')?1:(Number(d.rate)>0?Number(d.rate):1);
   const currency = d.currency || 'CNY';
   const accountId = pickAccount(ledgerId, d.account_id);
-  const toAccountId = pickAccount(ledgerId, d.to_account_id);
+  const toAccountId = ['transfer','invest_buy','invest_sell'].includes(type)?pickAccount(ledgerId,d.to_account_id):null;
   if (['expense', 'income', 'lend', 'borrow', 'repay_pay', 'repay_receive', 'fee', 'interest'].includes(type) && !accountId) {
     throw new Error('请选择账户');
   }
   if (isAdjust && !accountId) throw new Error('余额调整需要指定账户');
+  if(isAdjust&&require('./finance/account-guard').bound(ledgerId,accountId))throw Error('金融账户余额由本金与实际流水维护，请在贷款与信用卡核对，不能直接调整余额');
   if (type === 'transfer' && (!accountId || !toAccountId)) throw new Error('转账需要选择转出与转入账户');
   if (type === 'transfer' && accountId === toAccountId) throw new Error('转出与转入账户不能相同');
   // 投资买卖同样是双边交易：缺转入/转出账户会导致资金凭空蒸发或净效果为 0
@@ -192,7 +197,7 @@ function createTransaction(ledgerId, userId, d) {
       user_id, txn_date, note, merchant, status, is_reimbursable, group_id, source, ai_json, owner_label, no_rhythm, created_at, updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ledgerId, type, amount, currency, rate, toBase(amount, rate), accountId, toAccountId,
-    pickCategory(ledgerId, d.category_id), userId, txnDate,
+    PRINCIPAL_TYPES.includes(type)?null:(d.category_snapshot?require('./categories').find(ledgerId,d.category_id)?.id||null:pickCategory(ledgerId, d.category_id)), userId, txnDate,
     d.note ? String(d.note).slice(0, 300) : null,
     d.merchant ? String(d.merchant).slice(0, 60) : null,
     d.status === 'pending' ? 'pending' : 'cleared',
@@ -205,16 +210,21 @@ function createTransaction(ledgerId, userId, d) {
     nowStr(), nowStr()
   );
   const id = info.lastInsertRowid;
+  require('./borrowing').record(ledgerId,id,d.debt_id,true);
   applyTags(id, ledgerId, d.tags);
   if (d.splits && d.splits.length) saveSplits(ledgerId, id, d.group_id, d.splits);
   recalcBalances(ledgerId);
   syncDebts(ledgerId);
+  require('./finance/cards').afterTransactions(ledgerId,[id]);
   return id;
 }
 
-function updateTransaction(id, ledgerId, userId, d) {
+function updateTransaction(id,ledgerId,userId,d){return tx(()=>updateTransactionUnchecked(id,ledgerId,userId,d));}
+function updateTransactionUnchecked(id, ledgerId, userId, d) {
   const old = get('SELECT * FROM transactions WHERE id = ? AND ledger_id = ? AND deleted_at IS NULL', id, ledgerId);
   if (!old) throw new Error('记录不存在');
+  require('./finance/payments').guardTransaction(ledgerId,id);
+  require('./finance/cards').guardTransaction(ledgerId,id,d);
   const existingCategory = require('./categories').find(ledgerId, d.category_id);
   const categoryId = existingCategory && Number(existingCategory.id) === Number(old.category_id)
     ? Number(existingCategory.id) : pickCategory(ledgerId, d.category_id);
@@ -222,14 +232,15 @@ function updateTransaction(id, ledgerId, userId, d) {
   const rawAmount = Math.round(Number(d.amount_cents) || 0);
   const amount = type === 'adjust' ? rawAmount : Math.abs(rawAmount);
   if (!amount) throw new Error('金额必须大于 0');
-  const rate = Number(d.rate) > 0 ? Number(d.rate) : 1;
+  const rate = (d.currency||'CNY')===(get('SELECT currency FROM ledgers WHERE id=?',ledgerId)?.currency||'CNY')?1:(Number(d.rate)>0?Number(d.rate):1);
   const accountId = pickAccount(ledgerId, d.account_id);
-  const toAccountId = pickAccount(ledgerId, d.to_account_id);
+  const toAccountId = ['transfer','invest_buy','invest_sell'].includes(type)?pickAccount(ledgerId,d.to_account_id):null;
   // 与 createTransaction 同规则：编辑把必填账户清空会让该笔在重算中凭空消失
   if (['expense', 'income', 'lend', 'borrow', 'repay_pay', 'repay_receive', 'fee', 'interest'].includes(type) && !accountId) {
     throw new Error('请选择账户');
   }
   if (type === 'adjust' && !accountId) throw new Error('余额调整需要指定账户');
+  if(type==='adjust'&&require('./finance/account-guard').bound(ledgerId,accountId))throw Error('金融账户不能通过调整流水改写余额，请在对应台账核对');
   if (type === 'transfer' && (!accountId || !toAccountId)) throw new Error('转账需要选择转出与转入账户');
   if (type === 'transfer' && accountId === toAccountId) throw new Error('转出与转入账户不能相同');
   // 与 createTransaction 同规则：编辑改型成投资买卖时缺双账户/同账户会让资金凭空蒸发或净效果为 0
@@ -241,7 +252,7 @@ function updateTransaction(id, ledgerId, userId, d) {
        owner_label=?, no_rhythm=?, updated_at=? WHERE id=?`,
     type, amount, d.currency || old.currency, rate, toBase(amount, rate),
     accountId, toAccountId,
-    categoryId,
+    PRINCIPAL_TYPES.includes(type)?null:categoryId,
     /^\d{4}-\d{2}-\d{2}$/.test(String(d.txn_date || '')) ? d.txn_date : old.txn_date,
     d.note ? String(d.note).slice(0, 300) : null,
     d.merchant ? String(d.merchant).slice(0, 60) : null,
@@ -252,11 +263,13 @@ function updateTransaction(id, ledgerId, userId, d) {
     d.no_rhythm === undefined ? (Number(old.no_rhythm) === 1 ? 1 : 0) : (d.no_rhythm ? 1 : 0),
     nowStr(), id
   );
+  require('./borrowing').record(ledgerId,id,d.debt_id);
   applyTags(id, ledgerId, d.tags, true);
   if (d.splits && d.splits.length) saveSplits(ledgerId, id, old.group_id, d.splits);
   else if (Array.isArray(d.splits) && old.group_id) run('DELETE FROM splits WHERE transaction_id = ?', id);
   recalcBalances(ledgerId);
   syncDebts(ledgerId);
+  require('./finance/cards').afterTransactions(ledgerId,[id],[old.account_id,old.to_account_id]);
   return id;
 }
 
@@ -266,19 +279,27 @@ function cleanOwner(raw) {
   return s ? s.slice(0, 20) : null;
 }
 
-function softDelete(id, ledgerId) {  const t = get('SELECT * FROM transactions WHERE id = ? AND ledger_id = ?', id, ledgerId);
+function softDelete(id,ledgerId){return tx(()=>softDeleteUnchecked(id,ledgerId));}
+function softDeleteUnchecked(id, ledgerId) {  const t = get('SELECT * FROM transactions WHERE id = ? AND ledger_id = ?', id, ledgerId);
   if (!t) return false;
+  require('./finance/payments').guardTransaction(ledgerId,id);
+  require('./finance/cards').guardTransaction(ledgerId,id);
   run('UPDATE transactions SET deleted_at = ?, updated_at = ? WHERE id = ?', nowStr(), nowStr(), id);
   // 分账数据保留（物理删除后「恢复」就找不回来了）；列表/统计均按 deleted_at 过滤，无副作用
   recalcBalances(ledgerId);
   syncDebts(ledgerId);
+  require('./finance/cards').afterTransactions(ledgerId,[id]);
   return true;
 }
+function restoreMany(ids,ledgerId){return tx(()=>{for(const id of ids){require('./finance/payments').guardTransaction(ledgerId,id);const t=get('SELECT id FROM transactions WHERE id=? AND ledger_id=?',id,ledgerId);if(!t)throw Error('记录不存在');run('UPDATE transactions SET deleted_at=NULL WHERE id=?',id);}recalcBalances(ledgerId);syncDebts(ledgerId);require('./finance/cards').afterTransactions(ledgerId,ids);return ids.length;});}
+function restore(id,ledgerId){restoreMany([id],ledgerId);return id;}
 
 function bulkDelete(ids, ledgerId) {
   let n = 0;
   tx(() => {
     for (const id of ids) {
+      require('./finance/payments').guardTransaction(ledgerId,Number(id));
+      require('./finance/cards').guardTransaction(ledgerId,Number(id));
       const t = get('SELECT id FROM transactions WHERE id = ? AND ledger_id = ? AND deleted_at IS NULL', Number(id), ledgerId);
       if (!t) continue;
       run('UPDATE transactions SET deleted_at = ?, updated_at = ? WHERE id = ?', nowStr(), nowStr(), Number(id));
@@ -287,6 +308,7 @@ function bulkDelete(ids, ledgerId) {
     // 整批只重算一次；软删不物理清分账，恢复后数据完整
     recalcBalances(ledgerId);
     syncDebts(ledgerId);
+    require('./finance/cards').afterTransactions(ledgerId,ids);
   });
   return n;
 }
@@ -370,48 +392,13 @@ function splitsOf(txnId) {
   return all('SELECT * FROM splits WHERE transaction_id = ? ORDER BY id', txnId);
 }
 
-/* ------------------------------- 借贷台账同步 ------------------------------ */
+/* ------------------------------- 借钱台账同步 ------------------------------ */
 
 /**
  * 根据借贷类交易自动维护 debts 台账：
  * 借出 → 生成应收；借入 → 生成应付。同一 (方向, 对手方) 未结清的台账自动累加。
  */
-function syncDebts(ledgerId) {
-  const rows = all(
-    `SELECT * FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND type IN ('lend','borrow')`,
-    ledgerId
-  );
-  // 已结清台账不重建，简单策略：按 对手方+方向 聚合未结清
-  const map = new Map();
-  for (const t of rows) {
-    const key = `${t.type}|${t.merchant || '未指定'}`;
-    const cur = map.get(key) || { direction: t.type === 'lend' ? 'receivable' : 'payable', counterparty: t.merchant || '未指定', principal: 0, account_id: t.account_id, earliest: t.txn_date };
-    cur.principal += Number(t.amount_base_cents);
-    if (t.txn_date < cur.earliest) cur.earliest = t.txn_date;
-    map.set(key, cur);
-  }
-  // 还款金额
-  const repay = new Map();
-  for (const t of all(
-    `SELECT * FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND type IN ('repay_receive','repay_pay')`,
-    ledgerId
-  )) {
-    const key = `${t.type === 'repay_receive' ? 'lend' : 'borrow'}|${t.merchant || '未指定'}`;
-    repay.set(key, (repay.get(key) || 0) + Number(t.amount_base_cents));
-  }
-  // 清掉自动生成的（note 标记）再重建
-  run("DELETE FROM debts WHERE ledger_id = ? AND note = '系统自动汇总'", ledgerId);
-  for (const [key, v] of map) {
-    const paid = repay.get(key) || 0;
-    const balance = Math.max(0, v.principal - paid);
-    run(
-      `INSERT INTO debts (ledger_id, direction, counterparty, principal_cents, balance_cents, account_id, status, note, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
-      ledgerId, v.direction, v.counterparty, v.principal, balance, v.account_id,
-      balance <= 0 ? 'closed' : 'open', '系统自动汇总', nowStr()
-    );
-  }
-}
+function syncDebts(ledgerId) { require('./borrowing').recalculate(ledgerId); }
 
 /* --------------------------------- 统计聚合 -------------------------------- */
 
@@ -573,9 +560,9 @@ function netWorthTrend(ledgerId, months = 6) {
 }
 
 module.exports = {
-  INCOME_TYPES, EXPENSE_TYPES, TXN_SELECT, decorate,
+  INCOME_TYPES, EXPENSE_TYPES, PRINCIPAL_TYPES, TXN_SELECT, decorate,
   listTransactions, groupByDate, getTransaction,
-  createTransaction, updateTransaction, softDelete, bulkDelete, markReimbursed,
+  createTransaction, updateTransaction, softDelete, restore, restoreMany, bulkDelete, markReimbursed,
   applyTags, saveSplits, splitsOf,
   summary, categoryBreakdown, subcategoryBreakdown, monthlyTrend, memberBreakdown, ownerBreakdown,
   dailyBreakdown, accountOverview, netWorthTrend, rangeOf, syncDebts,

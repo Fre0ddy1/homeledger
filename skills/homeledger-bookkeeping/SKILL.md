@@ -1,6 +1,6 @@
 ---
 name: homeledger-bookkeeping
-description: 家账簿（HomeLedger）自动记账。当用户发送账单截图、支付记录截图或口述消费（如"午饭花了 35"）时，调用家账簿开放 API 自动记账并汇报结果。适用于 Hermes Agent、OpenClaw / PicoClaw、Claude Code 等支持 SKILL.md（agentskills.io 标准）的 AI 助手。
+description: 家账簿（HomeLedger）记账、亲友借钱、贷款与信用卡账单及还款管理。当用户发送账单截图、支付记录截图或口述消费（如"午饭花了 35"）时，调用家账簿开放 API 自动记账并汇报结果。适用于 Hermes Agent、OpenClaw / PicoClaw、Claude Code 等支持 SKILL.md（agentskills.io 标准）的 AI 助手。
 ---
 
 # 家账簿自动记账技能
@@ -13,6 +13,14 @@ description: 家账簿（HomeLedger）自动记账。当用户发送账单截图
 - `HOMELEDGER_TOKEN`：API 令牌，在家账簿「设置 → 开放 API」中生成（`hl_` 开头）
 
 两个变量缺一个时，先向用户询问，不要猜。
+
+## 借钱、贷款、信用卡与定期记账
+
+用户提到借出、借入、收还款、车贷、房贷、信用卡账单、分期或还款时，先读 [金融与定期记账 API](references/finance-api.md)。这些场景不走普通消费自动入账：本金没有收支分类，金融付款须核对本金、费用、账户及已有流水。用户要求记录或核销不等于授权银行扣款，API只维护账本。
+
+首页/报表默认资金流，消费收支另有口径。询问可用资金变化时读cashflow，询问消费与预算时读consumption，回执说明口径；还款操作用金融API，不把还款标成第二份消费。
+
+已有借款按稳定条目ID关联，不能按姓名自动合并。同一操作超时重试须复用同一个operation_key及相同参数；不能换key反复创建。付款有关联流水时，通过付款详情整体更正、撤销或恢复。
 
 ## 工作流程
 
@@ -66,7 +74,7 @@ curl -sS -X POST "$HOMELEDGER_URL/api/open/transactions" \
   -d '{"type":"expense","amount":35,"category":"餐饮","account":"微信零钱","merchant":"面馆","note":"午饭","date":"2026-09-15"}'
 ```
 
-**注意**：若家账簿尚未配置 AI 模型，`/ai/bill` 会退回内置规则引擎——它只能把整段文字解析成**一笔**记录，多笔口述（如"午饭 35 打车 26.5"）会丢账。此时应：
+**注意**：若家账簿尚未配置 AI 模型，`/ai/bill` 会退回内置规则引擎——应检查返回的草稿笔数与原文是否一致，不假设所有金额已被识别。此时应：
 - 把多笔文本**拆成多条**，逐条走 `/transactions` 直记；或
 - 在响应 `warnings` 提示下，引导用户到「设置 → AI 记账」配置视觉模型后再用截图/整段识别。
 
@@ -118,7 +126,7 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 | `GET /api/open/reports/trend?months=6` | 近 N 月收支趋势 |
 | `GET /api/open/accounts` / `GET /api/open/accounts` 含净资产 | 账户余额、净资产 |
 | `GET /api/open/categories` / `GET /api/open/tags` | 有效分类扁平清单、标签；分类可用 `show=deleted` 查询已删除项 |
-| `GET /api/open/debts` / `GET /api/open/budgets` / `GET /api/open/goals` / `GET /api/open/subscriptions` / `GET /api/open/recurring` | 借贷台账 / 预算 / 目标 / 订阅 / 周期账单 |
+| `GET /api/open/debts` / `GET /api/open/budgets` / `GET /api/open/goals` / `GET /api/open/subscriptions` / `GET /api/open/recurring` | 借钱台账 / 预算 / 目标 / 订阅 / 定期记账 |
 | `GET /api/open/settings` | 站点与 AI 配置（API Key 永不回显，只有 `api_key_set`） |
 
 ### 写入（可写成员）
@@ -132,11 +140,11 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 | `POST /api/open/transactions/bulk-delete` / `bulk-category` / `bulk-tag` / `bulk-reimburse` | 批量删除 / 改分类 / 加标签 / 报销入账（body: `ids` 数组） |
 | `POST /api/open/accounts` / `:id` / `:id/archive` / `:id/delete` / `:id/adjust` | 账户增改停删；`adjust` 传 `actual_balance` 对齐余额（差额自动记余额调整） |
 | `POST /api/open/categories` / `:id` / `:id/delete` / `:id/restore`；`POST /api/open/tags` / `:id/delete` | 内置/自建分类的增改、软删除与恢复；标签管理 |
-| `POST /api/open/debts`（`create_txn:true` 同时记借出/借入流水）/ `:id/settle`（收还款，缺省金额=全部余额）/ `:id/delete` | 借贷台账 |
+| `POST /api/open/debts`（`create_txn:true` 同时记借出/借入流水）/ `:id/settle`（收还款，缺省金额=全部余额）/ `:id/delete` / `:id/restore` / `:id/link` | 借钱台账（完整参数见金融参考） |
 | `POST /api/open/budgets` / `:id` / `:id/toggle` / `:id/delete` | 预算管理 |
 | `POST /api/open/goals` / `:id/deposit`（`amount` 负数为取出；`create_txn:true` 记流水）/ `:id/delete` | 储蓄目标 |
 | `POST /api/open/subscriptions` / `:id` / `:id/charge` / `:id/skip` / `:id/toggle` / `:id/cancel` / `:id/delete` | 订阅扣费全生命周期 |
-| `POST /api/open/recurring` / `:id/run` / `:id/toggle` / `:id/delete` | 周期账单（`auto_post:true` 到期自动记账） |
+| `POST /api/open/recurring` / `:id/run` / `:id/toggle` / `:id/delete` | 定期记账（`auto_post:true` 到期自动记账；执行须传`scheduled_date=next_run_at`，重试复用同一期日期） |
 
 ### 站点设置（仅站点管理员令牌）
 

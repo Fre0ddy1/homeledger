@@ -218,7 +218,8 @@ function chargesOf(ledgerId, subId, limit = 12) {
  * 扣一笔订阅费用，生成交易
  * @returns {number|null} 交易 id；无法记账（金额为 0 / 未指定扣费账户）时返回 null
  */
-function charge(sub, userId, { date = todayStr(), silent = false } = {}) {
+function charge(sub,userId,options={}) {return require('../db').tx(()=>chargeUnchecked(sub,userId,options));}
+function chargeUnchecked(sub, userId, { date = todayStr(), silent = false } = {}) {
   const amount = Math.abs(Number(sub.amount_cents) || 0);
   if (!amount) return null;
   const label = sub.plan ? `${sub.name}（${sub.plan}）` : sub.name;
@@ -233,6 +234,7 @@ function charge(sub, userId, { date = todayStr(), silent = false } = {}) {
     date, `订阅扣费 · ${label}`, sub.name, 'cleared', 'subscription',
     Number(sub.id), nowStr(), nowStr()
   );
+  require('./finance/cards').afterTransactions(Number(sub.ledger_id),[Number(info.lastInsertRowid)]);
   // 不周期/固定到期日：手动记账后不推进"下次扣费日"（保持原日期，不进入自动扣费队列）
   const keepNext = cycleOf(sub.cycle) === 'none' || isFixed(sub);
   run(

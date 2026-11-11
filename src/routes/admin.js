@@ -543,6 +543,7 @@ router.post('/api/import/preview', auth.requireLogin, auth.requireLedgerWrite, a
     const cats = fd.flatCategories(ledgerId);
     const SOURCE_LABEL = { dict: '词表', habit: '习惯', ai: 'AI' };
     const guessCat = (r) => {
+      if(require('../lib/txn').PRINCIPAL_TYPES.includes(r.type))return '本金或转账，不适用收支分类';
       if (r.neutral) return '账户间转账（不计收支）';
       if (r.category_id) {
         const path = cats.find((c) => Number(c.id) === Number(r.category_id))?.path;

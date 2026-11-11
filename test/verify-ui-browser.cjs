@@ -9,9 +9,11 @@ function findContentScrollers(){return [...document.querySelectorAll('.page-body
 const demoEnv={...process.env, DATA_DIR:path.join(root,'.tmp/data-ui-browser'), UI_FIXTURE_DIR:path.join(root,'.tmp/data-ui-browser')};
 execFileSync(process.execPath,['scripts/seed-demo.js'],{cwd:root,env:demoEnv,stdio:'ignore'});
 execFileSync(process.execPath,['test/fixtures/ui-preview.cjs'],{cwd:root,env:demoEnv,stdio:'ignore'});
+execFileSync(process.execPath,['test/fixtures/finance-preview.cjs'],{cwd:root,env:demoEnv,stdio:'ignore'});
 const server=spawn(process.execPath,['server.js'],{cwd:root,env:{...process.env,DATA_DIR:root+'/.tmp/data-ui-browser',PORT:'5113',HOST:'127.0.0.1',NODE_ENV:'test'},stdio:['ignore','pipe','pipe']});
 const serverReady=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('QA服务器启动超时')),12000);server.stdout.on('data',buf=>{if(buf.toString().includes('家账簿 已启动')){clearTimeout(timer);resolve();}});server.once('exit',code=>{clearTimeout(timer);reject(new Error('QA服务器提前退出 '+code));});server.once('error',reject);});
-const routes=['/','/transactions','/transactions/new','/calendar','/reports','/annual','/search','/accounts','/accounts/1','/budgets','/goals','/debts','/subscriptions','/recurring','/categories','/tags','/import','/export','/ledgers','/members','/notifications','/settings','/about','/ai','/attachments','/more','/not-found'];
+const financeIds=JSON.parse(execFileSync(process.execPath,['-e',"const d=require('./src/db');console.log(JSON.stringify({loan:d.get('SELECT id FROM finance_contracts ORDER BY id').id,card:d.get('SELECT account_id FROM credit_profiles ORDER BY account_id').account_id,bill:d.get('SELECT id FROM credit_statements WHERE confirmed_at IS NOT NULL ORDER BY id').id,payment:d.get('SELECT id FROM finance_payments ORDER BY id').id,debt:d.get(\"SELECT id FROM debts WHERE managed=1 ORDER BY id\").id}));"],{cwd:root,env:demoEnv,encoding:'utf8',stdio:['ignore','pipe','ignore']}));
+const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports?basis=consumption','/finance','/finance/loans/'+financeIds.loan,'/finance/cards/'+financeIds.card,'/finance/statements/'+financeIds.bill,'/finance/payments/'+financeIds.payment,'/debts/'+financeIds.debt,'/','/transactions','/transactions/new','/calendar','/reports','/annual','/search','/accounts','/accounts/1','/budgets','/goals','/debts','/subscriptions','/recurring','/categories','/tags','/import','/export','/ledgers','/members','/notifications','/settings','/about','/ai','/attachments','/more','/not-found'];
 (async()=>{
  let browser;
  try {
@@ -21,6 +23,22 @@ const routes=['/','/transactions','/transactions/new','/calendar','/reports','/a
   const context=await browser.newContext({viewport:{width:1920,height:1080}});
   const page=await context.newPage(); const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto('http://127.0.0.1:5113/login');await page.locator('[name=username]').fill('admin');await page.locator('[name=password]').fill('admin123456');await page.locator('button[type=submit]').click();await page.waitForURL('http://127.0.0.1:5113/');
+  const financeJourneys=[];
+  const nativeContext=await browser.newContext({storageState:await context.storageState(),javaScriptEnabled:false,viewport:{width:390,height:844}});
+  const financePage=await nativeContext.newPage();
+  for(const theme of ['light','dark'])for(const width of [390,1920]){
+   await financePage.setViewportSize({width,height:844});await financePage.goto('http://127.0.0.1:5113/theme/'+theme);await financePage.goto('http://127.0.0.1:5113/finance');
+   const create=financePage.locator('form[action="/finance/loans"]');const manualInitiallyHidden=!(await create.locator('.finance-manual-fields').isVisible());await create.locator('[name=method]').selectOption('manual');const manualAvailable=await create.locator('.finance-manual-fields').isVisible();await create.locator('[name=method]').selectOption('equal_payment');if(!manualInitiallyHidden||!manualAvailable)throw Error('特殊银行计划应仅在所选方式下显示');await create.locator('[name=name]').fill('浏览器车贷 '+theme+' '+width);await create.locator('[name=original_principal]').fill('1000');await create.locator('[name=remaining_principal]').fill('1000');await create.locator('[name=term_n]').fill('2');await create.locator('[name=annual_rate]').fill('0');await create.locator('[name=method]').selectOption('equal_principal');await create.locator('button[type=submit],button').last().click();await financePage.waitForURL(/\/finance\/loans\/\d+$/);const loanPath=new URL(financePage.url()).pathname;await financePage.goto('http://127.0.0.1:5113/transactions/new?type=repayment&target=loan:'+loanPath.split('/').at(-1));
+   const pay=financePage.locator('form[action="'+loanPath+'/payments"]');await pay.locator('[name=account_id]').selectOption({index:1});await pay.locator('[name=principal]').fill('100');await pay.getByRole('button',{name:'确认实际付款',exact:true}).click();await financePage.waitForURL(/\/finance\/payments\/\d+$/);const paymentPath=new URL(financePage.url()).pathname;
+   await financePage.locator('form[action="'+paymentPath+'/reverse"] button').click();await financePage.waitForURL('http://127.0.0.1:5113'+paymentPath);const reversed=await financePage.locator('.card-head .chip').first().textContent()==='已撤销';await financePage.locator('form[action="'+paymentPath+'/restore"] button').click();await financePage.waitForURL('http://127.0.0.1:5113'+paymentPath);const restored=await financePage.locator('.card-head .chip').first().textContent()==='已记录';
+   await financePage.goto('http://127.0.0.1:5113'+loanPath);await financePage.getByText('调整后续还款计划',{exact:true}).click();const replan=financePage.locator('form[action="'+loanPath+'/plan/preview"]');await replan.locator('[name=term_n]').fill('3');await replan.getByRole('button',{name:'预览新计划'}).click();await financePage.getByRole('button',{name:'确认应用此计划'}).click();await financePage.waitForURL('http://127.0.0.1:5113'+loanPath);
+   await financePage.screenshot({path:root+'/.screenshots/finance-'+theme+'-'+width+'-loan.png',fullPage:true,animations:'disabled'});
+   const archived=financePage.locator('form[action="'+loanPath+'/delete"]');await financePage.getByText('合同信息与提醒',{exact:true}).click();await archived.locator('button').click();await financePage.waitForURL('http://127.0.0.1:5113/finance');await financePage.goto('http://127.0.0.1:5113'+loanPath);await financePage.getByRole('button',{name:'恢复合同'}).click();await financePage.waitForURL('http://127.0.0.1:5113'+loanPath);
+   await financePage.goto('http://127.0.0.1:5113/finance/cards/'+financeIds.card);const cardPay=financePage.locator('form[action="/finance/cards/'+financeIds.card+'/payments"]');await cardPay.locator('[name=account_id]').selectOption({index:1});await cardPay.locator('[name=amount]').fill('1');await cardPay.getByRole('button',{name:'确认实际付款',exact:true}).click();await financePage.waitForURL(/\/finance\/payments\/\d+$/);const cardPayment=new URL(financePage.url()).pathname;const alloc=financePage.locator('form[action="'+cardPayment+'/allocate"]');const allocationVisible=await alloc.isVisible();await alloc.getByRole('button',{name:'保存分配'}).click();await financePage.waitForURL('http://127.0.0.1:5113'+cardPayment);
+   const fields=await financePage.locator('input:not([type=hidden])').count();financeJourneys.push({theme,width,reversed,restored,allocationVisible,fields,native:true,overflow:await financePage.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)});
+   await financePage.goto('http://127.0.0.1:5113/finance/cards/'+financeIds.card);await financePage.screenshot({path:root+'/.screenshots/finance-'+theme+'-'+width+'-card.png',fullPage:true,animations:'disabled'});
+  }
+  await nativeContext.close();
   const results=[];fs.mkdirSync(root+'/.screenshots/audit-after',{recursive:true});
   for(const theme of ['light','dark']){
    await page.goto('http://127.0.0.1:5113/theme/'+theme);
@@ -37,20 +55,27 @@ const routes=['/','/transactions','/transactions/new','/calendar','/reports','/a
      }
      if(route==='/transactions')metrics.listWidth=await page.locator('.transactions-primary').evaluate(el=>el.getBoundingClientRect().width);
      metrics.contentScrollers=await page.evaluate(findContentScrollers);
+     if(/^\/finance\/(loans|cards|statements|payments)\/\d+$/.test(route)||/^\/(debts|accounts)\/\d+$/.test(route)||route.startsWith('/transactions/new'))metrics.hasReturn=await page.locator('.detail-navigation a').count()===1;
+     if(['/accounts','/debts','/finance'].includes(route)){
+      metrics.actionAlignment=await page.locator('.debt-entry > .entry-actions,.account-entry > .entry-actions').evaluateAll(groups=>groups.every(g=>{const r=g.getBoundingClientRect();return [...g.querySelectorAll('.btn')].every(b=>{const q=b.getBoundingClientRect();return q.left>=r.left-1&&q.right<=r.right+1;});}));
+      metrics.commonWidth=await page.locator('.page-body').evaluate(el=>Math.round(el.getBoundingClientRect().width));
+     }
+     if(route==='/finance')metrics.createAligned=await page.locator('.finance-create').evaluate(el=>{const r=el.getBoundingClientRect(),g=el.closest('.finance-grid').getBoundingClientRect();return Math.abs(r.left-g.left)<1&&Math.abs(r.right-g.right)<1;});
+
      if(route==='/categories')metrics.flatCategories=await page.locator('.category-navigation').evaluate(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display==='grid'&&s.position==='static'&&s.maxHeight==='none'&&[...el.querySelectorAll('a')].every(a=>{const b=a.getBoundingClientRect();return b.top>=r.top&&b.bottom<=r.bottom+1;});});
      if(width>=1280){
       metrics.pageWidth=await page.locator('.page-body').evaluateAll(nodes=>nodes[0]?.getBoundingClientRect().width||0);
       metrics.cards=await page.locator('.card').evaluateAll(nodes=>nodes.filter(el=>el.getClientRects().length).map(el=>{const r=el.getBoundingClientRect();const children=[...el.children].filter(c=>c.getClientRects().length);const end=Math.max(r.top,...children.map(c=>c.getBoundingClientRect().bottom));return {title:el.querySelector('h2')?.textContent,width:Math.round(r.width),height:Math.round(r.height),slack:Math.round(r.bottom-end-parseFloat(getComputedStyle(el).paddingBottom))};}));
      }
      if(width===1920){
-      await page.waitForTimeout(230);const slug=route==='/'?'home':route.replaceAll('/','-').slice(1);
+      await page.waitForTimeout(230);const slug=route==='/'?'home':route.replaceAll('/','-').slice(1).replace(/[^a-zA-Z0-9_-]/g,'-');
       await page.screenshot({path:root+`/.screenshots/audit-after/${theme}-${slug}.png`});
-      await page.screenshot({path:root+`/.screenshots/audit-after/${theme}-${slug}-full.png`,fullPage:true});
+      await page.screenshot({path:root+`/.screenshots/audit-after/${theme}-${slug}-full.png`,fullPage:true,animations:'disabled'});
      }
      results.push({theme,width,route,status:res.status(),...metrics});
      if(route==='/'&&[390,1920,2560].includes(width)||route==='/transactions/new'&&width===1920) await page.waitForTimeout(260);
-     if(route==='/'&&[390,1920,2560].includes(width)||route==='/transactions/new'&&width===1920) await page.screenshot({path:root+`/.screenshots/${theme}-${width}-${route==='/'?'dashboard':'form'}.png`,fullPage:true});
-     if(route==='/transactions'&&width===1920){await page.waitForTimeout(240);await page.screenshot({path:root+`/.screenshots/${theme}-transactions.png`,fullPage:true});}
+     if(route==='/'&&[390,1920,2560].includes(width)||route==='/transactions/new'&&width===1920) await page.screenshot({path:root+`/.screenshots/${theme}-${width}-${route==='/'?'dashboard':'form'}.png`,fullPage:true,animations:'disabled'});
+     if(route==='/transactions'&&width===1920){await page.waitForTimeout(240);await page.screenshot({path:root+`/.screenshots/${theme}-transactions.png`,fullPage:true,animations:'disabled'});}
      if(route==='/'&&width===1920&&theme==='light') await page.screenshot({path:root+'/.screenshots/desktop-preview.png'});
     }
    }
@@ -66,7 +91,7 @@ const routes=['/','/transactions','/transactions/new','/calendar','/reports','/a
      const cards=await page.locator('.card[data-tab="'+tab+'"], [data-tab="'+tab+'"] > .card').evaluateAll(nodes=>nodes.filter(el=>el.getClientRects().length).map(el=>el.getBoundingClientRect().width));
      const cardLimit=tab==='ai'||tab==='site'?841:tab==='api'?1081:961;
      variants.push({theme,state:'settings-'+tab,width,visible,overflow:await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),cardsFit:cards.every(w=>w<=cardLimit),contentScrollers:await page.evaluate(findContentScrollers)});
-     if(width===1920)await page.screenshot({path:root+`/.screenshots/audit-after/${theme}-settings-${tab}.png`,fullPage:true});
+     if(width===1920)await page.screenshot({path:root+`/.screenshots/audit-after/${theme}-settings-${tab}.png`,fullPage:true,animations:'disabled'});
     }
    }
    await page.setViewportSize({width:1920,height:1080});
@@ -98,7 +123,7 @@ const routes=['/','/transactions','/transactions/new','/calendar','/reports','/a
   await page.keyboard.press('Enter');await page.locator('.modal-mask .txn-detail').waitFor();await page.keyboard.press('Escape');
   const mobileDetails=await listRow.evaluate(el=>el===document.activeElement);
   await page.goto('http://127.0.0.1:5113/');await page.setViewportSize({width:1920,height:1080});await page.setViewportSize({width:390,height:844});
-  const mobileOrder=await page.locator('.dashboard-column').evaluate(el=>{const heads=[...el.children].slice(0,3).map(c=>c.querySelector('h2')?.textContent);return heads.join(',')==='收支趋势,今日速览,最近记录';});
+  const mobileOrder=await page.locator('.dashboard-column').evaluate(el=>{const heads=[...el.children].slice(0,3).map(c=>c.querySelector('h2')?.textContent);return /趋势$/.test(heads[0])&&heads.slice(1).join(',')==='今日速览,最近记录';});
   // Primary keyboard journeys.
   await page.setViewportSize({width:1920,height:1080});await page.goto('http://127.0.0.1:5113/');
   await page.locator('#userMenuBtn').click();await page.keyboard.press('Escape');
@@ -118,7 +143,7 @@ const routes=['/','/transactions','/transactions/new','/calendar','/reports','/a
   await page.emulateMedia({reducedMotion:'reduce'});const reduced=await page.locator('.card').first().evaluate(el=>getComputedStyle(el).animationName==='none');
   await page.goto('http://127.0.0.1:5113/ui-mode?simple=1');
   const minimal=await page.locator('body').getAttribute('data-layout')==='m';
-  await page.screenshot({path:root+'/.screenshots/minimal-390.png',fullPage:true});
+  await page.screenshot({path:root+'/.screenshots/minimal-390.png',fullPage:true,animations:'disabled'});
   // Coarse pointer tablet uses the same drawer as CSS, without forcing phone UA.
   const touchContext=await browser.newContext({viewport:{width:1024,height:768},hasTouch:true,storageState:await context.storageState()});
   const touchPage=await touchContext.newPage();await touchPage.goto('http://127.0.0.1:5113/ui-mode?simple=0');
@@ -177,8 +202,10 @@ const routes=['/','/transactions','/transactions/new','/calendar','/reports','/a
   const noJsContext=await browser.newContext({javaScriptEnabled:false,storageState:await context.storageState(),viewport:{width:1280,height:900}});
   const noJsPage=await noJsContext.newPage();await noJsPage.goto('http://127.0.0.1:5113/categories?kind=income');await noJsPage.locator('.category-entry > summary').first().click();
   const categoryNoJs=await noJsPage.locator('.category-edit-form').first().isVisible();
+  const returnNavigation=results.every(r=>r.hasReturn!==false);
+  const financeLayout=results.filter(r=>r.commonWidth).every(r=>r.actionAlignment!==false&&r.createAligned!==false)&&[390,820,1280,1920,2560].every(w=>{const rows=results.filter(r=>r.commonWidth&&r.width===w);return rows.every(r=>Math.abs(r.commonWidth-rows[0].commonWidth)<=1);});
   const naturalCards=results.filter(r=>r.cards).every(r=>r.cards.every(c=>c.slack<=80))&&results.every(r=>r.contentScrollers.length===0&&r.flatCategories!==false)&&variants.every(r=>r.contentScrollers.length===0);
-  const boundedPages=results.filter(r=>r.width>=1920&&!['/','/more','/not-found'].includes(r.route)).every(r=>r.pageWidth<=1465);
+  const boundedPages=results.filter(r=>r.width>=1920&&!['/','/more','/not-found'].includes(r.route.split('?')[0])).every(r=>r.pageWidth<=1465);
   const variantLayouts=variants.every(v=>!v.overflow&&v.visible!==false&&v.cardsFit!==false&&(!v.pageWidth||v.pageWidth<=1281));
   const darkAuth=await browser.newContext({colorScheme:'dark',viewport:{width:390,height:844}});const darkLogin=await darkAuth.newPage();
   await darkLogin.goto('http://127.0.0.1:5113/login');
@@ -188,9 +215,9 @@ const routes=['/','/transactions','/transactions/new','/calendar','/reports','/a
   const kindTrigger=page.locator('.category-modal .hl-select-trigger').first();await kindTrigger.click();await page.locator('.category-modal .modal-title').click();await kindTrigger.click();
   const selectReopensAfterOutside=await kindTrigger.getAttribute('aria-expanded')==='true';await page.keyboard.press('Escape');await page.keyboard.press('Escape');
   const wideContentFills=results.filter(r=>r.route==='/'&&r.width>=1920).every(r=>Math.abs(r.contentWidth-(r.width-240))<=1)&&tabletDrawerLayout&&phoneDrawerLayout;
-  const interaction={menuClosed,focusReturned,rowFocusReturned,trapped,drawerClosed,resizedDrawerReleased,reduced,minimal,coarseTablet,zoom200,wideContentFills,ledgerMenuFits,dashboardGaps,compactLedger,advancedCollapsed,inlineDetails,inspectorFocusReturned,inspectorResizeReleased,mobileDetails,mobileOrder,inspectorControlsReachable,glassMaterial,categorySoftDeleted,categoryRestored,compactPageSize,categoryKindSync,categoryModalFocusReturned,categoryDropdownEscape,recurringClonedSelect,categoryNoJs,naturalCards,boundedPages,variantLayouts,darkLoginTheme,selectReopensAfterOutside};
-  const summary={pages:results.length,failures:results.filter(x=>x.overflow||x.status>=500),errors,interaction,authChecks,variants,results};
-  if(summary.failures.length||errors.length||Object.values(interaction).some(v=>!v)||authChecks.some(x=>x.overflow))process.exitCode=1;
+  const interaction={returnNavigation,financeLayout,menuClosed,focusReturned,rowFocusReturned,trapped,drawerClosed,resizedDrawerReleased,reduced,minimal,coarseTablet,zoom200,wideContentFills,ledgerMenuFits,dashboardGaps,compactLedger,advancedCollapsed,inlineDetails,inspectorFocusReturned,inspectorResizeReleased,mobileDetails,mobileOrder,inspectorControlsReachable,glassMaterial,categorySoftDeleted,categoryRestored,compactPageSize,categoryKindSync,categoryModalFocusReturned,categoryDropdownEscape,recurringClonedSelect,categoryNoJs,naturalCards,boundedPages,variantLayouts,darkLoginTheme,selectReopensAfterOutside};
+  const summary={financeJourneys,pages:results.length,failures:results.filter(x=>x.overflow||x.status>=500),errors,interaction,authChecks,variants,results};
+  if(financeJourneys.some(j=>!j.reversed||!j.restored||!j.allocationVisible||j.overflow)||summary.failures.length||errors.length||Object.values(interaction).some(v=>!v)||authChecks.some(x=>x.overflow))process.exitCode=1;
 
   fs.writeFileSync(root+'/.screenshots/qa.json',JSON.stringify(summary,null,2));
   console.log(JSON.stringify({...summary,results:undefined,authChecks:undefined,variants:undefined},null,2));

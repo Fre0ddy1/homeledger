@@ -292,7 +292,7 @@ function parseTextByRules(text, { today = todayStr() } = {}) {
     const cls = classifyByKeywords(line);
     const kind = /收入|工资|报销|退款|收|入账/.test(line) && !cls ? 'income' : (cls?.kind || 'expense');
     out.push({
-      type: /转账|转出|转到/.test(line) ? 'transfer' : kind === 'income' ? 'income' : 'expense',
+      type: require('./financial-intent').classify(line)==='finance_payment'?'transfer':require('./financial-intent').classify(line)||(/转账|转出|转到/.test(line) ? 'transfer' : kind === 'income' ? 'income' : 'expense'),
       amount_cents: amount,
       currency: 'CNY',
       txn_date: parseDateWords(line, today),
@@ -858,7 +858,9 @@ function recordDraftFeedback(ledgerId, items) {
 
 /** 规范化单条草稿；sourceText 给出时（纯文字识别），模型给的账户需在原文中有依据，否则交给习惯推荐 */
 function normalizeItem(raw, ledgerId, { sourceText = '', noteLines = null } = {}) {
-  const type = ['expense', 'income', 'transfer'].includes(raw.type) ? raw.type : 'expense';
+  const intent=require('./financial-intent').classify([raw.note,raw.merchant].join(' '));
+  const type = intent==='finance_payment'?'transfer':intent||(['expense','income','transfer','lend','borrow','repay_receive','repay_pay'].includes(raw.type)?raw.type:'expense');
+  const principal=['transfer','lend','borrow','repay_receive','repay_pay'].includes(type);
   const kind = type === 'income' ? 'income' : 'expense';
   const amountCents = Number.isFinite(Number(raw.amount_cents))
     ? Number(raw.amount_cents)
@@ -867,10 +869,10 @@ function normalizeItem(raw, ledgerId, { sourceText = '', noteLines = null } = {}
   const catName = raw.category_name || raw.category || null;
   // P13 词表优先级：规则引擎的 category_name 出自系统关键词表（同为统计猜测），词表
   // （用户自己的记法）优先于它；大模型读账单后明确给出的分类名是识别结果，仍优先于词表
-  const dictFirst = type !== 'transfer' && (raw.engine === 'rule' || !catName);
-  let categoryId = dictFirst ? null : resolveCategoryId(ledgerId, catName, kind);
+  const dictFirst = !principal && (raw.engine === 'rule' || !catName);
+  let categoryId = principal||dictFirst ? null : resolveCategoryId(ledgerId, catName, kind);
   let categoryRecommended = false;
-  if (!categoryId && type !== 'transfer') {
+  if (!categoryId && !principal) {
     const hay = `${raw.merchant || ''} ${raw.note || ''} ${catName || ''}`;
     // P13 个人词表：本账本沉淀的「商户→分类」稳定映射，优先于全体用户共享的系统关键词表
     const dictHit = dict.lookup(ledgerId, merchant, hay, kind);
@@ -932,6 +934,8 @@ function normalizeItem(raw, ledgerId, { sourceText = '', noteLines = null } = {}
   }
   return {
     draft_id: uid(10),
+    requires_finance_review:intent==='finance_payment',
+    finance_url:intent==='finance_payment'?'/finance':null,
     type,
     amount_cents: Math.abs(amountCents || 0),
     currency: raw.currency || 'CNY',

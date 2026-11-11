@@ -103,7 +103,7 @@ async function web(path,form){
   db.run("UPDATE budgets SET scope='category' WHERE id=?",budgetId);
   check('父分类删除后 API 编辑流水保留原分类',(await api('/transactions/'+historyId,{note:'父级也已删除'})).data.ok===true&&db.get('SELECT category_id FROM transactions WHERE id=?',historyId).category_id===leaf.id);
   const ruleId=db.get("SELECT id FROM recurring_rules WHERE name='迁移测试' ORDER BY id").id;
-  const execution=await api('/recurring/'+ruleId+'/run',{});
+  const execution=await api('/recurring/'+ruleId+'/run',{scheduled_date:'2099-01-01'});
   check('既有周期规则 API 执行保留归档分类',execution.data.ok===true&&db.get("SELECT category_id FROM transactions WHERE ledger_id=1 AND source='recurring' ORDER BY id DESC").category_id===leaf.id);
   cats.restore(1,root.id);cats.restore(1,child.id);
  const oldIdTxn=txn.createTransaction(1,uid,{type:'expense',amount_cents:99,account_id:account,category_id:child.id,txn_date:db.todayStr()});

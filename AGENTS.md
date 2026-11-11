@@ -41,6 +41,8 @@ DATA_DIR=./data-demo node scripts/seed-demo.js   # 演示数据（独立目录�
 - `src/routes/openapi.js`：Bearer 令牌只存摘要、权限分层、分令牌频控、全量审计——安全语义勿放松
 - `public/js/`：原生 JS 渐进增强，服务端数据进 DOM 一律过 `esc()`；静态资源缓存戳 = 版本+mtime
 - UI 任务必读 `docs/ui-development.md`：`app.css` 基础组件 → `workspace.css` 页面约束/材质；三种 layout 均须保持资源缓存戳
+- 借钱/金融改动必读 `docs/finance-development.md`；本金无分类，资金事实只来自账户/流水，核销及撤销恢复通过公共服务，禁止UI/API/导入手写SQL绕过关联保护
+- 定期执行必须走 `src/lib/recurring.js` 的规则ID+计划日期幂等记录；金融到期只提醒，不自动代记真实还款
 - 分类写入必须走 `src/lib/categories.js`，保留当前账本副本映射、软删除/恢复与历史引用；不得以 `is_system` 判定只读
 - **版本三件套**：发版必须同步 `package.json` + `src/lib/about.js` CHANGELOG + `README.md` 更新记录
 
@@ -49,8 +51,8 @@ DATA_DIR=./data-demo node scripts/seed-demo.js   # 演示数据（独立目录�
 **Git 与发版**
 - 标签 = 发版：**只在维护者明确要求时**打/推 tag（触发 CI 构建发布 GHCR 镜像）；发镜像、改包可见性、NAS 切镜像逐项确认
 - git 网络操作一律走 SSH（HTTPS 直连常被重置）；已推送的 main 历史不重写
-- 功能提交走 分支 → PR → 独立审查 → 修复 P1 → 合并；纯文档小改可直推 main
-- **审查不看改动体量**：PR 自建自合禁止；直推 main 的补丁也须补审——2026-10-12 两次以「改动小」跳审，其中一次漏审产物（insertBefore 徽标回归）靠维护者实测才暴露
+- 功能提交走 分支 → PR → 独立审查 → 修复 P1 → 合并；维护者2026-11-11已授权测试和独立审查通过后直接合并main，无需再次询问；纯文档小改可直推 main
+- **审查不看改动体量**：未经维护者授权的PR自建自合禁止；直推 main 的补丁也须补审——2026-10-12 两次以「改动小」跳审，其中一次漏审产物（insertBefore 徽标回归）靠维护者实测才暴露
 - 提交信息中文：发版 `vX.Y.Z: 要点`，过程提交 `docs:` / `fix:` / `feat:` / `test:` 前缀
 
 **质量**

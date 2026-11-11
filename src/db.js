@@ -489,6 +489,7 @@ if (ensureColumn('transactions', 'no_rhythm', 'INTEGER DEFAULT 0')) migrated.pus
 if (migrated.length) console.log(`[db] 已补齐字段：${migrated.join('、')}`);
 // 订阅扣费生成的流水按订阅维度回查（必须在 ensureColumn 之后建索引）
 db.exec('CREATE INDEX IF NOT EXISTS idx_txn_subscription ON transactions(subscription_id);');
+require('./lib/finance-schema').ensure(db,ensureColumn);
 
 /* ------------------------------- 账户类型常量 ------------------------------- */
 
@@ -758,6 +759,7 @@ function recalcBalances(ledgerId) {
 let initialized = false;
 function init() {
   if (initialized) return;
+  require('./lib/finance-schema').ensure(db,ensureColumn);
   // A restored pre-upgrade backup also needs the new category schema; module
   // top-level migrations only run once per process, while reopenDatabase doesn't.
   db.exec(`CREATE TABLE IF NOT EXISTS category_copies (

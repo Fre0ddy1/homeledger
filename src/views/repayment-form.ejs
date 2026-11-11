@@ -1,0 +1,8 @@
+<section class="card repayment-entry">
+<div class="type-tabs mb16"><% [['expense','支出'],['income','收入'],['transfer','转账'],['repayment','还款'],['lend','借出'],['borrow','借入'],['repay_receive','收回借款'],['repay_pay','偿还借款']].forEach(([key,label])=>{ %><a class="<%= key==='repayment'?'active':'' %>" href="/transactions/new?type=<%= key %>"><%= label %></a><% }); %></div>
+<div class="card-head"><h2>记录实际还款</h2><a class="btn btn-sm" href="/finance">管理贷款与信用卡</a></div>
+<p class="help">选择银行贷款或信用卡。亲友之间的还钱仍使用“偿还借款”。已经导入的付款请选择已有来源，避免重复扣账。</p>
+<% if(!targets.length){ %><div class="empty">先登记贷款或设置信用卡账期，再记录实际还款。<p class="mt16"><a class="btn btn-primary" href="/finance">设置还款对象</a></p></div><% }else{ %>
+<form method="get" action="/transactions/new" class="mt16"><input type="hidden" name="type" value="repayment"><div class="field"><label for="repayment-target">还款对象</label><select id="repayment-target" name="target" required><option value="">请选择</option><% targets.forEach(t=>{const value=t.target_kind+':'+t.target_id; %><option value="<%= value %>" <%= selected&&selected.target_kind+':'+selected.target_id===value?'selected':'' %>><%= t.target_kind==='card'?'信用卡':'贷款' %> · <%= t.name %></option><% }); %></select></div><button class="btn">选择并继续</button></form>
+<% if(selected){ %><div class="divider"></div><h3><%= selected.name %> · <%= selected.target_kind==='card'?'信用卡还款':'贷款还款' %></h3><%- include('partials/finance-payment-form',{kind:selected.target_kind,targetId:selected.target_id}) %><% } %><% } %>
+</section>

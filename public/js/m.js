@@ -370,7 +370,7 @@
     // 分类（可改下拉）：候选按收支类型过滤；推荐分类不在清单时补原生选项
     const cats = (() => { try { return JSON.parse((document.getElementById('mCats') || {}).textContent || '[]'); } catch { return []; } })();
     let catSel = null;
-    if (cats.length) {
+    if (cats.length && ['expense','income','fee'].includes(it.type)) {
       catSel = document.createElement('select');
       catSel.className = 'm-draft-acc';
       const kind = income ? 'income' : 'expense';
@@ -429,6 +429,9 @@
       card.appendChild(accLine);
     }
 
+    let toAccountSel=null;
+    if(it.type==='transfer') {toAccountSel=document.createElement('select');toAccountSel.className='m-draft-acc';for(const a of accs){const o=document.createElement('option');o.value=a.id;o.textContent=a.name;toAccountSel.appendChild(o);}card.appendChild(fieldRow('转入账户',toAccountSel));}
+    if(it.requires_finance_review){const hint=document.createElement('a');hint.href='/finance';hint.textContent='涉及金融还款，请前往贷款与信用卡核对 →';card.appendChild(hint);}
     // 商户（可改）：默认标题的来源，现在可以改
     const merchIn = document.createElement('input');
     merchIn.type = 'text';
@@ -515,6 +518,7 @@
         item.amount_cents = Math.round(Math.max(0, parseFloat(amountIn.value || '0') || 0) * 100);
         if (dateIn.value) item.txn_date = dateIn.value;
         if (catSel && catSel.value) item.category_id = Number(catSel.value);
+        if(toAccountSel)item.to_account_id=Number(toAccountSel.value);
         if (accountSel) item.account_id = Number(accountSel.value);
         item.merchant = merchIn.value.trim();
         item.note = noteIn.value.trim();

@@ -200,14 +200,15 @@ function readTxnBody(ledgerId, body, { createdAccounts = [], existingCategoryId 
   if (body.amount_cents != null) amountCents = Math.round(Number(body.amount_cents) || 0);
   else if (body.amount != null) amountCents = Math.round(Number(body.amount) * 100) || 0;
   const isTransfer = ['transfer', 'invest_buy', 'invest_sell'].includes(type);
+  const categoryAllowed=!['transfer','adjust','invest_buy','invest_sell','lend','borrow','repay_receive','repay_pay'].includes(type);
   const kind = type === 'income' || ['refund', 'interest', 'repay_receive', 'reimburse'].includes(type) ? 'income' : 'expense';
   let category = null;
-  if (body.category_id != null && body.category_id !== '') {
+  if (categoryAllowed && body.category_id != null && body.category_id !== '') {
     category = require('../lib/categories').find(ledgerId, body.category_id, true);
     if (!category && existingCategoryId && require('../lib/categories').resolveId(ledgerId,body.category_id) === Number(existingCategoryId)) {
       category = require('../lib/categories').find(ledgerId,body.category_id);
     }
-  } else if (body.category != null) {
+  } else if (categoryAllowed && body.category != null) {
     category = resolveCategory(ledgerId, body.category, kind);
   }
   const splits = Array.isArray(body.splits)
@@ -224,6 +225,7 @@ function readTxnBody(ledgerId, body, { createdAccounts = [], existingCategoryId 
     account_id: accountId,
     to_account_id: toAccountId,
     category_id: category ? Number(category.id) : null,
+    debt_id: body.debt_id === undefined ? undefined : (body.debt_id || null),
     txn_date: DATE_RE.test(String(body.date || body.txn_date || '')) ? String(body.date || body.txn_date) : todayStr(),
     note: body.note || '',
     merchant: body.merchant || '',
@@ -339,8 +341,11 @@ router.get('/summary', (req, res) => {
   const { ledgerId } = req.openAuth;
   const from = DATE_RE.test(String(req.query.from || '')) ? req.query.from : todayStr().slice(0, 7) + '-01';
   const to = DATE_RE.test(String(req.query.to || '')) ? req.query.to : todayStr();
-  ok(res, { from, to, ...txn.summary(ledgerId, from, to) });
+  const consumption=txn.summary(ledgerId,from,to),cashflow=require('../lib/cashflow').summary(ledgerId,from,to),basis=req.query.basis==='cashflow'?'cashflow':'consumption';
+  ok(res, { from,to,basis,...(basis==='cashflow'?cashflow:consumption),consumption,cashflow });
 });
+
+router.get('/cashflow',(req,res)=>{try{const lid=req.openAuth.ledgerId,from=DATE_RE.test(String(req.query.from||''))?req.query.from:todayStr().slice(0,7)+'-01',to=DATE_RE.test(String(req.query.to||''))?req.query.to:todayStr(),flow=require('../lib/cashflow');ok(res,{from,to,basis:'cashflow',...flow.summary(lid,from,to),daily:flow.daily(lid,from,to),trend:flow.monthly(lid,req.query.months),outflow_groups:flow.breakdown(lid,from,to,'expense'),inflow_groups:flow.breakdown(lid,from,to,'income'),entries:req.query.group?flow.entries(lid,from,to,{kind:req.query.kind,group:req.query.group,page:req.query.page,pageSize:req.query.page_size}):null});}catch(e){bad(res,400,e.message);}});
 
 router.get('/reports/categories', (req, res) => {
   const { ledgerId } = req.openAuth;
@@ -349,14 +354,14 @@ router.get('/reports/categories', (req, res) => {
   const kind = req.query.kind === 'income' ? 'income' : 'expense';
   const top = req.query.top || null;
   ok(res, {
-    from, to, kind,
-    categories: top ? txn.subcategoryBreakdown(ledgerId, from, to, kind, top) : txn.categoryBreakdown(ledgerId, from, to, kind),
+    from, to, kind,basis:req.query.basis==='cashflow'?'cashflow':'consumption',
+    categories:req.query.basis==='cashflow'?require('../lib/cashflow').breakdown(ledgerId,from,to,kind):(top ? txn.subcategoryBreakdown(ledgerId, from, to, kind, top) : txn.categoryBreakdown(ledgerId, from, to, kind)),
   });
 });
 
 router.get('/reports/trend', (req, res) => {
   const { ledgerId } = req.openAuth;
-  ok(res, { months: Math.min(24, Math.max(2, Number(req.query.months) || 6)), trend: txn.monthlyTrend(ledgerId, Math.min(24, Math.max(2, Number(req.query.months) || 6))) });
+  const months=Math.min(24, Math.max(2, Number(req.query.months)||6)),basis=req.query.basis==='cashflow'?'cashflow':'consumption';ok(res,{months,basis,trend:basis==='cashflow'?require('../lib/cashflow').monthly(ledgerId,months):txn.monthlyTrend(ledgerId,months)});
 });
 
 /* ------------------------------- 查询：账户 ------------------------------- */
@@ -387,20 +392,8 @@ router.get('/tags', (req, res) => {
 
 /* ------------------------------- 查询：计划 ------------------------------- */
 
-router.get('/debts', (req, res) => {
-  const { ledgerId } = req.openAuth;
-  const debts = all(
-    `SELECT d.*, a.name AS account_name FROM debts d LEFT JOIN accounts a ON a.id = d.account_id
-     WHERE d.ledger_id = ? ORDER BY d.status DESC, COALESCE(d.due_date, '9999') LIMIT 300`,
-    ledgerId
-  );
-  const open = debts.filter((d) => d.status === 'open');
-  ok(res, {
-    receivable: open.filter((d) => d.direction === 'receivable').reduce((s, d) => s + Number(d.balance_cents), 0),
-    payable: open.filter((d) => d.direction === 'payable').reduce((s, d) => s + Number(d.balance_cents), 0),
-    debts,
-  });
-});
+router.use('/debts', require('./borrowing').routerFactory(true,{requireWrite,ok,bad}));
+router.use('/finance', require('./finance-api')({requireWrite,ok,bad}));
 
 router.get('/budgets', (req, res) => {
   const { ledgerId } = req.openAuth;
@@ -501,7 +494,7 @@ router.post('/transactions/bulk-category', requireWrite, (req, res) => {
   const cid = validCategoryId(ledgerId, Number((req.body || {}).category_id));
   if (!ids.length || !cid) return bad(res, 400, '请提供 ids 与 category_id');
   const ph = ids.map(() => '?').join(',');
-  const info = run(`UPDATE transactions SET category_id = ?, updated_at = ? WHERE ledger_id = ? AND id IN (${ph})`, cid, nowStr(), ledgerId, ...ids);
+  const info = run(`UPDATE transactions SET category_id = ?, updated_at = ? WHERE ledger_id = ? AND id IN (${ph}) AND type NOT IN ('transfer','adjust','lend','borrow','repay_receive','repay_pay','invest_buy','invest_sell')`, cid, nowStr(), ledgerId, ...ids);
   auth.audit(req, 'api.txn.bulkCategory', { ledgerId, detail: `开放API·${req.openAuth.tokenName} 批量改分类 ${info.changes} 笔` });
   ok(res, { updated: info.changes });
 });
@@ -559,6 +552,7 @@ router.post('/transactions/:id', requireWrite, (req, res) => {
       to_account: body.to_account,
       category_id: body.category_id ?? (body.category != null ? undefined : old.category_id),
       category: body.category,
+      debt_id: body.debt_id ?? old.debt_id,
       date: rawDate != null ? (DATE_RE.test(String(rawDate)) ? rawDate : old.txn_date) : old.txn_date,
       note: body.note ?? old.note ?? '',
       merchant: body.merchant ?? old.merchant ?? '',
@@ -580,7 +574,7 @@ router.post('/transactions/:id', requireWrite, (req, res) => {
 
 function softDeleteHandler(req, res) {
   const { ledgerId } = req.openAuth;
-  const done = txn.softDelete(Number(req.params.id), ledgerId);
+  let done;try { done=txn.softDelete(Number(req.params.id),ledgerId); } catch(e){return bad(res,400,e.message);}
   if (!done) return bad(res, 404, '记录不存在');
   auth.audit(req, 'api.txn.delete', { ledgerId, entity: 'transaction', entityId: Number(req.params.id), detail: `开放API·${req.openAuth.tokenName} 删除` });
   ok(res, { deleted: Number(req.params.id) });
@@ -593,10 +587,7 @@ router.post('/transactions/:id/restore', requireWrite, (req, res) => {
   const id = Number(req.params.id);
   const r = get('SELECT id FROM transactions WHERE id = ? AND ledger_id = ? AND deleted_at IS NOT NULL', id, ledgerId);
   if (!r) return bad(res, 404, '没有可恢复的已删除记录');
-  run('UPDATE transactions SET deleted_at = NULL, updated_at = ? WHERE id = ?', nowStr(), id);
-  require('../db').recalcBalances(ledgerId);
-  // 借贷类交易恢复后同步重建自动汇总台账
-  txn.syncDebts(ledgerId);
+  try { txn.restore(id,ledgerId); } catch(e){return bad(res,400,e.message);}
   auth.audit(req, 'api.txn.restore', { ledgerId, entity: 'transaction', entityId: id });
   ok(res, { restored: id });
 });
@@ -668,6 +659,7 @@ router.post('/ai/bill', requireWrite, async (req, res) => {
         const accountId = Number(it.account_id) ||
           resolveAccount(ledgerId, it.account_name || defaultAccName, { created: createdAccounts }) ||
           firstAccount();
+        require('../lib/financial-intent').assertOrdinary(it);
         const id = txn.createTransaction(ledgerId, userId, {
           type: it.type || 'expense',
           amount_cents: Number(it.amount_cents) || 0,
@@ -764,6 +756,7 @@ router.post('/accounts/:id', requireWrite, (req, res) => {
   const acc = findAccount(req, res);
   if (!acc) return;
   const body = req.body || {};
+  try { require('../lib/finance/account-guard').update(ledgerId,acc,body); } catch(e) { return bad(res,400,e.message); }
   run(
     `UPDATE accounts SET name=?, type=?, icon=?, currency=?, initial_cents=?, credit_limit=?, bill_day=?, due_day=?,
       note=?, include_in_net=? WHERE id=?`,
@@ -787,6 +780,7 @@ router.post('/accounts/:id', requireWrite, (req, res) => {
 router.post('/accounts/:id/archive', requireWrite, (req, res) => {
   const acc = findAccount(req, res);
   if (!acc) return;
+  try { require('../lib/finance/account-guard').archive(req.openAuth.ledgerId,acc.id); } catch(e) { return bad(res,400,e.message); }
   run('UPDATE accounts SET is_archived = ? WHERE id = ?', acc.is_archived ? 0 : 1, acc.id);
   auth.audit(req, 'api.account.archive', { ledgerId: req.openAuth.ledgerId, entity: 'account', entityId: acc.id, detail: acc.is_archived ? '恢复' : '停用' });
   ok(res, { id: acc.id, is_archived: !acc.is_archived });
@@ -796,6 +790,7 @@ router.post('/accounts/:id/delete', requireWrite, (req, res) => {
   const { ledgerId } = req.openAuth;
   const acc = findAccount(req, res);
   if (!acc) return;
+  try { require('../lib/finance/account-guard').remove(ledgerId,acc.id); } catch(e) { return bad(res,400,e.message); }
   const used = Number(get('SELECT COUNT(*) AS c FROM transactions WHERE ledger_id = ? AND (account_id = ? OR to_account_id = ?)', ledgerId, acc.id, acc.id)?.c || 0);
   if (used > 0) return bad(res, 400, `该账户下有 ${used} 笔记录，无法删除。可改为「停用」。`);
   run('DELETE FROM accounts WHERE id = ? AND ledger_id = ?', acc.id, ledgerId);
@@ -863,88 +858,7 @@ router.post('/tags/:id/delete', requireWrite, (req, res) => {
   ok(res, { deleted: id });
 });
 
-/* --------------------------------- 借贷台账 -------------------------------- */
-
-router.post('/debts', requireWrite, (req, res) => {
-  const { ledgerId, userId } = req.openAuth;
-  const body = req.body || {};
-  const counterparty = String(body.counterparty || body.name || '').trim();
-  const amount = body.amount_cents != null ? Math.abs(Math.round(Number(body.amount_cents) || 0)) : Math.abs(cents(body.amount));
-  const direction = body.direction === 'receivable' || body.direction === '借出' ? 'receivable' : 'payable';
-  if (!counterparty || !amount) return bad(res, 400, '请填写对方名称与金额');
-  const accountId = validAccountId(ledgerId, body.account_id);
-  if (body.create_txn) {
-    try {
-      const txnId = txn.createTransaction(ledgerId, userId, {
-        type: direction === 'receivable' ? 'lend' : 'borrow',
-        amount_cents: amount,
-        account_id: accountId,
-        txn_date: DATE_RE.test(String(body.date || '')) ? body.date : todayStr(),
-        merchant: counterparty,
-        note: body.note || (direction === 'receivable' ? '借出' : '借入'),
-        source: 'manual',
-      });
-      auth.audit(req, 'api.debt.create', { ledgerId, entity: 'debt', detail: `借台账 ${counterparty}` });
-      return ok(res, { txn_id: txnId, synced_to_debts: true });
-    } catch (e) {
-      return bad(res, 400, e.message);
-    }
-  }
-  const info = run(
-    `INSERT INTO debts (ledger_id, direction, counterparty, principal_cents, balance_cents, currency, account_id, due_date, status, note, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-    ledgerId, direction, counterparty.slice(0, 40), amount, amount, body.currency || 'CNY',
-    accountId, DATE_RE.test(String(body.due_date || '')) ? body.due_date : null, 'open',
-    body.note ? String(body.note).slice(0, 200) : null, nowStr()
-  );
-  auth.audit(req, 'api.debt.create', { ledgerId, entity: 'debt', entityId: info.lastInsertRowid, detail: `${direction} ${counterparty}` });
-  ok(res, { id: Number(info.lastInsertRowid), txn_created: false });
-});
-
-/** 收/还款：核销台账 + 生成流水（缺省金额 = 全部未还余额） */
-router.post('/debts/:id/settle', requireWrite, (req, res) => {
-  const { ledgerId, userId } = req.openAuth;
-  const d = get('SELECT * FROM debts WHERE id = ? AND ledger_id = ?', Number(req.params.id), ledgerId);
-  if (!d) return bad(res, 404, '台账不存在');
-  const body = req.body || {};
-  const amount = Math.min(
-    body.amount_cents != null ? Math.abs(Math.round(Number(body.amount_cents) || 0)) : (body.amount ? Math.abs(cents(body.amount)) : Number(d.balance_cents)),
-    Number(d.balance_cents)
-  );
-  if (!amount) return bad(res, 400, '金额无效');
-  try {
-    const txnId = txn.createTransaction(ledgerId, userId, {
-      type: d.direction === 'receivable' ? 'repay_receive' : 'repay_pay',
-      amount_cents: amount,
-      account_id: validAccountId(ledgerId, body.account_id) || d.account_id,
-      txn_date: DATE_RE.test(String(body.date || '')) ? body.date : todayStr(),
-      merchant: d.counterparty,
-      note: (d.direction === 'receivable' ? '收回借款 · ' : '偿还借款 · ') + d.counterparty,
-      source: 'manual',
-    });
-    const newBalance = Math.max(0, Number(d.balance_cents) - amount);
-    if (d.note !== '系统自动汇总') {
-      run('UPDATE debts SET balance_cents = ?, status = ? WHERE id = ?', newBalance, newBalance <= 0 ? 'closed' : 'open', d.id);
-    } else {
-      txn.syncDebts(ledgerId);
-    }
-    auth.audit(req, 'api.debt.settle', { ledgerId, entity: 'debt', entityId: d.id, detail: String(amount) });
-    ok(res, { txn_id: txnId, remaining_cents: newBalance, closed: newBalance <= 0 });
-  } catch (e) {
-    bad(res, 400, e.message);
-  }
-});
-
-router.post('/debts/:id/delete', requireWrite, (req, res) => {
-  const { ledgerId } = req.openAuth;
-  const id = Number(req.params.id);
-  const d = get('SELECT * FROM debts WHERE id = ? AND ledger_id = ?', id, ledgerId);
-  if (!d) return bad(res, 404, '台账不存在');
-  if (d.note === '系统自动汇总') return bad(res, 400, '自动汇总台账由借贷交易生成，请删除对应交易或用「还款」核销');
-  run('DELETE FROM debts WHERE id = ? AND ledger_id = ?', id, ledgerId);
-  auth.audit(req, 'api.debt.delete', { ledgerId, entity: 'debt', entityId: id, detail: d.counterparty });
-  ok(res, { deleted: id });
-});
+/* --------------------------------- 借钱台账 -------------------------------- */
 
 /* --------------------------------- 预算 ---------------------------------- */
 
@@ -1247,6 +1161,7 @@ router.post('/recurring', requireWrite, (req, res) => {
       amount_cents: amt,
       category_id: validCategoryId(ledgerId, it.category_id),
       account_id: validAccountId(ledgerId, it.account_id),
+      to_account_id:validAccountId(ledgerId,it.to_account_id),
       note: it.note || name,
       currency: 'CNY',
     });
@@ -1255,7 +1170,7 @@ router.post('/recurring', requireWrite, (req, res) => {
   const frequency = ['daily', 'weekly', 'monthly', 'yearly'].includes(body.frequency) ? body.frequency : 'monthly';
   const intervalN = Math.max(1, Number(body.interval_n) || 1);
   const dayOfMonth = body.day_of_month ? Number(body.day_of_month) : null;
-  let next = DATE_RE.test(String(body.next_run_at || '')) ? body.next_run_at : todayStr();
+  let next;try {next=require('../lib/finance/common').date(body.next_run_at||todayStr());require('../lib/recurring').validateItems(ledgerId,items);}catch(e){return bad(res,400,e.message);}
   let guard = 0;
   while (next < todayStr() && guard++ < 400) next = sch.advanceDate(next, { frequency, interval_n: intervalN, day_of_month: dayOfMonth });
   const info = run(
@@ -1280,28 +1195,13 @@ router.post('/recurring/:id/run', requireWrite, (req, res) => {
   const { ledgerId, userId } = req.openAuth;
   const r = findRule(req, res);
   if (!r) return;
-  const items = sch.ruleItems(r.payload);
-  const ids = [];
-  for (const p of items) {
-    const amt = Math.abs(Number(p.amount_cents) || 0);
-    if (!amt) continue;
-    const info = run(
-      `INSERT INTO transactions (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id,
-        to_account_id, category_id, user_id, txn_date, note, merchant, status, source, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      ledgerId, p.type || 'expense', amt, 'CNY', 1, amt, validAccountId(ledgerId, p.account_id), null,
-      require('../lib/categories').find(ledgerId,p.category_id)?.id || null,
-      userId, todayStr(), p.note || r.name, null, 'cleared', 'recurring', nowStr(), nowStr()
-    );
-    ids.push(Number(info.lastInsertRowid));
-  }
-  const nextRun = sch.advanceDate(r.next_run_at, r);
-  run('UPDATE recurring_rules SET last_run_at = ?, next_run_at = ? WHERE id = ?', nowStr(), nextRun, r.id);
-  require('../db').recalcBalances(ledgerId);
-  auth.audit(req, 'api.recurring.run', { ledgerId, entity: 'recurring', entityId: r.id, detail: `记账 ${ids.length} 笔` });
-  ok(res, { txn_ids: ids, next_run_at: nextRun });
+  try { const result=require('../lib/recurring').execute(ledgerId,r.id,userId,req.body);auth.audit(req,'api.recurring.run',{ledgerId,entity:'recurring',entityId:r.id});return ok(res,result); } catch(e) {return bad(res,400,e.message);}
+
 });
 
+router.get('/recurring/overlaps',(req,res)=>ok(res,{overlaps:require('../lib/recurring').overlaps(req.openAuth.ledgerId)}));
+router.get('/recurring/:id/runs',(req,res)=>{if(!findRule(req,res))return;ok(res,{runs:all('SELECT * FROM recurring_runs WHERE ledger_id=? AND rule_id=? ORDER BY id DESC',req.openAuth.ledgerId,Number(req.params.id))});});
+router.post('/recurring/:id/pause',requireWrite,(req,res)=>{try{const result=require('../lib/recurring').pause(req.openAuth.ledgerId,req.params.id,req.body.confirm);auth.audit(req,'api.recurring.pause',{ledgerId:req.openAuth.ledgerId,entity:'recurring',entityId:Number(req.params.id)});ok(res,result);}catch(e){bad(res,400,e.message);}});
 router.post('/recurring/:id/toggle', requireWrite, (req, res) => {
   const r = findRule(req, res);
   if (!r) return;

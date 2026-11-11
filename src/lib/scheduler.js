@@ -56,36 +56,15 @@ function ruleItems(payload) {
 
 function runDueRecurring(today = todayStr()) {
   const rules = all('SELECT * FROM recurring_rules WHERE is_active = 1 AND next_run_at <= ?', today);
-  const { recalcBalances } = require('../db');
   let created = 0;
-  const touchedLedgers = new Set();
   for (const rule of rules) {
-    const items = ruleItems(rule.payload);
-    tx(() => {
-      // 仅自动记账规则真正落库；非自动模式只提醒（否则不推进 next_run_at 会被 30 分钟轮询反复记账）
-      if (rule.auto_post) {
-        for (const p of items) {
-          const amount = Math.abs(Number(p.amount_cents) || 0);
-          if (!amount) continue;
-          run(
-            `INSERT INTO transactions
-             (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id, to_account_id, category_id,
-              user_id, txn_date, note, merchant, status, source, created_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-            rule.ledger_id, p.type || 'expense', amount, p.currency || 'CNY', 1, amount,
-            p.account_id || null, p.to_account_id || null, p.category_id || null,
-            rule.created_by_user_id || 1, rule.next_run_at,
-            p.note || rule.name, p.merchant || null, 'cleared', 'recurring', nowStr(), nowStr()
-          );
-          created++;
-        }
-      }
-      if (rule.auto_post) {
-        run('UPDATE recurring_rules SET last_run_at = ?, next_run_at = ? WHERE id = ?', rule.next_run_at, advanceDate(rule.next_run_at, rule), rule.id);
-      }
-    });
-    touchedLedgers.add(Number(rule.ledger_id));
-    if (rule.auto_post) continue;
+    if (rule.auto_post) {
+      const payload=JSON.parse(rule.payload||'{}');
+      const uid=Number(payload.user_id)||ledgerWriterIds(rule.ledger_id)[0];
+      try { created+=require('./recurring').execute(rule.ledger_id,rule.id,uid,{scheduled_date:rule.next_run_at}).txn_ids.length; }
+      catch(e) { console.error('[scheduler] 定期记账 #'+rule.id+': '+e.message); }
+      continue;
+    }
     // 非自动模式：只提醒（dedupe key 按计划日期去重，避免每 30 分钟轮询重复轰炸）
     const dedupeKey = `recurring:${rule.id}:${rule.next_run_at}`;
     if (!alreadyNotified(dedupeKey)) {
@@ -99,10 +78,6 @@ function runDueRecurring(today = todayStr()) {
       }
     }
     run('UPDATE recurring_rules SET last_run_at = ? WHERE id = ?', nowStr(), rule.id);
-  }
-  // 自动记账后余额必须重算（手动记账/订阅扣费路径都会重算，这里此前漏了）
-  for (const lid of touchedLedgers) {
-    try { recalcBalances(lid); } catch { /* 单账本失败不影响其他任务 */ }
   }
   return created;
 }
@@ -260,7 +235,7 @@ function checkBudgets() {
 function checkDebts() {
   const today = todayStr();
   const soon = all(
-    `SELECT * FROM debts WHERE status = 'open' AND due_date IS NOT NULL AND due_date <= date(?, '+3 day')`,
+    `SELECT * FROM debts WHERE status = 'open' AND deleted_at IS NULL AND remind_enabled=1 AND due_date IS NOT NULL AND due_date <= date(?, '+3 day')`,
     today
   );
   let n = 0;
@@ -281,6 +256,17 @@ function checkDebts() {
     n++;
   }
   return n;
+}
+
+function checkFinance(today=todayStr()) {
+  const end=require('./finance/common').nextDay(require('./finance/common').nextDay(require('./finance/common').nextDay(today)));let count=0;
+  function remind(lid,key,title,due,amount,link){if(!amount||due>end||alreadyNotified(key))return;for(const uid of ledgerWriterIds(lid))notify(uid,{kind:due<today?'danger':'warn',ledgerId:lid,title,body:`待还 ${(amount/100).toFixed(2)}，还款日 ${due} |${key}`,link});count++;}
+  for(const loan of all('SELECT * FROM finance_contracts WHERE deleted_at IS NULL AND remind_enabled=1')){
+    if(!get('SELECT id FROM ledgers WHERE id=?',loan.ledger_id))continue;
+    for(const i of require('./finance/loans').installments(loan.ledger_id,loan.id))remind(loan.ledger_id,`finance:loan:${i.id}:${i.due_date}`,loan.name+'还款提醒',i.due_date,i.remaining_principal+i.remaining_interest+i.remaining_fee,'/finance/loans/'+loan.id);
+  }
+  for(const p of all('SELECT p.* FROM credit_profiles p JOIN accounts a ON a.id=p.account_id JOIN ledgers l ON l.id=p.ledger_id WHERE p.remind_enabled=1 AND a.is_archived=0'))for(const s of require('./finance/cards').statements(p.ledger_id,p.account_id))remind(p.ledger_id,`finance:card:${s.id}:${s.due_date}`,'信用卡账单还款提醒'+(s.dirty?'（待核对）':''),s.due_date,s.remaining_cents,'/finance/statements/'+s.id);
+  return count;
 }
 
 /* ------------------------------- 储蓄目标提醒 ------------------------------ */
@@ -338,6 +324,7 @@ function runDaily() {
   // P7 月末预测：惰性 require（forecast 依赖本模块的 advanceDate/budgetUsedInRange，避免加载环）
   try { r.forecasts = require('./forecast').checkForecasts(); } catch (e) { console.error('[scheduler] 月末预测失败:', e.message); }
   try { r.debts = checkDebts(); } catch (e) { console.error('[scheduler] 借贷检查失败:', e.message); }
+  try { r.finance = checkFinance(); } catch (e) { console.error('[scheduler] 金融提醒失败:', e.message); }
   try { r.goals = checkGoals(); } catch (e) { console.error('[scheduler] 目标检查失败:', e.message); }
   try { cleanup(); } catch { /* ignore */ }
   return r;
@@ -363,4 +350,4 @@ function initScheduler() {
   return timer;
 }
 
-module.exports = { initScheduler, runDaily, runDueRecurring, runSubscriptions, checkBudgets, checkDebts, checkGoals, budgetPeriodRange, budgetUsedInRange, budgetUsed, budgetSuggestion, advanceDate, ruleItems };
+module.exports = { initScheduler, runDaily, runDueRecurring, runSubscriptions, checkBudgets, checkDebts, checkFinance, checkGoals, budgetPeriodRange, budgetUsedInRange, budgetUsed, budgetSuggestion, advanceDate, ruleItems };

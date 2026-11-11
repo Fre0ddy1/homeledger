@@ -355,7 +355,7 @@ const csrfOf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[1]
   check('必然超支日挂「将超出」（外推为正的日期档）', !overCertain || r.text.includes('将超出'), '');
 
   /* 报表页：总口径预测条 */
-  r = await req('GET', '/reports');
+  r = await req('GET', '/reports?basis=consumption');
   check('报表页渲染成功', r.status === 200, `HTTP ${r.status}`);
   check('报表页预测条按日档位出现/不出现', forecastable ? r.text.includes('月末预测') : !r.text.includes('月末预测'), '');
 
@@ -375,7 +375,7 @@ const csrfOf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[1]
   });
   check('带 no_rhythm 记账成功', postLumpy.status === 302, `HTTP ${postLumpy.status}`);
   if (forecastable) {
-    r = await req('GET', '/reports');
+    r = await req('GET', '/reports?basis=consumption');
     check('报表页预测条带剔除标注（已剔一次性大额）', r.text.includes('已剔一次性大额'), '');
     /* 预算页标注（P1 修复回归）：再建一个大额预算避免 already-over 吞掉预测行，
      lumpy_count=1（500 元人工标记那笔）应渲染「已剔一次性大额 1 笔」 */

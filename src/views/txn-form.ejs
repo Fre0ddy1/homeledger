@@ -1,8 +1,10 @@
+<% if(t.finance_payments?.length||t.credit_plan){ %><div class="notice info mb16">此流水关联金融付款或分期，资金字段请在对应台账整体操作。<% (t.finance_payments||[]).forEach(p=>{ %> <a href="/finance/payments/<%= p.id %>">付款 #<%= p.id %></a><% }); %> <a href="/finance">贷款与信用卡 →</a></div><% } %>
 <%
   var typeList = [
     { key:'expense', label:'支出', icon:'💸' },
     { key:'income',  label:'收入', icon:'💰' },
     { key:'transfer',label:'转账', icon:'🔄' },
+    { key:'repayment',label:'还款', icon:'💳' },
     { key:'lend',    label:'借出', icon:'📤' },
     { key:'borrow',  label:'借入', icon:'📥' },
     { key:'repay_receive', label:'收回借款', icon:'↩️' },
@@ -20,7 +22,7 @@
   var cur = t.type || 'expense';
   var isExtra = moreTypes.some(function(x){ return x.key === cur; });
   var multiAccount = ['transfer','invest_buy','invest_sell'].includes(cur);
-  var noCategory = ['transfer','adjust'].includes(cur);
+  var noCategory = ['transfer','adjust','lend','borrow','repay_receive','repay_pay','invest_buy','invest_sell'].includes(cur);
   var catKind = cur === 'income' ? 'income' : 'expense';
   var amountValue = t.amount !== undefined ? t.amount : (t.amount_cents !== undefined && t.amount_cents !== null ? (t.amount_cents / 100).toFixed(2) : '');
   if (typeof amountValue === 'number') amountValue = amountValue.toFixed(2);
@@ -43,7 +45,9 @@
         <div class="row between mb12">
           <div class="type-tabs" style="flex:1">
             <% typeList.forEach(function(x){ %>
+              <% if(x.key==='repayment'){ %><a href="/transactions/new?type=repayment">还款</a><% }else{ %>
               <button type="button" data-type="<%= x.key %>" class="<%= cur === x.key ? 'active' : '' %>"><%= x.label %></button>
+              <% } %>
             <% }); %>
           </div>
         </div>
@@ -99,6 +103,12 @@
         <div class="field">
           <label>商家 / 对方 <span class="muted tiny">（借贷时的对方姓名很关键）</span></label>
           <input type="text" name="merchant" value="<%= t.merchant || '' %>" placeholder="例如：肯德基 / 张三 / 房东">
+        </div>
+        <div class="field" data-for-type="lend,borrow,repay_receive,repay_pay">
+          <label for="f-debt">关联借钱条目</label>
+          <select id="f-debt" name="debt_id"><option value="">借出/借入：新建独立条目；收还款：待关联</option>
+          <% (form.debts || []).forEach(function(d){ %><option value="<%= d.id %>" data-direction="<%= d.direction %>" <%= Number(t.debt_id)===Number(d.id)?'selected':'' %> <%= d.deleted_at&&Number(t.debt_id)!==Number(d.id)?'disabled':'' %>><%= d.counterparty %> · <%= d.direction==='receivable'?'应收':'应还' %> <%= helpers.money(d.balance_cents) %> · #<%= d.id %><%= d.deleted_at?'（已归档，保留原关联）':d.status==='closed'?'（已结清）':'' %></option><% }); %></select>
+          <p class="help">同一人可以有多笔借钱；收还款请关联具体条目。没有关联的流水会保留为待关联，不按姓名自动核销。</p>
         </div>
 
         <div class="field">
@@ -174,7 +184,7 @@
     </div>
 
     <div>
-      <div class="card" id="f-cat-wrap">
+      <div class="card <%= noCategory?'hidden':'' %>" id="f-cat-wrap" data-not-type="transfer,adjust,lend,borrow,repay_receive,repay_pay,invest_buy,invest_sell">
         <div class="card-head">
           <h2>分类</h2>
           <span class="muted small" id="cat-hint"><%= t.category_path && t.category_path !== '未分类' ? t.category_path : '未选择' %></span>
@@ -262,7 +272,7 @@
       el.classList.toggle('hidden', el.dataset.notType.split(',').includes(type));
     });
     var catWrap = document.getElementById('f-cat-wrap');
-    if (catWrap) catWrap.classList.toggle('hidden', type === 'transfer' || type === 'adjust');
+    if (catWrap) catWrap.classList.toggle('hidden', ['transfer','adjust','lend','borrow','repay_receive','repay_pay','invest_buy','invest_sell'].includes(type));
     var kind = type === 'income' ? 'income' : 'expense';
     document.querySelectorAll('.cat-section').forEach(function(el){
       el.classList.toggle('hidden', el.dataset.catKind !== kind);
