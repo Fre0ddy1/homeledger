@@ -1198,6 +1198,7 @@
       labelEl.textContent = input.value || '选择日期';
       labelEl.classList.toggle('ph', !input.value);
     }
+    input.addEventListener('change', renderLabel);
 
     function ensureMenu() {
       if (menu) return menu;
@@ -1550,6 +1551,64 @@
     wide.addEventListener('change', layout); medium.addEventListener('change', layout); layout();
   }
 
+
+  function initLoanPeriods() {
+    $$('select[name=installment_id]').forEach(select=>select.addEventListener('change',()=>{
+      const form=select.closest('form'),option=select.selectedOptions[0];
+      if(!option?.dataset.principal)return;
+      for(const name of ['principal','interest','fee']){
+        const field=form.querySelector('[name='+name+']');
+        if(field)field.value=(Number(option.dataset[name])/100).toFixed(2);
+      }
+      const total=form.querySelector('[data-loan-total]'),due=form.querySelector('[data-loan-due]');
+      if(total)total.textContent=option.dataset.totalLabel;
+      if(due)due.textContent='本期还款 '+option.dataset.due;
+    }));
+  }
+  function initEntryWorkspace() {
+    const workspace=$('.entry-workspace');
+    if(!workspace)return;
+    const ordinary=$('#ordinary-entry'),repayment=$('#repayment-entry-panel');
+    const target=$('#repayment-target');
+    const initialized=new Set(workspace.dataset.initialType==='repayment'&&target?[target.value]:[]);
+    function activePayment(){return $('[data-repayment-target]:not(.hidden) .finance-form',repayment);}
+    function copyFields(from,to){
+      if(!from||!to)return;
+      for(const [source,target] of [['account_id','account_id'],['txn_date','date'],['amount','amount']]){
+        if(source==='amount'&&$('#f-currency')?.value!==workspace.dataset.baseCurrency)continue;
+        const value=from.querySelector('[name="'+source+'"]')?.value;
+        const field=to.querySelector('[name="'+target+'"]');
+        if(value&&field&&(!field.options||Array.from(field.options).some(o=>o.value===value))){field.value=value;field._hlRefresh?.();field.dispatchEvent(new Event('change',{bubbles:true}));}
+      }
+    }
+    $$('[data-entry-type]',workspace).forEach(link=>link.addEventListener('click',event=>{
+      event.preventDefault();const type=link.dataset.entryType;
+      if(type==='repayment'&&target&&!initialized.has(target.value)){
+        copyFields($('#txn-form'),activePayment());initialized.add(target.value);
+      }
+      ordinary.classList.toggle('hidden',type==='repayment');repayment.classList.toggle('hidden',type!=='repayment');
+      if(type!=='repayment'){
+        $('#txn-form [data-type="'+type+'"]')?.click();
+      }
+      $$('[data-entry-type]',workspace).forEach(tab=>{tab.classList.toggle('active',tab===link);if(tab===link)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current');});
+      workspace.dataset.currentType=type;
+      history.replaceState(null,'',link.href);
+    }));
+    target?.addEventListener('change',()=>{
+      const previous=activePayment();
+      $$('[data-repayment-target]',repayment).forEach(panel=>panel.classList.toggle('hidden',panel.dataset.repaymentTarget!==target.value));
+      const next=activePayment();
+      if(previous&&next&&!initialized.has(target.value)){
+        for(const name of ['account_id','date']){
+          const value=previous.querySelector('[name='+name+']')?.value,field=next.querySelector('[name='+name+']');
+          if(value&&field&&(!field.options||Array.from(field.options).some(option=>option.value===value))){field.value=value;field._hlRefresh?.();field.dispatchEvent(new Event('change',{bubbles:true}));}
+        }
+      }
+      initialized.add(target.value);
+    });
+    workspace.dataset.currentType=workspace.dataset.initialType;
+  }
+
   function initGlassHighlights() {
     const pointer = window.matchMedia('(pointer: fine)');
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -1608,6 +1667,8 @@
     initAvatarUpload();
     initAiWarnFlash();
     initTxnForm();
+    initEntryWorkspace();
+    initLoanPeriods();
     initAiPage();
     initImportPage();
     initSettings();

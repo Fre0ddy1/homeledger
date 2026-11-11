@@ -10,7 +10,7 @@ function forView(view,options={},originalUrl='/'){
  if(['finance-loan','finance-card'].includes(view))return result('/finance','返回贷款与信用卡');
  if(view==='debt-detail')return result('/debts','返回借钱台账');
  if(view==='account-detail')return result('/accounts','返回账户列表');
- if(view==='txn-form')return result(safeBack||'/transactions','返回账单列表');
+ if(view==='txn-form'||view==='entry-workspace')return result(safeBack||'/transactions','返回账单列表');
  if(view==='repayment-form')return result(options.selected?'/transactions/new?type=repayment':'/transactions/new',options.selected?'返回还款对象选择':'返回记一笔');
  if(view==='subscriptions'&&options.edit)return result('/subscriptions','返回订阅列表');
  if(view==='annual')return result('/reports','返回报表分析');

@@ -29,12 +29,13 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   for(const theme of ['light','dark'])for(const width of [390,1920]){
    await financePage.setViewportSize({width,height:844});await financePage.goto('http://127.0.0.1:5113/theme/'+theme);await financePage.goto('http://127.0.0.1:5113/finance');
    const create=financePage.locator('form[action="/finance/loans"]');const manualInitiallyHidden=!(await create.locator('.finance-manual-fields').isVisible());await create.locator('[name=method]').selectOption('manual');const manualAvailable=await create.locator('.finance-manual-fields').isVisible();await create.locator('[name=method]').selectOption('equal_payment');if(!manualInitiallyHidden||!manualAvailable)throw Error('特殊银行计划应仅在所选方式下显示');await create.locator('[name=name]').fill('浏览器车贷 '+theme+' '+width);await create.locator('[name=original_principal]').fill('1000');await create.locator('[name=remaining_principal]').fill('1000');await create.locator('[name=term_n]').fill('2');await create.locator('[name=annual_rate]').fill('0');await create.locator('[name=method]').selectOption('equal_principal');await create.locator('button[type=submit],button').last().click();await financePage.waitForURL(/\/finance\/loans\/\d+$/);const loanPath=new URL(financePage.url()).pathname;await financePage.goto('http://127.0.0.1:5113/transactions/new?type=repayment&target=loan:'+loanPath.split('/').at(-1));
-   const pay=financePage.locator('form[action="'+loanPath+'/payments"]');await pay.locator('[name=account_id]').selectOption({index:1});await pay.locator('[name=principal]').fill('100');await pay.getByRole('button',{name:'确认实际付款',exact:true}).click();await financePage.waitForURL(/\/finance\/payments\/\d+$/);const paymentPath=new URL(financePage.url()).pathname;
+   const pay=financePage.locator('form[action="'+loanPath+'/payments"]');await pay.locator('[name=account_id]').selectOption({index:1});await pay.getByText('调整实际金额、期次及银行费用',{exact:true}).click();await pay.locator('[name=principal]').fill('100');await pay.getByRole('button',{name:'确认实际付款',exact:true}).click();await financePage.waitForURL(/\/finance\/payments\/\d+$/);const paymentPath=new URL(financePage.url()).pathname;
    await financePage.locator('form[action="'+paymentPath+'/reverse"] button').click();await financePage.waitForURL('http://127.0.0.1:5113'+paymentPath);const reversed=await financePage.locator('.card-head .chip').first().textContent()==='已撤销';await financePage.locator('form[action="'+paymentPath+'/restore"] button').click();await financePage.waitForURL('http://127.0.0.1:5113'+paymentPath);const restored=await financePage.locator('.card-head .chip').first().textContent()==='已记录';
    await financePage.goto('http://127.0.0.1:5113'+loanPath);await financePage.getByText('调整后续还款计划',{exact:true}).click();const replan=financePage.locator('form[action="'+loanPath+'/plan/preview"]');await replan.locator('[name=term_n]').fill('3');await replan.getByRole('button',{name:'预览新计划'}).click();await financePage.getByRole('button',{name:'确认应用此计划'}).click();await financePage.waitForURL('http://127.0.0.1:5113'+loanPath);
    await financePage.screenshot({path:root+'/.screenshots/finance-'+theme+'-'+width+'-loan.png',fullPage:true,animations:'disabled'});
    const archived=financePage.locator('form[action="'+loanPath+'/delete"]');await financePage.getByText('合同信息与提醒',{exact:true}).click();await archived.locator('button').click();await financePage.waitForURL('http://127.0.0.1:5113/finance');await financePage.goto('http://127.0.0.1:5113'+loanPath);await financePage.getByRole('button',{name:'恢复合同'}).click();await financePage.waitForURL('http://127.0.0.1:5113'+loanPath);
-   await financePage.goto('http://127.0.0.1:5113/finance/cards/'+financeIds.card);const cardPay=financePage.locator('form[action="/finance/cards/'+financeIds.card+'/payments"]');await cardPay.locator('[name=account_id]').selectOption({index:1});await cardPay.locator('[name=amount]').fill('1');await cardPay.getByRole('button',{name:'确认实际付款',exact:true}).click();await financePage.waitForURL(/\/finance\/payments\/\d+$/);const cardPayment=new URL(financePage.url()).pathname;const alloc=financePage.locator('form[action="'+cardPayment+'/allocate"]');const allocationVisible=await alloc.isVisible();await alloc.getByRole('button',{name:'保存分配'}).click();await financePage.waitForURL('http://127.0.0.1:5113'+cardPayment);
+   await financePage.goto('http://127.0.0.1:5113/finance/cards/'+financeIds.card);const cardPay=financePage.locator('form[action="/finance/cards/'+financeIds.card+'/payments"]');await cardPay.locator('[name=account_id]').selectOption({index:1});await cardPay.locator('[name=amount]').fill('1');await cardPay.getByRole('button',{name:'确认实际付款',exact:true}).click();await financePage.waitForURL(/\/finance\/payments\/\d+$/);const cardPayment=new URL(financePage.url()).pathname;const alloc=financePage.locator('form[action="'+cardPayment+'/allocate"]').first();await financePage.getByText('高级：手动指定账单',{exact:true}).click();const allocationVisible=await alloc.isVisible();await alloc.getByRole('button',{name:'保存分配'}).click();await financePage.waitForURL('http://127.0.0.1:5113'+cardPayment);
+   await financePage.getByText('高级：手动指定账单',{exact:true}).click();await financePage.getByRole('button',{name:'恢复自动对应账单',exact:true}).click();await financePage.waitForURL('http://127.0.0.1:5113'+cardPayment);if(!(await financePage.getByText('自动对应账单',{exact:true}).isVisible()))throw Error('恢复自动对应失败');
    const fields=await financePage.locator('input:not([type=hidden])').count();financeJourneys.push({theme,width,reversed,restored,allocationVisible,fields,native:true,overflow:await financePage.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)});
    await financePage.goto('http://127.0.0.1:5113/finance/cards/'+financeIds.card);await financePage.screenshot({path:root+'/.screenshots/finance-'+theme+'-'+width+'-card.png',fullPage:true,animations:'disabled'});
   }
@@ -46,7 +47,7 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
     await page.setViewportSize({width,height:1080});
     for(const route of routes){
      const res=await page.goto('http://127.0.0.1:5113'+route);await page.waitForTimeout(40);
-     const metrics=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth>innerWidth+1,contentWidth:document.querySelector('.content')?.getBoundingClientRect().width,offenders:[...document.querySelectorAll('main *, .content *')].filter(x=>{const r=x.getBoundingClientRect();return r.width&&r.right>innerWidth+2&&!x.closest('.scroll-x,.hl-select-menu,.hl-date-panel');}).slice(0,5).map(x=>x.tagName+'.'+x.className)}));
+     const metrics=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth>innerWidth+1,layoutViewport:document.documentElement.clientWidth,contentWidth:document.querySelector('.content')?.getBoundingClientRect().width,offenders:[...document.querySelectorAll('main *, .content *')].filter(x=>{const r=x.getBoundingClientRect();return r.width&&r.right>innerWidth+2&&!x.closest('.scroll-x,.hl-select-menu,.hl-date-panel');}).slice(0,5).map(x=>x.tagName+'.'+x.className)}));
      if(route==='/'){
       // The content scrolls with the document; navigation and popup menus have
       // their own bounded interaction and are outside this page-body audit.
@@ -226,6 +227,37 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   await page.locator('.report-range-form .hl-date-trigger').first().click();
   const reportCalendarGrid=await page.locator('.report-range-form .hl-date-menu button.hl-date-cell').first().evaluate(el=>getComputedStyle(el).gridColumnStart==='auto'&&el.getBoundingClientRect().width<el.parentElement.getBoundingClientRect().width/5);
   await page.keyboard.press('Escape');
+  const entryChecks=[];
+  for(const theme of ['light','dark'])for(const width of [390,820,1280,1920,2560]){
+    await page.setViewportSize({width,height:1080});await page.goto('http://127.0.0.1:5113/theme/'+theme);await page.goto('http://127.0.0.1:5113/transactions/new');
+    await page.locator('#f-amount').fill('123.45');
+    const bounds=()=>page.locator('.entry-navigation').evaluate(el=>{const r=el.getBoundingClientRect();return {left:r.left,top:r.top+scrollY,width:r.width};});
+    await page.locator('#txn-form [name=txn_date]').evaluate(el=>{el.value='2020-03-15';el.dispatchEvent(new Event('change',{bubbles:true}));});
+    const before=await bounds();await page.locator('[data-entry-type=repayment]').click();const after=await bounds();
+    const direct=await page.locator('[data-repayment-target]:not(.hidden) .finance-form').isVisible();
+    const retained=await page.locator('[data-repayment-target]:not(.hidden) [name=amount]').inputValue()==='123.45';
+    const paymentForm=page.locator('[data-repayment-target]:not(.hidden) .finance-form');
+    const dateLabel=await paymentForm.locator('[name=date]').evaluate(el=>el.parentElement.querySelector('.hl-date-label')?.textContent===el.value);
+    await paymentForm.locator('[name=amount]').fill('500');
+    await paymentForm.locator('[name=date]').evaluate(el=>{el.value='2020-04-16';el.dispatchEvent(new Event('change',{bubbles:true}));});
+    await page.locator('[data-entry-type=expense]').click();await page.locator('[data-entry-type=repayment]').click();await page.locator('[data-entry-type=repayment]').click();
+    const draftRetained=Number(await paymentForm.locator('[name=amount]').inputValue())===500&&await paymentForm.locator('[name=date]').inputValue()==='2020-04-16';
+    if(!dateLabel||!draftRetained)throw Error('还款草稿或日期显示被覆盖');
+    if([390,1920].includes(width))await page.screenshot({path:root+'/.screenshots/simple-'+theme+'-'+width+'-repayment.png',fullPage:true,animations:'disabled'});
+    await page.locator('[data-entry-type=transfer]').click();const transfer=await bounds();
+    await page.locator('[data-entry-type=expense]').click();
+    entryChecks.push({theme,width,direct,retained,stable:[after,transfer].every(r=>Math.abs(r.left-before.left)<1&&Math.abs(r.width-before.width)<1&&Math.abs(r.top-before.top)<1),amount:await page.locator('#f-amount').inputValue()==='123.45'});
+    await page.goto('http://127.0.0.1:5113/');await page.waitForTimeout(300);
+    const actions=await page.locator('.dashboard-grid .card-head a').evaluateAll(links=>links.every(a=>a.classList.contains('btn')&&!a.classList.contains('btn-ghost')&&!a.textContent.includes('→')));
+    if(!actions)throw Error('同类模块入口仍不一致');
+    if([390,1920].includes(width))await page.screenshot({path:root+'/.screenshots/simple-'+theme+'-'+width+'-dashboard.png',fullPage:true,animations:'disabled'});
+    await page.goto('http://127.0.0.1:5113/accounts');
+    if([390,1920].includes(width))await page.screenshot({path:root+'/.screenshots/simple-'+theme+'-'+width+'-accounts.png',fullPage:true,animations:'disabled'});
+  }
+  await page.goto('http://127.0.0.1:5113/transactions/new');await page.locator('#f-amount').fill('123.45');
+  await page.locator('#f-currency').selectOption('USD',{force:true});await page.locator('[data-entry-type=repayment]').click();
+  const foreignAmountNotCopied=await page.locator('[data-repayment-target]:not(.hidden) [name=amount]').inputValue()!=='123.45';
+  const entryStable=entryChecks.every(row=>row.direct&&row.retained&&row.stable&&row.amount);
   const controlFontsConsistent=results.every(r=>r.controlFontMismatches.length===0);
   await page.goto('http://127.0.0.1:5113/transactions/new');
   const creditOption=await page.locator('#transaction-account-options').evaluate(el=>[...el.content.querySelectorAll('option')].find(o=>o.dataset.types?.split(',').includes('expense')&&!o.dataset.types.split(',').includes('transfer'))?.value);
@@ -236,9 +268,9 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
     await wrapper.locator('.hl-select-trigger').click();
     await wrapper.locator('.hl-select-opt').nth(index).click();
   }
-  await chooseEnhanced(page.locator('#f-account'),creditOption);await page.locator('#txn-form [data-type=transfer]').click();
+  await chooseEnhanced(page.locator('#f-account'),creditOption);await page.locator('.entry-navigation [data-entry-type=transfer]').click();
   const transferFiltered=await page.locator('#f-account').evaluate((el,id)=>el.value===''&&![...el.options].some(o=>o.value===id),creditOption);
-  await page.locator('#txn-form [data-type=expense]').click();
+  await page.locator('.entry-navigation [data-entry-type=expense]').click();
   const expenseCardRestored=await page.locator('#f-account').evaluate((el,id)=>el.value===''&&[...el.options].some(o=>o.value===id),creditOption);
   await page.goto('http://127.0.0.1:5113/recurring');await chooseEnhanced(page.locator('#rec-items [name=item_account_id]').first(),creditOption);await chooseEnhanced(page.locator('#rec-items [name=item_type]').first(),'transfer');
   const recurringAccountFiltered=await page.locator('#rec-items [name=item_account_id]').first().evaluate((el,id)=>el.value===''&&![...el.options].some(o=>o.value===id),creditOption);
@@ -249,8 +281,8 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   await page.goto('http://127.0.0.1:5113/categories');await page.locator('.category-create-disclosure > summary').click();
   const kindTrigger=page.locator('.category-modal .hl-select-trigger').first();await kindTrigger.click();await page.locator('.category-modal .modal-title').click();await kindTrigger.click();
   const selectReopensAfterOutside=await kindTrigger.getAttribute('aria-expanded')==='true';await page.keyboard.press('Escape');await page.keyboard.press('Escape');
-  const wideContentFills=results.filter(r=>r.route==='/'&&r.width>=1920).every(r=>Math.abs(r.contentWidth-(r.width-240))<=1)&&tabletDrawerLayout&&phoneDrawerLayout;
-  const interaction={reportCalendarGrid,reportToolbarConsistent,controlFontsConsistent,transferFiltered,expenseCardRestored,recurringAccountFiltered,returnNavigation,financeLayout,menuClosed,focusReturned,rowFocusReturned,trapped,drawerClosed,resizedDrawerReleased,reduced,minimal,coarseTablet,zoom200,wideContentFills,ledgerMenuFits,dashboardGaps,compactLedger,advancedCollapsed,inlineDetails,inspectorFocusReturned,inspectorResizeReleased,mobileDetails,mobileOrder,inspectorControlsReachable,glassMaterial,categorySoftDeleted,categoryRestored,compactPageSize,categoryKindSync,categoryModalFocusReturned,categoryDropdownEscape,recurringClonedSelect,categoryNoJs,naturalCards,boundedPages,variantLayouts,darkLoginTheme,selectReopensAfterOutside};
+  const wideContentFills=results.filter(r=>r.route==='/'&&r.width>=1920).every(r=>Math.abs(r.contentWidth-(r.layoutViewport-240))<=1)&&tabletDrawerLayout&&phoneDrawerLayout;
+  const interaction={foreignAmountNotCopied,entryStable,reportCalendarGrid,reportToolbarConsistent,controlFontsConsistent,transferFiltered,expenseCardRestored,recurringAccountFiltered,returnNavigation,financeLayout,menuClosed,focusReturned,rowFocusReturned,trapped,drawerClosed,resizedDrawerReleased,reduced,minimal,coarseTablet,zoom200,wideContentFills,ledgerMenuFits,dashboardGaps,compactLedger,advancedCollapsed,inlineDetails,inspectorFocusReturned,inspectorResizeReleased,mobileDetails,mobileOrder,inspectorControlsReachable,glassMaterial,categorySoftDeleted,categoryRestored,compactPageSize,categoryKindSync,categoryModalFocusReturned,categoryDropdownEscape,recurringClonedSelect,categoryNoJs,naturalCards,boundedPages,variantLayouts,darkLoginTheme,selectReopensAfterOutside};
   const summary={financeJourneys,pages:results.length,failures:results.filter(x=>x.overflow||x.status>=500),errors,interaction,authChecks,variants,results};
   if(financeJourneys.some(j=>!j.reversed||!j.restored||!j.allocationVisible||j.overflow)||summary.failures.length||errors.length||Object.values(interaction).some(v=>!v)||authChecks.some(x=>x.overflow))process.exitCode=1;
 

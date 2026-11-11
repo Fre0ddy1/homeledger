@@ -97,10 +97,9 @@ router.get('/', auth.requireLogin, (req, res) => {
 
 router.get('/new', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
-  if(req.query.type==='repayment'){
-    const payments=require('../lib/finance/payments'),targets=payments.repaymentOptions(ledgerId).targets,selected=targets.find(t=>t.target_kind+':'+t.target_id===req.query.target)||null;
-    return res.render('repayment-form',{title:'记一笔 · 还款',activeNav:'new',targets,selected,loan:selected?.target_kind==='loan'?require('../lib/finance/loans').detail(ledgerId,selected.target_id):null,form:fd.txFormData(ledgerId,req.session.userId),sources:all("SELECT * FROM transactions WHERE ledger_id=? AND deleted_at IS NULL AND status='cleared' AND type IN ('transfer','expense','fee','repay_pay','income','refund','repay_receive') ORDER BY id DESC LIMIT 200",ledgerId),today:todayStr(),operationKey:require('node:crypto').randomUUID()});
-  }
+  const targets=require('../lib/finance/payments').repaymentOptions(ledgerId).targets;
+  const selected=targets.find(target=>target.target_kind+':'+target.target_id===req.query.target)||targets[0]||null;
+  const entryLoans=Object.fromEntries(targets.filter(target=>target.target_kind==='loan').map(target=>[target.target_id,require('../lib/finance/loans').detail(ledgerId,target.target_id)]));
   const type = TXN_TYPE_MAP[req.query.type] ? req.query.type : 'expense';
   const form = fd.txFormData(ledgerId, req.session.userId);
   const prefill = {
@@ -121,7 +120,8 @@ router.get('/new', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
   if (req.query.from_ai) {
     prefill.note = req.query.note || prefill.note;
   }
-  res.render('txn-form', {
+  res.render('entry-workspace', {
+    initialType:req.query.type==='repayment'?'repayment':type,targets,selected,entryLoans,today:todayStr(),operationKey:require('node:crypto').randomUUID(),sources:all("SELECT * FROM transactions WHERE ledger_id=? AND deleted_at IS NULL AND status='cleared' ORDER BY id DESC LIMIT 200",ledgerId),
     title: '记一笔', activeNav: 'new', mode: 'create', form, t: prefill,
     splitRows: [], splits: [], back: req.query.back || '/transactions',
     family: require('../lib/ai').familyMembers(ledgerId),

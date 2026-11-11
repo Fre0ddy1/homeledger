@@ -22,7 +22,7 @@
   <% if(canWrite(ledger.role)){ %><a class="btn btn-primary btn-sm" href="#new-account">＋ 添加账户</a><% } %>
 </div>
 
-<div class="grid grid-2">
+<div class="account-groups">
   <% ACCOUNT_TYPES.forEach(function(tp){ %>
     <% if (groups[tp.key] && groups[tp.key].length) { %>
       <div class="card">
@@ -31,7 +31,7 @@
             合计 <%= helpers.money(groups[tp.key].reduce(function(s,a){ return s + Number(a.balance_cents); }, 0)) %>
           </span>
         </div>
-        <% groups[tp.key].forEach(function(a){ %>
+        <div class="account-cards"><% groups[tp.key].forEach(function(a){ %>
           <div class="account-entry">
             <div class="account-entry-head">
               <a href="/accounts/<%= a.id %>" style="min-width:0">
@@ -88,7 +88,7 @@
             </div>
             <% } %>
           </div>
-        <% }); %>
+        <% }); %></div>
       </div>
     <% } %>
   <% }); %>

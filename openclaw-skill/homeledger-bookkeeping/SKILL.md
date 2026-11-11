@@ -20,6 +20,8 @@ description: 家账簿（HomeLedger）记账、亲友借钱、贷款与信用卡
 
 首页同屏展示资金进出与消费收支；报表默认资金流，可切换消费口径。询问可用资金变化时读cashflow，询问消费与预算时读consumption，回执说明口径；还款操作用金融API，不把还款标成第二份消费。
 
+信用卡还款默认自动抵扣最早到期的已出账账单，余款后续出账自动抵扣；普通流程不需要confirm账单或传allocations。贷款正常还款可先读repayment-options的next_installment，再仅传实付总额；实付与计划不同须明确分项，不猜利息。手动指定账单仅用于用户明确要求的例外。
+
 已有借款按稳定条目ID关联，不能按姓名自动合并。同一操作超时重试须复用同一个operation_key及相同参数；不能换key反复创建。付款有关联流水时，通过付款详情整体更正、撤销或恢复。
 
 普通收支不得选 loan/receivable/payable 账户；信用卡可用于消费、退款等日常收支。普通转账两端不得选 credit/loan/receivable/payable，信用卡及贷款还款统一用金融还款 API。先读 GET /accounts 的 transaction_types 选择账户；被拒绝时不换成普通支出或伪造来源重试。

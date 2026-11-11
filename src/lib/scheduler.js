@@ -265,7 +265,7 @@ function checkFinance(today=todayStr()) {
     if(!get('SELECT id FROM ledgers WHERE id=?',loan.ledger_id))continue;
     for(const i of require('./finance/loans').installments(loan.ledger_id,loan.id))remind(loan.ledger_id,`finance:loan:${i.id}:${i.due_date}`,loan.name+'还款提醒',i.due_date,i.remaining_principal+i.remaining_interest+i.remaining_fee,'/finance/loans/'+loan.id);
   }
-  for(const p of all('SELECT p.* FROM credit_profiles p JOIN accounts a ON a.id=p.account_id JOIN ledgers l ON l.id=p.ledger_id WHERE p.remind_enabled=1 AND a.is_archived=0'))for(const s of require('./finance/cards').statements(p.ledger_id,p.account_id))remind(p.ledger_id,`finance:card:${s.id}:${s.due_date}`,'信用卡账单还款提醒'+(s.dirty?'（待核对）':''),s.due_date,s.remaining_cents,'/finance/statements/'+s.id);
+  for(const p of all('SELECT p.* FROM credit_profiles p JOIN accounts a ON a.id=p.account_id JOIN ledgers l ON l.id=p.ledger_id WHERE p.remind_enabled=1 AND a.is_archived=0'))for(const s of require('./finance/cards').refresh(p.ledger_id,p.account_id))remind(p.ledger_id,`finance:card:${s.id}:${s.due_date}`,'信用卡账单还款提醒'+(s.dirty?'（待核对）':''),s.due_date,s.remaining_cents,'/finance/statements/'+s.id);
   return count;
 }
 
