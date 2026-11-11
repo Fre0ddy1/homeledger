@@ -39,7 +39,7 @@
   <% if (flash) { %>
     <div class="flash <%= flash.type %>"><span><%= flash.message %></span></div>
   <% } %>
-<%- body %>
+<%- include('partials/detail-back') %><%- body %>
 </main>
 <nav class="m-tabbar" aria-label="主导航">
   <a class="m-tab <%= activeNav === 'home' ? 'active' : '' %>" href="/"><svg class="icon"><use href="#i-house"></use></svg><span>记</span></a>

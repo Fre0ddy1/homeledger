@@ -163,8 +163,8 @@ const CASES = [
   { m: '循源-支出', type: 'expense', cents: 4500, date: '2026-09-01', acc: acc.wechat, accName: '微信零钱', to: null, toName: null, cat: catFood?.id ?? null },
   { m: '循源-收入', type: 'income', cents: 8800, date: '2026-09-02', acc: acc.wechat, accName: '微信零钱', to: null, toName: null, cat: catGift?.id ?? null },
   { m: '循源-转账', type: 'transfer', cents: 10000, date: '2026-09-03', acc: acc.wechat, accName: '微信零钱', to: acc.bank, toName: '招商银行卡', cat: null },
-  { m: '循源-借出', type: 'lend', cents: 20000, date: '2026-09-04', acc: acc.wechat, accName: '微信零钱', to: acc.recv, toName: '应收款-老王', cat: null },
-  { m: '循源-借入', type: 'borrow', cents: 50000, date: '2026-09-05', acc: acc.bank, accName: '招商银行卡', to: acc.pay, toName: '应付款-老李', cat: null },
+  { m: '循源-借出', type: 'lend', cents: 20000, date: '2026-09-04', acc: acc.wechat, accName: '微信零钱', to: null, toName: null, cat: null },
+  { m: '循源-借入', type: 'borrow', cents: 50000, date: '2026-09-05', acc: acc.bank, accName: '招商银行卡', to: null, toName: null, cat: null },
   { m: '循源-收回借款', type: 'repay_receive', cents: 20000, date: '2026-09-06', acc: acc.wechat, accName: '微信零钱', to: null, toName: null, cat: null },
   { m: '循源-偿还借款', type: 'repay_pay', cents: 30000, date: '2026-09-07', acc: acc.bank, accName: '招商银行卡', to: null, toName: null, cat: null },
   { m: '循源-报销', type: 'reimburse', cents: 9900, date: '2026-09-08', acc: acc.alipay, accName: '支付宝', to: null, toName: null, cat: null },
@@ -196,7 +196,7 @@ check('type_key 机读列让 14 种类型回导全部 1:1 还原（不再是正�
   CASES.every((c) => byMerchant(c.m)?.type === c.type),
   CASES.filter((c) => byMerchant(c.m)?.type !== c.type).map((c) => `${c.m}→${byMerchant(c.m)?.type}`).join('，'));
 check('双边类型的「转入账户」列回导为对方账户提示',
-  ['循源-转账', '循源-借出', '循源-借入', '循源-买入', '循源-卖出'].every((m) => byMerchant(m)?.to_account_hint),
+  ['循源-转账', '循源-买入', '循源-卖出'].every((m) => byMerchant(m)?.to_account_hint),
   byMerchant('循源-转账')?.to_account_hint);
 check('余额调整的负数金额保留（方向不翻转）', byMerchant('循源-调减')?.amount_cents === -5000,
   String(byMerchant('循源-调减')?.amount_cents));
@@ -214,7 +214,7 @@ const first = importer.importRecords({
 });
 check('首次回导 14 笔全部入库', first.imported === 14 && first.failed === 0,
   `imported=${first.imported} failed=${first.failed}`);
-check('自动创建缺失账户', ['微信零钱', '招商银行卡', '支付宝', '证券账户', '应收款-老王', '应付款-老李'].every((n) => first.createdAccounts.includes(n)),
+check('自动创建缺失账户', ['微信零钱', '招商银行卡', '支付宝', '证券账户'].every((n) => first.createdAccounts.includes(n)),
   first.createdAccounts.join('、'));
 
 const dstOf = (m) => db.get('SELECT * FROM transactions WHERE ledger_id = ? AND merchant = ? AND deleted_at IS NULL', dstLedger, m);
@@ -489,7 +489,7 @@ const formCsrf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[
     const rowAI = (m) => (r.body?.sample || []).find((s) => s.merchant === m);
     check('AI 批量兜底带角标（丙模型站→餐饮/外卖（AI））', /餐饮\/外卖（AI）/.test(rowAI('丙模型站')?.guess_category || ''), rowAI('丙模型站')?.guess_category);
     check('AI 兜底收入方向（张三老熟人→工资（AI））', /工资（AI）/.test(rowAI('张三老熟人')?.guess_category || ''), rowAI('张三老熟人')?.guess_category);
-    r = await req('POST', '/api/import/commit', { json: { token: r.body?.token } });
+    r = await req('POST', '/api/import/commit', { json: { token: r.body?.token, default_account_id:accC.id } });
     check('P8 提交 4 笔入库 0 失败', r.body?.ok === true && r.body.imported === 4 && r.body.failed === 0,
       JSON.stringify({ i: r.body?.imported, f: r.body?.failed }));
     const catOf = (m) => raw.prepare(
@@ -510,7 +510,7 @@ const formCsrf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[
     r = await req('POST', '/api/import/preview', { json: { dataUrl: 'data:text/csv;base64,' + Buffer.from(p8Csv2, 'utf8').toString('base64'), fileName: 'p8-hint.csv' } });
     check('不可解析 hint 不挡富化（戊亲属卡站→餐饮/外卖（AI））',
       /餐饮\/外卖（AI）/.test((r.body?.sample || [])[0]?.guess_category || ''), (r.body?.sample || [])[0]?.guess_category);
-    r = await req('POST', '/api/import/commit', { json: { token: r.body?.token } });
+    r = await req('POST', '/api/import/commit', { json: { token: r.body?.token, default_account_id:accC.id } });
     check('带不可解析 hint 提交 1 笔入库', r.body?.ok === true && r.body.imported === 1, JSON.stringify({ i: r.body?.imported, f: r.body?.failed }));
     check('hint 解析失败保留富化分类（外卖而非其他）', catOf('戊亲属卡站')?.n === '外卖', JSON.stringify(catOf('戊亲属卡站')));
   } finally {

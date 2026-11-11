@@ -48,6 +48,7 @@ function txFormData(ledgerId, userId) {
     accounts: accounts(ledgerId),
     members: members(ledgerId),
     tags: tags(ledgerId),
+    debts: all('SELECT id,counterparty,direction,balance_cents,deleted_at,status FROM debts WHERE ledger_id=? ORDER BY id DESC',ledgerId),
   };
 }
 

@@ -27,7 +27,7 @@
     <% if (flash) { %>
       <div class="flash <%= flash.type %>"><span><%= flash.message %></span></div>
     <% } %>
-    <%- body %>
+    <%- include('partials/detail-back') %><%- body %>
   </div>
 </main>
 <script src="/static/js/app.js?v=<%= typeof assetV !== 'undefined' ? assetV.js : '' %>" defer></script>

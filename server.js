@@ -157,6 +157,7 @@ app.use((req, res, next) => {
   res.locals.today = db.todayStr();
   res.locals.now = db.nowStr();
   res.locals.activeNav = '';
+  res.locals.currentUrl=req.originalUrl;
   res.locals.aiUsable = require('./src/lib/ai').isAiUsable();
   next();
 });
@@ -184,6 +185,7 @@ app.use((req, res, next) => {
   res.render = function render(view, options, cb) {
     if (typeof options === 'function') { cb = options; options = {}; }
     const opts = options || {};
+    res.locals.detailBack=require('./src/lib/navigation').forView(view,opts,req.originalUrl);
     const layout = opts.layout === undefined ? (res.locals.layoutName || 'layout') : opts.layout;
     if (!layout) return rawRender(view, opts, cb);
     rawRender(view, opts, (err, html) => {
@@ -229,6 +231,8 @@ app.use('/', require('./src/routes/auth'));
 app.use('/', require('./src/routes/dashboard'));
 app.use('/transactions', require('./src/routes/transactions'));
 app.use('/', require('./src/routes/accounts'));
+app.use('/debts', require('./src/routes/borrowing').routerFactory());
+app.use('/finance', require('./src/routes/finance').routerFactory());
 app.use('/', require('./src/routes/planning'));
 app.use('/', require('./src/routes/subscriptions'));
 app.use('/', require('./src/routes/ai'));

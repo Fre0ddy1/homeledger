@@ -317,7 +317,7 @@
     const form = $('#txn-form');
     if (!form) return;
     // 类型切换（保留已填内容）
-    $$('.type-tabs [data-type]').forEach((btn) => {
+    $$('[data-type]',form).forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.preventDefault();
         const type = btn.dataset.type;
@@ -331,11 +331,15 @@
           const kinds = el.dataset.notType.split(',');
           el.classList.toggle('hidden', kinds.includes(type));
         });
-        if (type === 'transfer') $('#f-cat-wrap') && $('#f-cat-wrap').classList.add('hidden');
-        else $('#f-cat-wrap') && $('#f-cat-wrap').classList.remove('hidden');
+        if (['transfer','adjust','lend','borrow','repay_receive','repay_pay','invest_buy','invest_sell'].includes(type)) {
+          $('#f-cat-wrap')?.classList.add('hidden');$('#f-category').value='';
+        } else $('#f-cat-wrap')?.classList.remove('hidden');
         // 分类区块按 data-cat-kind 切换（.cat-kind 是历史遗留的死选择器，已移除）
       });
     });
+    const currentType=$('#f-type').value;
+    $$('[data-for-type]',form).forEach(el=>el.classList.toggle('hidden',!el.dataset.forType.split(',').includes(currentType)));
+    $$('[data-not-type]',form).forEach(el=>el.classList.toggle('hidden',el.dataset.notType.split(',').includes(currentType)));
 
     // 分类选择
     $$('.cat-item').forEach((item) => {
@@ -512,10 +516,11 @@
             '<div class="field"><label>金额</label><input type="text" inputmode="decimal" class="d-amount" value="' + (it.amount_cents / 100).toFixed(2) + '"></div>' +
             '<div class="field"><label>日期</label><input type="date" class="d-date" value="' + esc(it.txn_date) + '"></div>' +
             '<div class="field d-type-wrap"><label>类型</label><select class="d-type">' +
-              ['expense', 'income', 'transfer'].map((t) => '<option value="' + t + '"' + (t === it.type ? ' selected' : '') + '>' + ({ expense: '支出', income: '收入', transfer: '转账' }[t]) + '</option>').join('') +
+              ['expense','income','transfer','lend','borrow','repay_receive','repay_pay'].map((t) => '<option value="' + t + '"' + (t === it.type ? ' selected' : '') + '>' + ({expense:'支出',income:'收入',transfer:'转账',lend:'借出',borrow:'借入',repay_receive:'收回借款',repay_pay:'偿还借款'}[t]) + '</option>').join('') +
             '</select></div>' +
             '<div class="field"><label>分类' + (it.category_recommended ? ' <span class="ai-hint">按习惯推荐</span>' : '') + '</label><select class="d-category"></select></div>' +
             '<div class="field"><label>账户' + (it.account_recommended ? ' <span class="ai-hint">按习惯推荐</span>' : '') + '</label><select class="d-account"></select></div>' +
+            '<div class="field d-to-wrap"><label>转入账户</label><select class="d-to-account"></select></div>' +
             '<div class="field"><label>商家</label><input type="text" class="d-merchant" value="' + esc(it.merchant || '') + '"></div>' +
             '<div class="field" style="flex:2"><label>备注</label><input type="text" class="d-note" value="' + esc(it.note || '') + '"></div>' +
             '<div class="field"><label>归属人' + (it.owner_recommended ? ' <span class="ai-hint">按习惯推荐</span>' : '') + '</label><input type="text" class="d-owner" list="ai-owner-list-' + i + '" value="' + esc(it.owner_label || '') + '" placeholder="为谁花，可留空"></div>' +
@@ -552,8 +557,12 @@
           .map((c) => '<option value="' + c.id + '"' + (Number(c.id) === Number(it.category_id) ? ' selected' : '') + '>' + esc(c.path) + '</option>').join('');
         accSel.innerHTML = '<option value="">未指定</option>' + cfg.accounts
           .map((a) => '<option value="' + a.id + '"' + (Number(a.id) === Number(it.account_id) ? ' selected' : '') + '>' + esc(a.icon + ' ' + a.name) + '</option>').join('');
+        const toSel=$('.d-to-account',card);toSel.innerHTML='<option value="">请选择转入账户</option>'+cfg.accounts.map(a=>'<option value="'+Number(a.id)+'">'+esc(a.name)+'</option>').join('');
+        function typeFields(){const type=$('.d-type',card).value;catSel.closest('.field').classList.toggle('hidden',!['expense','income','fee'].includes(type));toSel.closest('.field').classList.toggle('hidden',type!=='transfer');if(type!=='expense'&&type!=='income')catSel.value='';}
+        typeFields();
         // 切换类型时联动分类
         $('.d-type', card).addEventListener('change', (e) => {
+          typeFields();
           const k = e.target.value === 'income' ? 'income' : 'expense';
           catSel.innerHTML = '<option value="">未分类</option>' + cfg.categories.filter((c) => c.kind === k)
             .map((c) => '<option value="' + c.id + '">' + esc(c.path) + '</option>').join('');
@@ -588,7 +597,7 @@
             amount_cents: amountCents,
             txn_date: $('.d-date', card).value,
             category_id: $('.d-category', card).value || null,
-            account_id: $('.d-account', card).value || null,
+            account_id: $('.d-account', card).value || null,to_account_id:$('.d-to-account',card).value||null,requires_finance_review:d.requires_finance_review||false,
             merchant: $('.d-merchant', card).value.trim(),
             note: $('.d-note', card).value.trim(),
             owner_label: ($('.d-owner', card).value || '').trim() || null,
@@ -760,10 +769,11 @@
         const r = await postJson('/api/import/commit', {
           token: state.token,
           auto_create_account: $('#imp-auto-acc').checked,
+          default_account_id:$('#imp-default-account').value||null,
           include_neutral: !!($('#imp-include-neutral') && $('#imp-include-neutral').checked),
         });
         if (r.ok) {
-          toast('成功导入 ' + r.imported + ' 条，跳过重复 ' + r.skipped + ' 条', 'success');
+          toast('成功导入 ' + r.imported + ' 条，跳过重复 ' + r.skipped + ' 条'+(r.failed?'，失败 '+r.failed+' 条，请查看导入历史说明':''),r.failed?'warn':'success');
           setTimeout(() => { window.location.href = '/transactions'; }, 900);
         } else {
           toast('导入失败：' + r.error, 'error');
@@ -952,7 +962,7 @@
   }
 
   /* ============================ 交易详情弹窗（点列表行） ============================ */
-  const TXN_SOURCE_LABEL = { manual: '手动', ai_screenshot: 'AI 截图', ai_text: 'AI 文本', import: '导入', recurring: '周期账单', subscription: '订阅' };
+  const TXN_SOURCE_LABEL = { manual: '手动', ai_screenshot: 'AI 截图', ai_text: 'AI 文本', import: '导入', recurring: '定期记账', subscription: '订阅' };
   const fmtCents = (c) => (Number(c) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   let detailVersion = 0;
@@ -974,7 +984,10 @@
         const rows = [];
         const kv = (k, v) => rows.push('<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>');
         kv('日期', esc(t.txn_date) + ' · ' + esc(t.type_label));
-        if (t.type !== 'transfer') kv('分类', esc(t.category_path || '—'));
+        if (t.has_category) kv('分类', esc(t.category_path || '—'));
+        if(t.debt_id)kv('借钱台账','<a href="/debts/'+Number(t.debt_id)+'">查看借钱条目 #'+Number(t.debt_id)+'</a>');
+        (t.finance_payments||[]).forEach(p=>kv('关联付款','<a href="/finance/payments/'+Number(p.id)+'">付款 #'+Number(p.id)+(p.deleted_at?'（已撤销）':'')+'</a>'));
+        (t.credit_statements||[]).forEach(s=>kv('信用卡账单','<a href="/finance/statements/'+Number(s.id)+'">'+esc(s.closing_date)+'</a>'));
         kv('账户', (t.type === 'transfer' || t.type === 'invest_buy' || t.type === 'invest_sell')
           ? esc((t.account_name || '—') + ' → ' + (t.to_account_name || '—'))
           : esc(t.account_name || '未指定账户'));

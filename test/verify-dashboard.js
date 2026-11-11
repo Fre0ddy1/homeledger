@@ -35,7 +35,7 @@ async function login(username, password) {
   r = await request('/');
   check('收入构成模块', r.html.includes('id="income-composition"'));
   check('收入金额来自统计', r.html.includes('1,234.56'));
-  check('收入分类可下钻', r.html.includes('/reports?kind=income&amp;'));
+  check('收入分类可下钻', r.html.includes('/reports?basis=cashflow&amp;kind=income&amp;'));
   check('目标名转义', r.html.includes('超额目标&lt;script&gt;') && !r.html.includes('超额目标<script>'));
   check('零分母受保护', !/NaN|Infinity/.test(r.html));
   check('超额目标进度封顶', r.html.includes('100.0%'));

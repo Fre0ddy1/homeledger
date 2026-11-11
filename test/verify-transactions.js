@@ -283,28 +283,24 @@ invariant('报销后', L4.ledgerId);
 console.log('\n=== A8. 借贷台账：方向/累加/还款抵扣/结清钳制/软删不计/手工行保留 ===\n');
 
 const L5 = mkLedger({ 现金: ['cash', 50000] });
-txn.createTransaction(L5.ledgerId, uid, { type: 'lend', amount_cents: 1000, account_id: L5.acc.现金, merchant: '张三' });
-txn.createTransaction(L5.ledgerId, uid, { type: 'lend', amount_cents: 500, account_id: L5.acc.现金, merchant: '张三' });
-txn.createTransaction(L5.ledgerId, uid, { type: 'borrow', amount_cents: 2000, account_id: L5.acc.现金, merchant: '李四' });
-let dZ = db.get("SELECT * FROM debts WHERE ledger_id = ? AND counterparty = '张三'", L5.ledgerId);
-let dL = db.get("SELECT * FROM debts WHERE ledger_id = ? AND counterparty = '李四'", L5.ledgerId);
-check('借出生成应收台账（同人两笔自动累加 15 元）', dZ && dZ.direction === 'receivable' && dZ.principal_cents === 1500 && dZ.balance_cents === 1500 && dZ.status === 'open', JSON.stringify(dZ));
-check('借入生成应付台账（20 元）', dL && dL.direction === 'payable' && dL.principal_cents === 2000 && dL.status === 'open', JSON.stringify(dL));
-
-txn.createTransaction(L5.ledgerId, uid, { type: 'repay_receive', amount_cents: 400, account_id: L5.acc.现金, merchant: '张三' });
-txn.createTransaction(L5.ledgerId, uid, { type: 'repay_pay', amount_cents: 2500, account_id: L5.acc.现金, merchant: '李四' });
-dZ = db.get("SELECT * FROM debts WHERE ledger_id = ? AND counterparty = '张三'", L5.ledgerId);
-dL = db.get("SELECT * FROM debts WHERE ledger_id = ? AND counterparty = '李四'", L5.ledgerId);
-check('收还款抵扣应收（15-4=11 元）', dZ.balance_cents === 1100, String(dZ.balance_cents));
-check('超额偿还钳制为 0 并结清（20-25 → 0，不出负数）', dL.balance_cents === 0 && dL.status === 'closed', `balance=${dL.balance_cents} status=${dL.status}`);
-
-db.run("INSERT INTO debts (ledger_id, direction, counterparty, principal_cents, balance_cents, status, note, created_at) VALUES (?,?,?,?,?,?,?,?)",
-  L5.ledgerId, 'receivable', '王五', 999, 999, 'open', '手工登记', db.nowStr());
-const lendDel = db.get("SELECT id FROM transactions WHERE ledger_id = ? AND type = 'lend' AND amount_base_cents = 1000", L5.ledgerId);
-txn.softDelete(Number(lendDel.id), L5.ledgerId);
-dZ = db.get("SELECT * FROM debts WHERE ledger_id = ? AND counterparty = '张三'", L5.ledgerId);
-check('软删借出后台账按存活流水重建（5-4=1 元）', dZ.principal_cents === 500 && dZ.balance_cents === 100, `principal=${dZ.principal_cents} balance=${dZ.balance_cents}`);
-check('手工登记的台账行不被自动汇总清除', !!db.get("SELECT id FROM debts WHERE ledger_id = ? AND counterparty = '王五' AND note = '手工登记'", L5.ledgerId));
+const lendA=txn.createTransaction(L5.ledgerId, uid, { type:'lend',amount_cents:1000,account_id:L5.acc.现金,merchant:'张三' });
+const lendB=txn.createTransaction(L5.ledgerId, uid, { type:'lend',amount_cents:500,account_id:L5.acc.现金,merchant:'张三' });
+const loan=txn.createTransaction(L5.ledgerId, uid, { type:'borrow',amount_cents:2000,account_id:L5.acc.现金,merchant:'李四' });
+let dZ=db.get('SELECT * FROM debts WHERE id=(SELECT debt_id FROM transactions WHERE id=?)',lendA);
+let dL=db.get('SELECT * FROM debts WHERE id=(SELECT debt_id FROM transactions WHERE id=?)',loan);
+check('同人两笔借出各自独立',dZ.direction==='receivable'&&dZ.principal_cents===1000&&db.get("SELECT COUNT(*) AS n FROM debts WHERE ledger_id=? AND counterparty='张三'",L5.ledgerId).n===2);
+check('借入生成应付台账',dL.direction==='payable'&&dL.principal_cents===2000);
+const receive=txn.createTransaction(L5.ledgerId,uid,{type:'repay_receive',amount_cents:400,account_id:L5.acc.现金,merchant:'张三',debt_id:dZ.id});
+expectThrow('超额还款拒绝且回滚',()=>txn.createTransaction(L5.ledgerId,uid,{type:'repay_pay',amount_cents:2500,account_id:L5.acc.现金,merchant:'李四',debt_id:dL.id}),'核销金额');
+txn.createTransaction(L5.ledgerId,uid,{type:'repay_pay',amount_cents:2000,account_id:L5.acc.现金,merchant:'李四',debt_id:dL.id});
+dZ=db.get('SELECT * FROM debts WHERE id=?',dZ.id);dL=db.get('SELECT * FROM debts WHERE id=?',dL.id);
+check('还款抵扣具体条目',dZ.balance_cents===600);
+check('全额还款结清',dL.balance_cents===0&&dL.status==='closed');
+db.run("INSERT INTO debts(ledger_id,direction,counterparty,principal_cents,balance_cents,status,note,created_at)VALUES(?,?,?,?,?,?,?,?)",L5.ledgerId,'receivable','王五',999,999,'open','手工登记',db.nowStr());
+expectThrow('本金仍有核销时不允许删除',()=>txn.softDelete(lendA,L5.ledgerId),'核销金额');
+txn.softDelete(receive,L5.ledgerId);txn.softDelete(lendA,L5.ledgerId);
+check('软删回滚余额但台账ID稳定',db.get('SELECT balance_cents FROM debts WHERE id=?',dZ.id).balance_cents===0&&db.get('SELECT debt_id FROM transactions WHERE id=?',lendB).debt_id!==dZ.id);
+check('手工登记的台账不被重建清除',!!db.get("SELECT id FROM debts WHERE ledger_id=? AND counterparty='王五'",L5.ledgerId));
 invariant('台账联动后', L5.ledgerId);
 
 /* ===================== A9. 软删除 / 恢复 / 批量删除一致性 ===================== */

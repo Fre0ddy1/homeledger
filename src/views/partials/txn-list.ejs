@@ -29,13 +29,13 @@
           <div class="txn-ico" style="background:<%= t.category_color ? t.category_color + '18' : 'var(--card-2)' %>"><%= t.category_icon || t.type_icon %></div>
           <div class="txn-main">
             <div class="txn-title">
-              <% if (t.category_id && t.type !== 'transfer') { %>
+              <% if (t.category_id && t.has_category) { %>
                 <%# 点分类名即按该分类筛选（transfers 无分类语义，保持纯文本） %>
                 <a class="txn-cat" href="/transactions?category_id=<%= t.category_id %>" title="查看该分类的全部记录"><%= t.category_name || t.type_label %></a>
               <% } else { %>
-                <span><%= t.type === 'transfer' ? '转账' : (t.category_name || t.type_label) %></span>
+                <span><%= !t.has_category ? t.type_label : (t.category_name || t.type_label) %></span>
               <% } %>
-              <% if (t.category_parent && t.type !== 'transfer') { %><span class="tiny muted"><%= t.category_parent %></span><% } %>
+              <% if (t.category_parent && t.has_category) { %><span class="tiny muted"><%= t.category_parent %></span><% } %>
               <%# 商家与备注同时直接可见（此前二选一显示） %>
               <% if (t.merchant) { %><span class="txn-merchant"><%= t.merchant %></span><% } %>
               <% if (t.note) { %><span class="note"><%= t.note %></span><% } %>
@@ -72,11 +72,13 @@
               +<%= helpers.fmtAmount(t.amount_cents) %>
             <% } else if (t.is_expense) { %>
               -<%= helpers.fmtAmount(t.amount_cents) %>
+            <% } else { %>
+              <%= helpers.fmtAmount(t.amount_cents) %>
             <% } %>
             <% if (t.currency !== 'CNY') { %><div class="tiny muted"><%= t.currency %></div><% } %>
           </div>
           <% if (ledger && canWrite(ledger.role)) { %><div class="txn-act">
-            <a class="btn btn-sm btn-ghost" href="/transactions/<%= t.id %>/edit" title="编辑" aria-label="编辑"><svg class="icon sm"><use href="#i-pencil"></use></svg></a>
+            <a class="btn btn-sm btn-ghost" href="/transactions/<%= t.id %>/edit?back=<%= encodeURIComponent(typeof currentUrl!=='undefined'?currentUrl:'/transactions') %>" title="编辑" aria-label="编辑"><svg class="icon sm"><use href="#i-pencil"></use></svg></a>
             <button class="btn btn-sm btn-ghost" type="button" data-del-txn="<%= t.id %>" title="删除" aria-label="删除"><svg class="icon sm"><use href="#i-trash-2"></use></svg></button>
           </div><% } %>
         </div>

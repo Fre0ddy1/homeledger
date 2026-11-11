@@ -59,9 +59,10 @@
         <div class="nav-title">资产与计划</div>
         <a class="nav-item <%= activeNav === 'accounts' ? 'active' : '' %>" href="/accounts"><svg class="icon"><use href="#i-credit-card"></use></svg>账户管理</a>
         <a class="nav-item <%= activeNav === 'budgets' ? 'active' : '' %>" href="/budgets"><svg class="icon"><use href="#i-target"></use></svg>预算管理</a>
-        <a class="nav-item <%= activeNav === 'recurring' ? 'active' : '' %>" href="/recurring"><svg class="icon"><use href="#i-repeat"></use></svg>周期账单</a>
+        <a class="nav-item <%= activeNav === 'recurring' ? 'active' : '' %>" href="/recurring"><svg class="icon"><use href="#i-repeat"></use></svg>定期记账</a>
         <a class="nav-item <%= activeNav === 'subscriptions' ? 'active' : '' %>" href="/subscriptions"><svg class="icon"><use href="#i-receipt"></use></svg>订阅扣费</a>
-        <a class="nav-item <%= activeNav === 'debts' ? 'active' : '' %>" href="/debts"><svg class="icon"><use href="#i-hand-coins"></use></svg>借贷台账</a>
+        <a class="nav-item <%= activeNav === 'finance' ? 'active' : '' %>" href="/finance"><svg class="icon"><use href="#i-credit-card"></use></svg>贷款与信用卡</a>
+        <a class="nav-item <%= activeNav === 'debts' ? 'active' : '' %>" href="/debts"><svg class="icon"><use href="#i-hand-coins"></use></svg>借钱台账</a>
         <a class="nav-item <%= activeNav === 'goals' ? 'active' : '' %>" href="/goals"><svg class="icon"><use href="#i-piggy-bank"></use></svg>储蓄目标</a>
       </div>
 
@@ -150,7 +151,7 @@
       <% if (flash) { %>
         <div class="flash <%= flash.type %>"><span><%= flash.message %></span></div>
       <% } %>
-      <div class="page-body"><%- body %></div>
+      <div class="page-body"><%- include('partials/detail-back') %><%- body %></div>
     </div>
   </main>
 </div>

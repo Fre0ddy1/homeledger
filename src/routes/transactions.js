@@ -29,6 +29,7 @@ function readForm(body) {
     account_id: body.account_id || null,
     to_account_id: body.to_account_id || null,
     category_id: body.category_id || null,
+    debt_id: body.debt_id || null,
     txn_date: body.txn_date || todayStr(),
     note: body.note || '',
     merchant: body.merchant || '',
@@ -96,6 +97,10 @@ router.get('/', auth.requireLogin, (req, res) => {
 
 router.get('/new', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
+  if(req.query.type==='repayment'){
+    const payments=require('../lib/finance/payments'),targets=payments.repaymentOptions(ledgerId).targets,selected=targets.find(t=>t.target_kind+':'+t.target_id===req.query.target)||null;
+    return res.render('repayment-form',{title:'记一笔 · 还款',activeNav:'new',targets,selected,loan:selected?.target_kind==='loan'?require('../lib/finance/loans').detail(ledgerId,selected.target_id):null,form:fd.txFormData(ledgerId,req.session.userId),sources:all("SELECT * FROM transactions WHERE ledger_id=? AND deleted_at IS NULL AND status='cleared' AND type IN ('transfer','expense','fee','repay_pay','income','refund','repay_receive') ORDER BY id DESC LIMIT 200",ledgerId),today:todayStr(),operationKey:require('node:crypto').randomUUID()});
+  }
   const type = TXN_TYPE_MAP[req.query.type] ? req.query.type : 'expense';
   const form = fd.txFormData(ledgerId, req.session.userId);
   const prefill = {
@@ -170,7 +175,7 @@ router.post('/bulk', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
       const cid = require('../lib/categories').resolveId(ledgerId, req.body.category_id);
       const c = cid ? require('../lib/categories').find(ledgerId, cid, true) : null;
       if (!c) { res.flash('error', '请选择要改成的分类'); break; }
-      run(`UPDATE transactions SET category_id = ?, updated_at = ? WHERE ledger_id = ? AND id IN (${placeholders})`, cid, require('../db').nowStr(), ledgerId, ...ids);
+      run(`UPDATE transactions SET category_id = ?, updated_at = ? WHERE ledger_id = ? AND id IN (${placeholders}) AND type NOT IN ('transfer','adjust','lend','borrow','repay_receive','repay_pay','invest_buy','invest_sell')`, cid, require('../db').nowStr(), ledgerId, ...ids);
       res.flash('success', `已修改 ${ids.length} 笔的分类`);
       break;
     }
@@ -200,10 +205,8 @@ router.post('/bulk', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
       break;
     }
     case 'restore': {
-      run(`UPDATE transactions SET deleted_at = NULL WHERE ledger_id = ? AND id IN (${placeholders})`, ledgerId, ...ids);
-      require('../db').recalcBalances(ledgerId);
-      // 恢复借贷类交易后同步重建台账（与开放 API 恢复路径一致）
-      txn.syncDebts(ledgerId);
+      try { txn.restoreMany(ids.map(Number),ledgerId); }
+      catch(e){res.flash('error',e.message);break;}
       res.flash('success', '已恢复');
       break;
     }
@@ -253,7 +256,7 @@ router.post('/:id', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
 
 router.post('/:id/delete', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
-  const ok = txn.softDelete(Number(req.params.id), ledgerId);
+  let ok;try { ok=txn.softDelete(Number(req.params.id),ledgerId); } catch(e){if(req.body._json==='1')return res.status(400).json({ok:false,error:e.message});res.flash('error',e.message);return res.redirect(safeBack(req.body.back));}
   auth.audit(req, 'txn.delete', { entity: 'transaction', entityId: Number(req.params.id), ledgerId });
   if (req.body._json === '1') return res.json({ ok });
   res.flash(ok ? 'success' : 'error', ok ? '已删除' : '记录不存在');

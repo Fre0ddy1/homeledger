@@ -221,6 +221,7 @@ function importRecords({
   source, fileName, autoCreateAccount = true, defaultAccountId = null,
 }) {
   const createdAccounts = [];
+  const errors = [];
   let imported = 0, skipped = 0, failed = 0;
   const list = includeNeutral ? records.concat(neutralRecords) : records.slice();
   const dupSet = new Set();
@@ -235,13 +236,14 @@ function importRecords({
   tx(() => {
     for (const rec of list) {
       try {
+        require('../db').db.exec('SAVEPOINT import_row');
         const fp = `${rec.txn_date}|${rec.amount_cents}|${rec.merchant || ''}`;
-        if (dupSet.has(fp)) { skipped++; continue; }
+        if (dupSet.has(fp)) { skipped++; require('../db').db.exec('RELEASE import_row'); continue; }
 
         let categoryId = null;
         let toAccountId = null;
         const accountId = autoCreateAccount
-          ? ensureAccount(ledgerId, rec.account_hint, createdAccounts)
+          ? ensureAccount(ledgerId, rec.account_hint, createdAccounts) || defaultAccountId
           : resolveAccountId(ledgerId, rec.account_hint) || defaultAccountId;
 
         if (rec.neutral) {
@@ -250,14 +252,14 @@ function importRecords({
           toAccountId = autoCreateAccount
             ? ensureAccount(ledgerId, cpName, createdAccounts) || ensureAccount(ledgerId, NEUTRAL_FALLBACK_ACCOUNT, createdAccounts)
             : resolveAccountId(ledgerId, rec.to_account_hint) || resolveAccountId(ledgerId, guessAccountName(rec.text)) || null;
-        } else if (rec.type === 'transfer' || rec.type === 'invest_buy' || rec.type === 'invest_sell' || rec.type === 'lend' || rec.type === 'borrow') {
+        } else if (rec.type === 'transfer' || rec.type === 'invest_buy' || rec.type === 'invest_sell') {
           // 回导的双边类型（转账/借贷/投资）：对方账户优先取「转入账户」列，其次从说明文字推断；推不出就按 transfer 兜底（一方账户仍保留）
           const cpName = rec.to_account_hint || guessAccountName(rec.text) || NEUTRAL_FALLBACK_ACCOUNT;
           toAccountId = autoCreateAccount
             ? ensureAccount(ledgerId, cpName, createdAccounts)
             : resolveAccountId(ledgerId, rec.to_account_hint) || resolveAccountId(ledgerId, guessAccountName(rec.text)) || null;
           if (!toAccountId) rec.type = 'transfer';
-        } else {
+        } else if (!require('./txn').PRINCIPAL_TYPES.includes(rec.type)) {
           const kind = rec.type === 'income' ? 'income' : 'expense';
           // P8：预览阶段富化的分类直接采信（服务端 previewCache 产生，提交侧仍校验存在/未归档/kind 相符——纵深防御）
           const pre = require('./categories').find(ledgerId, rec.category_id, true);
@@ -273,11 +275,15 @@ function importRecords({
           if (!categoryId && kw) categoryId = resolveCategoryId(ledgerId, kw.category, kw.kind === 'income' ? 'income' : kind);
           if (!categoryId) categoryId = resolveCategoryId(ledgerId, kind === 'income' ? '其他收入' : '其他支出', kind);
         }
+        require('./finance/common').account(ledgerId,accountId);
+        if(rec.type==='adjust'&&require('./finance/account-guard').bound(ledgerId,accountId))throw Error('金融账户不能通过导入调整余额，请在对应台账核对本金及实际流水');
+        if(toAccountId)require('./finance/common').account(ledgerId,toAccountId);
+        if(['transfer','invest_buy','invest_sell'].includes(rec.type)&&(!toAccountId||Number(toAccountId)===Number(accountId)))throw Error('转账与投资交易须有两个不同的当前账本账户');
         // 余额调整回导保留负金额（调减为带符号数），方向不能翻转；
         // 但 expense/income 直接以负数入库会把方向写反（txnEffects 对 expense 取 -a），钳回正数
         const signedAmount = rec.type === 'adjust' ? rec.amount_cents : Math.abs(rec.amount_cents);
 
-        run(
+        const inserted=run(
           `INSERT INTO transactions
            (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id, to_account_id, category_id,
             user_id, txn_date, note, merchant, status, source, ai_json, owner_label, no_rhythm, created_at, updated_at)
@@ -289,9 +295,16 @@ function importRecords({
           rec.no_rhythm ? 1 : 0,
           nowStr(), nowStr()
         );
+        if(require('./txn').PRINCIPAL_TYPES.includes(rec.type))run('UPDATE transactions SET category_id=NULL WHERE id=?',inserted.lastInsertRowid);
+        require('./borrowing').record(ledgerId,inserted.lastInsertRowid,null,true);
+        require('./borrowing').recalculate(ledgerId);
+        require('./finance/cards').afterTransactions(ledgerId,[inserted.lastInsertRowid]);
+        require('../db').db.exec('RELEASE import_row');
         dupSet.add(fp);
         imported++;
-      } catch {
+      } catch (e) {
+        require('../db').db.exec('ROLLBACK TO import_row');require('../db').db.exec('RELEASE import_row');
+        if(errors.length<50)errors.push({date:rec.txn_date,merchant:rec.merchant||null,error:e.message});
         failed++;
       }
     }
@@ -304,9 +317,9 @@ function importRecords({
     `INSERT INTO import_jobs (ledger_id, user_id, source, file_name, total, imported, skipped, failed, status, message, created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
     ledgerId, userId, source, fileName, list.length, imported, skipped, failed, 'done',
-    createdAccounts.length ? `自动创建账户：${createdAccounts.join('、')}` : null, nowStr()
+    [createdAccounts.length?`自动创建账户：${createdAccounts.join('、')}`:'',...errors.map(e=>`${e.merchant||e.date}：${e.error}`)].filter(Boolean).join('；').slice(0,4000)||null, nowStr()
   );
-  return { imported, skipped, failed, createdAccounts, jobId: job.lastInsertRowid };
+  return { imported, skipped, failed, createdAccounts, errors, jobId: job.lastInsertRowid };
 }
 
 /* --------------------------------- 导出 ---------------------------------- */

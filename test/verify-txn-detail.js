@@ -93,6 +93,9 @@ const csrfOf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[1]
   check('创建转账', tr.json && tr.json.ok === true, '');
   r = await req('GET', `/transactions/${tr.json.id}/json`);
   check('转账详情含双账户', r.json && r.json.txn && !!r.json.txn.to_account_name, r.json && r.json.txn && `${r.json.txn.account_name} → ${r.json.txn.to_account_name}`);
+  const amountInRow=(html,tid)=>{const row=html.split(`data-txn-id="${tid}"`)[1]||'';return (row.match(/class="txn-amt[^\"]*"[^>]*>([\s\S]*?)<\/div>/)||[])[1]?.replace(/<[^>]*>/g,'').trim();};
+  for(const path of ['/transactions?type=transfer','/',`/accounts/${accId}`]){const list=await req('GET',path);check('转账金额在列表实际显示 '+path,amountInRow(list.text,tr.json.id)==='500.00');}
+  for(const [type,amount] of [['invest_buy','51.23'],['invest_sell','67.89']]){const saved=await req('POST','/transactions',{form:{_csrf:csrf,type,amount,currency:'CNY',account_id:accId,to_account_id:toAccId,txn_date:d,status:'cleared'},headers:{accept:'application/json'}});const list=await req('GET','/transactions?type='+type);check('中性投资交易也显示金额 '+type,amountInRow(list.text,saved.json.id)===amount);}
 
   // 删除后 404
   await req('POST', `/transactions/${id}/delete`, { form: { _csrf: csrf, _json: '1' } });

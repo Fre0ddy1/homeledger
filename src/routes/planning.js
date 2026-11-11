@@ -1,5 +1,5 @@
 'use strict';
-/** 预算 / 周期账单 / 借贷台账 / 储蓄目标 */
+/** 预算 / 定期记账 / 借钱台账 / 储蓄目标 */
 const express = require('express');
 const { all, get, run, tx, nowStr, todayStr } = require('../db');
 const auth = require('../lib/auth');
@@ -167,15 +167,14 @@ router.post('/budgets/:id/toggle', auth.requireLogin, auth.requireLedgerWrite, (
   res.redirect('/budgets');
 });
 
-/* -------------------------------- 周期账单 -------------------------------- */
+/* -------------------------------- 定期记账 -------------------------------- */
 
 router.get('/recurring', auth.requireLogin, (req, res) => {
   const ledger = res.locals.ledger;
   if (!ledger) return res.redirect('/');
   const ledgerId = Number(ledger.id);
   const rules = all(
-    `SELECT r.*, (SELECT COUNT(*) FROM transactions t WHERE t.ledger_id = r.ledger_id AND t.source = 'recurring'
-       AND t.note LIKE '%' || r.name || '%') AS posted
+    `SELECT r.*, (SELECT COUNT(*) FROM recurring_runs rr WHERE rr.ledger_id=r.ledger_id AND rr.rule_id=r.id) AS posted
      FROM recurring_rules r WHERE r.ledger_id = ? ORDER BY r.is_active DESC, r.next_run_at`,
     ledgerId
   ).map((r) => {
@@ -195,8 +194,8 @@ router.get('/recurring', auth.requireLogin, (req, res) => {
     };
   });
   res.render('recurring', {
-    title: '周期账单', activeNav: 'recurring', rules,
-    form: fd.txFormData(ledgerId, req.session.userId), today: todayStr(),
+    title: '定期记账', activeNav: 'recurring', rules,
+    form: fd.txFormData(ledgerId, req.session.userId), today: todayStr(), overlaps:require('../lib/recurring').overlaps(ledgerId),
   });
 });
 
@@ -208,6 +207,7 @@ router.post('/recurring', auth.requireLogin, auth.requireLedgerWrite, (req, res)
   const amounts = [].concat(req.body.item_amount || []);
   const cats = [].concat(req.body.item_category_id || []);
   const accs = [].concat(req.body.item_account_id || []);
+  const toAccs = [].concat(req.body.item_to_account_id || []);
   const notes = [].concat(req.body.item_note || []);
   const items = [];
   types.forEach((t, i) => {
@@ -217,6 +217,7 @@ router.post('/recurring', auth.requireLogin, auth.requireLedgerWrite, (req, res)
       type: t || 'expense', amount_cents: amt,
       category_id: validCategoryId(ledgerId, cats[i]),
       account_id: accs[i] ? Number(accs[i]) : null,
+      to_account_id: toAccs[i] ? Number(toAccs[i]) : null,
       note: notes[i] || name,
       currency: 'CNY',
     });
@@ -224,7 +225,7 @@ router.post('/recurring', auth.requireLogin, auth.requireLedgerWrite, (req, res)
   if (!items.length) { res.flash('error', '请至少填写一项金额'); return res.redirect('/recurring'); }
 
   const frequency = ['daily', 'weekly', 'monthly', 'yearly'].includes(req.body.frequency) ? req.body.frequency : 'monthly';
-  let next = /^d{4}-d{2}-d{2}$/.test(String(req.body.next_run_at || '')) ? req.body.next_run_at : todayStr();
+  let next;try { next=require('../lib/finance/common').date(req.body.next_run_at||todayStr());require('../lib/recurring').validateItems(ledgerId,items); } catch(e) {res.flash('error',e.message);return res.redirect('/recurring');}
   // 若首次执行日已过，自动推到下一个周期
   let guard = 0;
   while (next < todayStr() && guard++ < 400) next = sch.advanceDate(next, { frequency, interval_n: Number(req.body.interval_n) || 1, day_of_month: req.body.day_of_month });
@@ -238,7 +239,7 @@ router.post('/recurring', auth.requireLogin, auth.requireLedgerWrite, (req, res)
     next, req.body.auto_post ? 1 : 0, nowStr()
   );
   auth.audit(req, 'recurring.create', { entity: 'recurring', ledgerId, detail: name });
-  res.flash('success', `周期账单「${name}」已创建，下次执行 ${next}`);
+  res.flash('success', `定期记账「${name}」已创建，下次执行 ${next}`);
   res.redirect('/recurring');
 });
 
@@ -253,117 +254,17 @@ router.post('/recurring/:id/run', auth.requireLogin, auth.requireLedgerWrite, (r
   const ledgerId = Number(res.locals.ledger.id);
   const r = get('SELECT * FROM recurring_rules WHERE id = ? AND ledger_id = ?', Number(req.params.id), ledgerId);
   if (!r) { res.flash('error', '规则不存在'); return res.redirect('/recurring'); }
-  const items = sch.ruleItems(r.payload);
-  tx(() => {
-    for (const p of items) {
-      const amt = Math.abs(Number(p.amount_cents) || 0);
-      if (!amt) continue;
-      run(
-        `INSERT INTO transactions (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id,
-          to_account_id, category_id, user_id, txn_date, note, merchant, status, source, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        ledgerId, p.type || 'expense', amt, 'CNY', 1, amt, p.account_id || null, null, p.category_id || null,
-        req.session.userId, todayStr(), p.note || r.name, null, 'cleared', 'recurring', nowStr(), nowStr()
-      );
-    }
-    run('UPDATE recurring_rules SET last_run_at = ?, next_run_at = ? WHERE id = ?', nowStr(), sch.advanceDate(r.next_run_at, r), r.id);
-  });
-  require('../db').recalcBalances(ledgerId);
-  res.flash('success', '已立即记账一笔，下次执行日已顺延');
+  try { const result=require('../lib/recurring').execute(ledgerId,r.id,req.session.userId,req.body);auth.audit(req,'recurring.run',{ledgerId,entity:'recurring',entityId:r.id});res.flash('success','已确认本期，共 '+result.txn_ids.length+' 笔；重复提交不会再次记账'); }
+  catch(e) { res.flash('error',e.message); }
   res.redirect('/recurring');
 });
+
+router.post('/recurring/:id/pause',auth.requireLogin,auth.requireLedgerWrite,(req,res)=>{try{require('../lib/recurring').pause(Number(res.locals.ledger.id),req.params.id,req.body.confirm);auth.audit(req,'recurring.pause',{ledgerId:Number(res.locals.ledger.id),entity:'recurring',entityId:Number(req.params.id)});res.flash('success','旧规则已暂停，历史流水保留');}catch(e){res.flash('error',e.message);}res.redirect('/recurring');});
 
 router.post('/recurring/:id/delete', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
   run('DELETE FROM recurring_rules WHERE id = ? AND ledger_id = ?', Number(req.params.id), Number(res.locals.ledger.id));
-  res.flash('success', '周期账单已删除');
+  res.flash('success', '定期记账已删除');
   res.redirect('/recurring');
-});
-
-/* -------------------------------- 借贷台账 -------------------------------- */
-
-router.get('/debts', auth.requireLogin, (req, res) => {
-  const ledger = res.locals.ledger;
-  if (!ledger) return res.redirect('/');
-  const ledgerId = Number(ledger.id);
-  const debts = all(
-    `SELECT d.*, a.name AS account_name FROM debts d LEFT JOIN accounts a ON a.id = d.account_id
-     WHERE d.ledger_id = ? ORDER BY d.status DESC, COALESCE(d.due_date, '9999') LIMIT 300`,
-    ledgerId
-  );
-  const open = debts.filter((d) => d.status === 'open');
-  const receivable = open.filter((d) => d.direction === 'receivable').reduce((s, d) => s + Number(d.balance_cents), 0);
-  const payable = open.filter((d) => d.direction === 'payable').reduce((s, d) => s + Number(d.balance_cents), 0);
-  res.render('debts', {
-    title: '借贷台账', activeNav: 'debts', debts, receivable, payable,
-    form: fd.txFormData(ledgerId, req.session.userId), today: todayStr(),
-  });
-});
-
-router.post('/debts', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
-  const ledgerId = Number(res.locals.ledger.id);
-  const counterparty = String(req.body.counterparty || '').trim();
-  const amount = u.parseAmountToCents(req.body.amount);
-  const direction = req.body.direction === 'receivable' ? 'receivable' : 'payable';
-  if (!counterparty || !amount) { res.flash('error', '请填写对方名称与金额'); return res.redirect('/debts'); }
-
-  if (req.body.create_txn) {
-    txn.createTransaction(ledgerId, req.session.userId, {
-      type: direction === 'receivable' ? 'lend' : 'borrow',
-      amount_cents: amount,
-      account_id: req.body.account_id || null,
-      txn_date: req.body.date || todayStr(),
-      merchant: counterparty,
-      note: req.body.note || (direction === 'receivable' ? '借出' : '借入'),
-      source: 'manual',
-    });
-    res.flash('success', '已记一笔并同步到借贷台账');
-    return res.redirect('/debts');
-  }
-  run(
-    `INSERT INTO debts (ledger_id, direction, counterparty, principal_cents, balance_cents, currency, account_id, due_date, status, note, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-    ledgerId, direction, counterparty.slice(0, 40), amount, amount, req.body.currency || 'CNY',
-    req.body.account_id || null, req.body.due_date || null, 'open',
-    req.body.note ? String(req.body.note).slice(0, 200) : null, nowStr()
-  );
-  res.flash('success', '已新增台账记录（未生成流水）');
-  res.redirect('/debts');
-});
-
-/** 收/还款：核销台账 + 生成流水 */
-router.post('/debts/:id/settle', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
-  const ledgerId = Number(res.locals.ledger.id);
-  const id = Number(req.params.id);
-  const d = get('SELECT * FROM debts WHERE id = ? AND ledger_id = ?', id, ledgerId);
-  if (!d) { res.flash('error', '台账不存在'); return res.redirect('/debts'); }
-  const amount = Math.min(u.parseAmountToCents(req.body.amount) || Number(d.balance_cents), Number(d.balance_cents));
-  if (!amount) { res.flash('error', '金额无效'); return res.redirect('/debts'); }
-
-  txn.createTransaction(ledgerId, req.session.userId, {
-    type: d.direction === 'receivable' ? 'repay_receive' : 'repay_pay',
-    amount_cents: amount,
-    account_id: req.body.account_id || d.account_id,
-    txn_date: req.body.date || todayStr(),
-    merchant: d.counterparty,
-    note: (d.direction === 'receivable' ? '收回借款 · ' : '偿还借款 · ') + d.counterparty,
-    source: 'manual',
-  });
-  // 优先核销手工台账
-  const newBalance = Math.max(0, Number(d.balance_cents) - amount);
-  if (d.note !== '系统自动汇总') {
-    run('UPDATE debts SET balance_cents = ?, status = ? WHERE id = ?', newBalance, newBalance <= 0 ? 'closed' : 'open', id);
-  } else {
-    txn.syncDebts(ledgerId);
-  }
-  auth.audit(req, 'debt.settle', { entity: 'debt', entityId: id, ledgerId, detail: String(amount) });
-  res.flash('success', `已${d.direction === 'receivable' ? '收款' : '还款'} ${u.money(amount)}`);
-  res.redirect('/debts');
-});
-
-router.post('/debts/:id/delete', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
-  run('DELETE FROM debts WHERE id = ? AND ledger_id = ? AND note != ?', Number(req.params.id), Number(res.locals.ledger.id), '系统自动汇总');
-  res.flash('success', '台账已删除');
-  res.redirect('/debts');
 });
 
 /* -------------------------------- 储蓄目标 -------------------------------- */

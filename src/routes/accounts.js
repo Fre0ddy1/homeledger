@@ -27,8 +27,11 @@ router.get('/accounts', auth.requireLogin, (req, res) => {
     ledgerId, todayStr()
   );
   const flowMap = new Map(flows.map((f) => [Number(f.account_id), f]));
+  const financeLinks=new Map(all('SELECT id,account_id FROM finance_contracts WHERE ledger_id=?',ledgerId).map(f=>[Number(f.account_id),'/finance/loans/'+f.id]));
+  for(const p of all('SELECT account_id FROM credit_profiles WHERE ledger_id=?',ledgerId))financeLinks.set(Number(p.account_id),'/finance/cards/'+p.account_id);
   const accounts = overview.accounts.map((a) => ({
     ...a,
+    finance_url:financeLinks.get(Number(a.id))||null,
     flow: flowMap.get(Number(a.id)) || { out: 0, inflow: 0 },
     typeLabel: ACCOUNT_TYPE_MAP[a.type]?.label || a.type,
     isLiability: ['credit', 'loan', 'payable'].includes(a.type),
@@ -77,6 +80,7 @@ router.post('/accounts/:id', auth.requireLogin, auth.requireLedgerWrite, (req, r
   const acc = get('SELECT * FROM accounts WHERE id = ? AND ledger_id = ?', id, ledgerId);
   if (!acc) { res.flash('error', '账户不存在'); return res.redirect('/accounts'); }
   const initial = req.body.initial_balance !== undefined ? u.parseAmountToCents(req.body.initial_balance) : Number(acc.initial_cents);
+  try { require('../lib/finance/account-guard').update(ledgerId,acc,req.body); } catch(e) { res.flash('error',e.message); return res.redirect('/accounts'); }
   run(
     `UPDATE accounts SET name=?, type=?, icon=?, currency=?, initial_cents=?, credit_limit=?, bill_day=?, due_day=?,
       institution=?, note=?, include_in_net=?, sort_order=? WHERE id=?`,
@@ -86,8 +90,8 @@ router.post('/accounts/:id', auth.requireLogin, auth.requireLedgerWrite, (req, r
     req.body.currency || acc.currency,
     initial,
     req.body.credit_limit ? u.parseAmountToCents(req.body.credit_limit) : null,
-    req.body.bill_day ? Number(req.body.bill_day) : null,
-    req.body.due_day ? Number(req.body.due_day) : null,
+    req.body.bill_day === undefined ? acc.bill_day : (req.body.bill_day ? Number(req.body.bill_day) : null),
+    req.body.due_day === undefined ? acc.due_day : (req.body.due_day ? Number(req.body.due_day) : null),
     req.body.institution ? String(req.body.institution).slice(0, 40) : null,
     req.body.note ? String(req.body.note).slice(0, 200) : null,
     req.body.include_in_net ? 1 : 0,
@@ -105,6 +109,7 @@ router.post('/accounts/:id/archive', auth.requireLogin, auth.requireLedgerWrite,
   const id = Number(req.params.id);
   const acc = get('SELECT * FROM accounts WHERE id = ? AND ledger_id = ?', id, ledgerId);
   if (acc) {
+    try { require('../lib/finance/account-guard').archive(ledgerId,id); } catch(e) { res.flash('error',e.message); return res.redirect('/accounts'); }
     run('UPDATE accounts SET is_archived = ? WHERE id = ?', acc.is_archived ? 0 : 1, id);
     res.flash('success', acc.is_archived ? '账户已恢复' : '账户已停用（历史记录保留）');
   }
@@ -115,6 +120,7 @@ router.post('/accounts/:id/delete', auth.requireLogin, auth.requireLedgerWrite, 
   const ledgerId = Number(res.locals.ledger.id);
   const id = Number(req.params.id);
   const used = Number(get('SELECT COUNT(*) AS c FROM transactions WHERE ledger_id = ? AND (account_id = ? OR to_account_id = ?)', ledgerId, id, id)?.c || 0);
+  try { require('../lib/finance/account-guard').remove(ledgerId,id); } catch(e) { res.flash('error',e.message); return res.redirect('/accounts'); }
   if (used > 0) {
     res.flash('error', `该账户下有 ${used} 笔记录，无法删除。可改为「停用」。`);
     return res.redirect('/accounts');

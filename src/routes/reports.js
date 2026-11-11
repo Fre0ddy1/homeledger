@@ -48,6 +48,11 @@ router.get('/reports', auth.requireLogin, (req, res) => {
   const ledgerId = Number(ledger.id);
   const range = parseRange(req.query, ledgerId);
   const kind = req.query.kind === 'income' ? 'income' : 'expense';
+  const basis=req.query.basis==='cashflow'?'cashflow':req.query.basis==='consumption'||req.query.kind||req.query.top?'consumption':'cashflow';
+  if(basis==='cashflow'){
+    const flow=require('../lib/cashflow');
+    return res.render('cashflow-report',{title:'资金流报表',activeNav:'reports',range,kind,basis,sum:flow.summary(ledgerId,range.start,range.end),trend:flow.monthly(ledgerId,12),outflow:flow.breakdown(ledgerId,range.start,range.end,'expense'),inflow:flow.breakdown(ledgerId,range.start,range.end,'income'),top:String(req.query.top||''),entries:req.query.top?flow.entries(ledgerId,range.start,range.end,{kind,group:req.query.top,page:req.query.page}):null,groupCashDates:flow.groupDates});
+  }
 
   const sum = txn.summary(ledgerId, range.start, range.end);
   const cats = txn.categoryBreakdown(ledgerId, range.start, range.end, kind);
