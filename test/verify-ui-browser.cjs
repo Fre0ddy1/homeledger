@@ -47,7 +47,7 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
     await page.setViewportSize({width,height:1080});
     for(const route of routes){
      const res=await page.goto('http://127.0.0.1:5113'+route);await page.waitForTimeout(40);
-     const metrics=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth>innerWidth+1,layoutViewport:document.documentElement.clientWidth,contentWidth:document.querySelector('.content')?.getBoundingClientRect().width,offenders:[...document.querySelectorAll('main *, .content *')].filter(x=>{const r=x.getBoundingClientRect();return r.width&&r.right>innerWidth+2&&!x.closest('.scroll-x,.hl-select-menu,.hl-date-panel');}).slice(0,5).map(x=>x.tagName+'.'+x.className)}));
+     const metrics=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth>innerWidth+1,layoutViewport:document.body.getBoundingClientRect().width,contentWidth:document.querySelector('.content')?.getBoundingClientRect().width,offenders:[...document.querySelectorAll('main *, .content *')].filter(x=>{const r=x.getBoundingClientRect();return r.width&&r.right>innerWidth+2&&!x.closest('.scroll-x,.hl-select-menu,.hl-date-panel');}).slice(0,5).map(x=>x.tagName+'.'+x.className)}));
      if(route==='/'){
       // The content scrolls with the document; navigation and popup menus have
       // their own bounded interaction and are outside this page-body audit.

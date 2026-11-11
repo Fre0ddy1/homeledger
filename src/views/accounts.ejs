@@ -22,17 +22,10 @@
   <% if(canWrite(ledger.role)){ %><a class="btn btn-primary btn-sm" href="#new-account">＋ 添加账户</a><% } %>
 </div>
 
-<div class="account-groups">
-  <% ACCOUNT_TYPES.forEach(function(tp){ %>
-    <% if (groups[tp.key] && groups[tp.key].length) { %>
-      <div class="card">
-        <div class="card-head"><h2><%= tp.icon %> <%= tp.label %></h2>
-          <span class="muted small">
-            合计 <%= helpers.money(groups[tp.key].reduce(function(s,a){ return s + Number(a.balance_cents); }, 0)) %>
-          </span>
-        </div>
-        <div class="account-cards"><% groups[tp.key].forEach(function(a){ %>
-          <div class="account-entry">
+<div class="row wrap mb16 account-group-totals"><% ACCOUNT_TYPES.forEach(function(tp){if(groups[tp.key]?.length){ %><span class="chip"><%= tp.icon %> <%= tp.label %> · <%= groups[tp.key].length %> 个 · 合计 <%= helpers.money(groups[tp.key].reduce((sum,a)=>sum+Number(a.balance_cents),0)) %></span><% }}); %></div>
+<div class="account-groups account-cards">
+<% ACCOUNT_TYPES.forEach(function(tp){if(groups[tp.key]?.length){groups[tp.key].forEach(function(a){ %>
+          <div class="card account-entry"><div class="small muted mb12"><%= tp.icon %> <%= tp.label %></div>
             <div class="account-entry-head">
               <a href="/accounts/<%= a.id %>" style="min-width:0">
                 <div class="bold"><%= a.icon %> <%= a.name %></div>
@@ -88,10 +81,7 @@
             </div>
             <% } %>
           </div>
-        <% }); %></div>
-      </div>
-    <% } %>
-  <% }); %>
+<% }); }}); %>
 </div>
 
 <% if (!accounts.length) { %>
