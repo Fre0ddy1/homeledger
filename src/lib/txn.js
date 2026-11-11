@@ -167,8 +167,8 @@ function pickCategory(ledgerId, id) {
  * 写入一笔交易
  * @param {object} d 表单数据
  */
-function createTransaction(ledgerId,userId,d){return tx(()=>createTransactionUnchecked(ledgerId,userId,d));}
-function createTransactionUnchecked(ledgerId, userId, d) {
+function createTransaction(ledgerId,userId,d,options={}){return tx(()=>createTransactionUnchecked(ledgerId,userId,d,options));}
+function createTransactionUnchecked(ledgerId, userId, d, options) {
   const type = TXN_TYPE_MAP[d.type] ? d.type : 'expense';
   // 余额调整（adjust）的金额是带符号的差额（调减为负），其余类型一律取绝对值
   const isAdjust = type === 'adjust';
@@ -190,6 +190,7 @@ function createTransactionUnchecked(ledgerId, userId, d) {
   if ((type === 'invest_buy' || type === 'invest_sell') && (!accountId || !toAccountId)) throw new Error('投资买入/卖出需要选择付款与入账账户');
   if ((type === 'invest_buy' || type === 'invest_sell') && accountId === toAccountId) throw new Error('投资交易的双方账户不能相同');
 
+  require('./account-policy').validate(ledgerId,type,accountId,toAccountId,options.channel);
   const txnDate = /^\d{4}-\d{2}-\d{2}$/.test(String(d.txn_date || '')) ? d.txn_date : todayStr();
   const info = run(
     `INSERT INTO transactions
@@ -246,6 +247,7 @@ function updateTransactionUnchecked(id, ledgerId, userId, d) {
   // 与 createTransaction 同规则：编辑改型成投资买卖时缺双账户/同账户会让资金凭空蒸发或净效果为 0
   if ((type === 'invest_buy' || type === 'invest_sell') && (!accountId || !toAccountId)) throw new Error('投资买入/卖出需要选择付款与入账账户');
   if ((type === 'invest_buy' || type === 'invest_sell') && accountId === toAccountId) throw new Error('投资交易的双方账户不能相同');
+  require('./account-policy').validate(ledgerId,type,accountId,toAccountId);
   run(
     `UPDATE transactions SET type=?, amount_cents=?, currency=?, rate=?, amount_base_cents=?, account_id=?,
        to_account_id=?, category_id=?, txn_date=?, note=?, merchant=?, status=?, is_reimbursable=?,

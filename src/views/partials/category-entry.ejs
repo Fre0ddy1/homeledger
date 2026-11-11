@@ -9,7 +9,7 @@
     <button class="btn btn-sm btn-primary" type="submit">保存</button>
   </form>
   <form method="post" action="/categories/<%= node.id %>/delete" data-confirm="删除分类「<%= node.name %>」？其子分类也会隐藏，历史账单保留，之后可恢复。">
-    <input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="return_to" value="<%= categoryBack %>"><button class="btn btn-sm btn-ghost category-delete" type="submit">删除分类</button>
+    <input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="return_to" value="<%= categoryBack %>"><button class="btn btn-sm btn-danger category-delete" type="submit">删除分类</button>
   </form>
   <% } else { %><p class="small muted mt8">当前账本为只读，可查看分类及使用统计。</p><% } %>
 </details>

@@ -34,6 +34,7 @@
 <% } %>
 
 <form method="post" action="<%= action %>" id="txn-form">
+  <template id="transaction-account-options"><option value="">请选择账户…</option><% form.accounts.forEach(function(a){ %><option value="<%= a.id %>" data-types="<%= a.transaction_types %>"><%= a.icon %> <%= a.name %>（<%= helpers.fmtAmount(a.balance_cents) %>）</option><% }); %></template>
   <input type="hidden" name="_csrf" value="<%= csrf %>">
   <input type="hidden" name="type" id="f-type" value="<%= cur %>">
   <input type="hidden" name="category_id" id="f-category" value="<%= t.category_id || '' %>">
@@ -84,7 +85,7 @@
             <label id="acc-label">支付账户</label>
             <select name="account_id" id="f-account">
               <option value="">请选择账户…</option>
-              <% form.accounts.forEach(function(a){ %>
+              <% form.accounts.filter(function(a){return a.transaction_types.split(',').includes(cur);}).forEach(function(a){ %>
                 <option value="<%= a.id %>" <%= Number(t.account_id) === Number(a.id) ? 'selected' : '' %>><%= a.icon %> <%= a.name %>（<%= helpers.fmtAmount(a.balance_cents) %>）</option>
               <% }); %>
             </select>
@@ -93,15 +94,16 @@
             <label>转入 / 投资账户</label>
             <select name="to_account_id">
               <option value="">请选择账户…</option>
-              <% form.accounts.forEach(function(a){ %>
+              <% form.accounts.filter(function(a){return a.transaction_types.split(',').includes(cur);}).forEach(function(a){ %>
                 <option value="<%= a.id %>" <%= Number(t.to_account_id) === Number(a.id) ? 'selected' : '' %>><%= a.icon %> <%= a.name %></option>
               <% }); %>
             </select>
           </div>
         </div>
 
+        <p class="help" data-for-type="transfer">普通转账用于自有资产账户间划转。信用卡或贷款还款请使用上方“还款”。</p>
         <div class="field">
-          <label>商家 / 对方 <span class="muted tiny">（借贷时的对方姓名很关键）</span></label>
+          <label>商家 / 对方 <span class="muted tiny">（借钱时填写对方姓名）</span></label>
           <input type="text" name="merchant" value="<%= t.merchant || '' %>" placeholder="例如：肯德基 / 张三 / 房东">
         </div>
         <div class="field" data-for-type="lend,borrow,repay_receive,repay_pay">

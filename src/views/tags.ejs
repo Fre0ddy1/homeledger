@@ -13,7 +13,7 @@
           <span class="muted tiny"><%= t.cnt %> 笔 · <%= helpers.fmtAmount(t.total) %></span>
           <form method="post" action="/tags/<%= t.id %>/delete" style="display:inline" data-confirm="删除标签「<%= t.name %>」？记录不会被删除。">
             <input type="hidden" name="_csrf" value="<%= csrf %>">
-            <button class="btn btn-sm btn-ghost" style="padding:0 2px;font-size:10px">✕</button>
+            <button class="btn btn-sm btn-ghost">✕</button>
           </form>
         </span>
       <% }); %>

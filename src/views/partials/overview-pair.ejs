@@ -1,0 +1,16 @@
+<div class="overview-pair">
+  <% [
+    {key:'cashflow',title:'资金进出',hint:'看手里可用的钱如何变化，包含还款、借出与投资划转。',sum:cashSummary,prev:cashPrevious,labels:['资金流出','资金流入','资金净变化']},
+    {key:'consumption',title:'消费收支',hint:'看本月实际消费，包含刷卡消费，还本与还款不重复计算。',sum:consumptionSummary,prev:consumptionPrevious,labels:['消费支出','收入','消费结余']}
+  ].forEach(function(group){ %>
+  <section class="card overview-panel" data-summary-basis="<%= group.key %>">
+    <div class="card-head"><h2><%= group.title %></h2><a class="btn btn-sm" href="/reports?basis=<%= group.key %>&preset=month&month=<%= month %>">查看报表</a></div>
+    <p class="help"><%= group.hint %></p>
+    <div class="overview-metrics">
+      <% [['expense','expense'],['income','income'],['net','']].forEach(function(pair,i){var value=group.sum[pair[0]],base=group.prev[pair[0]],delta=base>0?(value-base)/base*100:null; %>
+      <div><span class="small muted"><%= group.labels[i] %></span><div class="overview-value amount <%= i===2&&value<0?'expense':pair[1] %>"><%= helpers.money(value) %></div><span class="tiny muted"><% if(i===2){ %>共 <%= group.sum.count %> 笔<% }else if(delta===null){ %>上月暂无可比数据<% }else{ %>较上月 <%= delta>=0?'+':'' %><%= delta.toFixed(1) %>%<% } %></span></div>
+      <% }); %>
+    </div>
+  </section>
+  <% }); %>
+</div>

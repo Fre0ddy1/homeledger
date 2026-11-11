@@ -45,7 +45,7 @@ function txFormData(ledgerId, userId) {
     incomeCats: cats.filter((c) => c.kind === 'income'),
     expenseTree: categoryTree(ledgerId, 'expense'),
     incomeTree: categoryTree(ledgerId, 'income'),
-    accounts: accounts(ledgerId),
+    accounts: require('./account-policy').decorate(accounts(ledgerId)),
     members: members(ledgerId),
     tags: tags(ledgerId),
     debts: all('SELECT id,counterparty,direction,balance_cents,deleted_at,status FROM debts WHERE ledger_id=? ORDER BY id DESC',ledgerId),

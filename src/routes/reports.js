@@ -51,7 +51,7 @@ router.get('/reports', auth.requireLogin, (req, res) => {
   const basis=req.query.basis==='cashflow'?'cashflow':req.query.basis==='consumption'||req.query.kind||req.query.top?'consumption':'cashflow';
   if(basis==='cashflow'){
     const flow=require('../lib/cashflow');
-    return res.render('cashflow-report',{title:'资金流报表',activeNav:'reports',range,kind,basis,sum:flow.summary(ledgerId,range.start,range.end),trend:flow.monthly(ledgerId,12),outflow:flow.breakdown(ledgerId,range.start,range.end,'expense'),inflow:flow.breakdown(ledgerId,range.start,range.end,'income'),top:String(req.query.top||''),entries:req.query.top?flow.entries(ledgerId,range.start,range.end,{kind,group:req.query.top,page:req.query.page}):null,groupCashDates:flow.groupDates});
+    return res.render('cashflow-report',{title:'报表分析',activeNav:'reports',range,kind,basis,today:todayStr(),sum:flow.summary(ledgerId,range.start,range.end),trend:flow.monthly(ledgerId,12),outflow:flow.breakdown(ledgerId,range.start,range.end,'expense'),inflow:flow.breakdown(ledgerId,range.start,range.end,'income'),top:String(req.query.top||''),entries:req.query.top?flow.entries(ledgerId,range.start,range.end,{kind,group:req.query.top,page:req.query.page}):null,groupCashDates:flow.groupDates});
   }
 
   const sum = txn.summary(ledgerId, range.start, range.end);
@@ -103,7 +103,7 @@ router.get('/reports', auth.requireLogin, (req, res) => {
 
   res.render('reports', {
     title: '报表分析', activeNav: 'reports',
-    range, kind, sum, cats, subcats, trend, days, members, owners, netWorth, overview,
+    range, kind, basis, sum, cats, subcats, trend, days, members, owners, netWorth, overview,
     compare, weekday, expenseCount, maxDay, activeDays, monthForecast,
     top: req.query.top || null,
     today: todayStr(),

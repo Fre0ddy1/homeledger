@@ -76,11 +76,11 @@
           <a href="#" class="budget-edit" data-id="<%= b.id %>">修改</a>
           <form method="post" action="/budgets/<%= b.id %>/toggle" style="display:inline">
             <input type="hidden" name="_csrf" value="<%= csrf %>">
-            <button class="btn btn-sm btn-ghost" style="padding:0;font-size:11px"><%= b.is_active ? '停用' : '启用' %></button>
+            <button class="btn btn-sm btn-ghost"><%= b.is_active ? '停用' : '启用' %></button>
           </form>
           <form method="post" action="/budgets/<%= b.id %>/delete" style="display:inline" data-confirm="删除预算「<%= b.name %>」？">
             <input type="hidden" name="_csrf" value="<%= csrf %>">
-            <button class="btn btn-sm btn-ghost" style="padding:0;font-size:11px;color:var(--expense)">删除</button>
+            <button class="btn btn-sm btn-danger">删除</button>
           </form>
         </div>
 

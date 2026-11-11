@@ -30,6 +30,7 @@ const SUITES = [
   'verify-finance.js',
   'verify-finance-api.js',
   'verify-cashflow.js',
+  'verify-account-policy.js',
   'verify-navigation.js',
   'verify-transactions.js',
   'verify-txn-detail.js',

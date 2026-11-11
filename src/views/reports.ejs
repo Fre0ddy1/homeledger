@@ -5,30 +5,7 @@
   var maxWd = Math.max.apply(null, weekday.concat([1]));
 %>
 
-<div class="card tight mb16">
-  <div class="row wrap mb16"><a class="btn btn-sm" href="/reports?basis=cashflow&preset=<%= range.preset %>&month=<%= range.month||'' %>&from=<%= range.start %>&to=<%= range.end %>">资金流</a><span class="btn btn-sm btn-primary">消费收支</span><span class="small muted">消费发生口径，还本和还款不重复计消费</span></div>
-  <div class="row wrap" style="gap:6px">
-    <% [['month','本月'],['quarter','本季度'],['year','本年'],['all','全部']].forEach(function(p){ %>
-      <a class="chip <%= range.preset === p[0] ? 'primary' : '' %>" href="/reports?basis=consumption&preset=<%= p[0] %><%= range.month ? '&month=' + range.month : '' %>"><%= p[1] %></a>
-    <% }); %>
-    <a class="chip" href="/annual">📅 年度账单</a>
-    <form method="get" action="/reports" class="row" style="gap:6px">
-      <input type="hidden" name="basis" value="consumption"><input type="hidden" name="preset" value="month">
-      <input type="month" name="month" value="<%= range.month || today.slice(0,7) %>" style="width:auto">
-      <button class="btn btn-sm" type="submit">查看该月</button>
-    </form>
-    <form method="get" action="/reports" class="row" style="gap:6px">
-      <input type="hidden" name="basis" value="consumption"><input type="hidden" name="preset" value="custom">
-      <input type="date" name="from" value="<%= range.start %>" style="width:auto">
-      <span>~</span>
-      <input type="date" name="to" value="<%= range.end %>" style="width:auto">
-      <button class="btn btn-sm" type="submit">自定义</button>
-    </form>
-    <span class="spacer"></span>
-    <a class="chip <%= kind === 'expense' ? 'primary' : '' %>" href="/reports?preset=<%= range.preset %>&month=<%= range.month || '' %>&kind=expense">支出视角</a>
-    <a class="chip <%= kind === 'income' ? 'primary' : '' %>" href="/reports?preset=<%= range.preset %>&month=<%= range.month || '' %>&kind=income">收入视角</a>
-  </div>
-</div>
+<%- include('partials/report-toolbar') %>
 
 <div class="grid grid-4 mb16">
   <div class="stat">
@@ -136,7 +113,7 @@
     <div class="card-head">
       <h2>分类排行榜</h2>
       <span class="muted small"><%= top ? '下钻：' + top : '一级分类' %></span>
-      <% if (top) { %><a class="btn btn-sm btn-ghost" href="/reports?preset=<%= range.preset %>&month=<%= range.month || '' %>&kind=<%= kind %>">返回一级</a><% } %>
+      <% if (top) { %><a class="btn btn-sm btn-ghost" href="/reports?basis=consumption&preset=<%= range.preset %>&month=<%= range.month || '' %>&from=<%= range.start %>&to=<%= range.end %>&year=<%= range.start.slice(0,4) %>&kind=<%= kind %>">返回一级</a><% } %>
     </div>
     <% if (!subcats.length) { %>
       <div class="empty"><span class="big">🏆</span>没有数据</div>
@@ -149,14 +126,14 @@
                 name: name,
                 value: c.total / 100,
                 color: c.color,
-                href: canDrill ? '/reports?preset=' + encodeURIComponent(range.preset) + '&month=' + encodeURIComponent(range.month || '') + '&kind=' + kind + '&top=' + encodeURIComponent(c.name) : null
+                href: canDrill ? '/reports?basis=consumption&from='+range.start+'&to='+range.end+'&year='+range.start.slice(0,4)+'&preset=' + encodeURIComponent(range.preset) + '&month=' + encodeURIComponent(range.month || '') + '&kind=' + kind + '&top=' + encodeURIComponent(c.name) : null
               };
             }), { valueUnit: '' }) %>
       </div>
       <div class="tiny muted mt8">点分类名可下钻查看该分类下的二级明细</div>
       <div class="row wrap mt8" style="gap:6px">
         <% cats.slice(0, 8).forEach(function(c){ %>
-          <a class="chip" href="/reports?preset=<%= range.preset %>&month=<%= range.month || '' %>&kind=<%= kind %>&top=<%= encodeURIComponent(c.name) %>"><%= c.icon %> <%= c.name %></a>
+          <a class="chip" href="/reports?basis=consumption&preset=<%= range.preset %>&month=<%= range.month || '' %>&from=<%= range.start %>&to=<%= range.end %>&year=<%= range.start.slice(0,4) %>&kind=<%= kind %>&top=<%= encodeURIComponent(c.name) %>"><%= c.icon %> <%= c.name %></a>
         <% }); %>
       </div>
     <% } %>

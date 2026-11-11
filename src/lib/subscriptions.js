@@ -222,6 +222,7 @@ function charge(sub,userId,options={}) {return require('../db').tx(()=>chargeUnc
 function chargeUnchecked(sub, userId, { date = todayStr(), silent = false } = {}) {
   const amount = Math.abs(Number(sub.amount_cents) || 0);
   if (!amount) return null;
+  require('./account-policy').validate(Number(sub.ledger_id),'expense',sub.account_id,null);
   const label = sub.plan ? `${sub.name}（${sub.plan}）` : sub.name;
   const info = run(
     `INSERT INTO transactions

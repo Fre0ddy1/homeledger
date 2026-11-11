@@ -10,6 +10,14 @@
 - 贷款创建、实际还款、费用补记使用唯一`operation_key`（建议UUID），持久保存到操作完成；网络超时复用原key和完全相同参数重试。更正付款使用新key。同key参数不同会被拒绝。请求成功后以返回ID查询核验，不能把改key当重试。
 - `confirm`、`confirm_sources`、`release_credit`、`confirm_revision`代表不同的具体确认范围。只在用户已经授权该范围时传true；不因技能或HTTP错误自行扩大授权。部分成功时逐项汇报，不重复整批入库。
 
+## 普通记账账户资格
+
+GET /accounts 每个账户新增 transaction_types 数组，列出普通记账可用类型；空数组不表示账户失效，只表示应在对应台账操作。普通收支（含订阅、定期消费）排除 loan/receivable/payable，保留 credit 消费和退款；普通 transfer 两端另外排除 credit，投资和其他自有资产账户仍可划转。借钱本金用实际资金账户，不能选择应收/应付账户代替现金流。
+
+POST /transactions 及编辑、订阅、定期规则会在服务端检查，不符合时返回400。source 或 channel 请求字段不能获得金融服务权限。实际还款用 POST /finance/repayments；银行导入的已发生放款/还款可保留为待关联来源，再由金融服务确认核销，不新记第二次资金流。
+
+首页两套口径同屏，不相加；GET /summary 及 /cashflow 等 API 统计口径保持原约定。
+
 ## 借钱台账
 
 `GET /debts`返回有效条目及应收/应还；`?show=deleted`查询已归档。`GET /debts/:id`含稳定ID、余额、历史关联流水，已归档也可查。

@@ -897,7 +897,8 @@ function normalizeItem(raw, ledgerId, { sourceText = '', noteLines = null } = {}
     acctHint = null;
   }
   // 账户识别不出 → 习惯推荐补位（此时 categoryId 可能刚由习惯/关键词得出，正好作为推荐依据）
-  const accountRec = !accountId ? habitAccountId(ledgerId, { categoryId, merchant, type }) : null;
+  let accountRec = !accountId ? habitAccountId(ledgerId, { categoryId, merchant, type }) : null;
+  if(accountRec){const a=get('SELECT type FROM accounts WHERE id=? AND ledger_id=?',accountRec,ledgerId);if(!a||!require('./account-policy').allowed(type,a.type))accountRec=null;}
 
   // 消费归属人（P11）：模型给的就用（文本路径做臆造核验）；没给时商户习惯补位（可确认可改）
   let ownerLabel = cleanOwnerLabel(raw.for_member || raw.owner_label);

@@ -138,32 +138,32 @@
             <% if (it.status !== 'canceled') { %>
             <form method="post" action="/subscriptions/<%= it.id %>/charge" style="display:inline">
               <input type="hidden" name="_csrf" value="<%= csrf %>">
-              <button class="btn btn-sm" style="padding:2px 8px;font-size:11px">立即扣费一期</button>
+              <button class="btn btn-sm">立即扣费一期</button>
             </form>
             <% } %>
             <% if (it.status !== 'canceled') { %>
             <form method="post" action="/subscriptions/<%= it.id %>/skip" style="display:inline">
               <input type="hidden" name="_csrf" value="<%= csrf %>">
-              <button class="btn btn-sm btn-ghost" style="padding:0;font-size:11px">跳过本期</button>
+              <button class="btn btn-sm btn-ghost">跳过本期</button>
             </form>
             <% } %>
             <form method="post" action="/subscriptions/<%= it.id %>/toggle" style="display:inline">
               <input type="hidden" name="_csrf" value="<%= csrf %>">
-              <button class="btn btn-sm btn-ghost" style="padding:0;font-size:11px"><%= (it.status === 'paused' || it.status === 'canceled') ? '恢复' : '暂停' %></button>
+              <button class="btn btn-sm btn-ghost"><%= (it.status === 'paused' || it.status === 'canceled') ? '恢复' : '暂停' %></button>
             </form>
             <% if (it.status !== 'canceled') { %>
             <form method="post" action="/subscriptions/<%= it.id %>/cancel" style="display:inline" data-confirm="把「<%= it.name %>」标记为已取消？历史扣费记录会保留。">
               <input type="hidden" name="_csrf" value="<%= csrf %>">
-              <button class="btn btn-sm btn-ghost" style="padding:0;font-size:11px">标记已取消</button>
+              <button class="btn btn-sm btn-ghost">标记已取消</button>
             </form>
             <% } %>
-            <a class="btn btn-sm btn-ghost" style="padding:0;font-size:11px" href="/subscriptions/<%= it.id %>/edit">编辑</a>
+            <a class="btn btn-sm btn-ghost" href="/subscriptions/<%= it.id %>/edit">编辑</a>
             <% if (it.vendor_url) { %>
-              <a class="btn btn-sm btn-ghost" style="padding:0;font-size:11px" href="<%= it.vendor_url %>" target="_blank" rel="noopener noreferrer">管理页 ↗</a>
+              <a class="btn btn-sm btn-ghost" href="<%= it.vendor_url %>" target="_blank" rel="noopener noreferrer">管理页 ↗</a>
             <% } %>
             <form method="post" action="/subscriptions/<%= it.id %>/delete" style="display:inline" data-confirm="删除订阅「<%= it.name %>」？已生成的流水不受影响。">
               <input type="hidden" name="_csrf" value="<%= csrf %>">
-              <button class="btn btn-sm btn-ghost" style="padding:0;font-size:11px;color:var(--expense)">删除</button>
+              <button class="btn btn-sm btn-danger">删除</button>
             </form>
           </div>
         </div>
@@ -187,7 +187,7 @@
     <div class="card sticky-side">
       <div class="card-head">
         <h2><%= isEdit ? '编辑订阅' : '添加订阅' %></h2>
-        <% if (isEdit) { %><a class="tiny" href="/subscriptions">← 返回新建</a><% } %>
+        <% if (isEdit) { %><a class="btn btn-sm" href="/subscriptions">返回订阅列表</a><% } %>
       </div>
 
       <% if (!isEdit) { %>
@@ -277,7 +277,7 @@
             <label>扣费账户</label>
             <select name="account_id">
               <option value="">未指定</option>
-              <% form.accounts.forEach(function(a){ %>
+              <% form.accounts.filter(function(a){return a.transaction_types.split(',').includes('expense');}).forEach(function(a){ %>
                 <option value="<%= a.id %>" <%= Number(val('account_id', 0)) === Number(a.id) ? 'selected' : '' %>><%= a.name %></option>
               <% }); %>
             </select>

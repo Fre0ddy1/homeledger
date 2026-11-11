@@ -107,25 +107,28 @@ const enc = encodeURIComponent;
   const EXPENSE_Q = 'preset=month&month=&kind=expense';
   const YM = today.slice(0, 7); // 页内链接的 month 参数经 parseRange 归一化为当前月
 
+  const monthEnd=new Date(Number(YM.slice(0,4)),Number(YM.slice(5)),0).getDate();
+  const rankBase='/reports?basis=consumption&amp;from='+YM+'-01&amp;to='+YM+'-'+monthEnd+'&amp;year='+YM.slice(0,4)+'&amp;preset=month&amp;month='+YM+'&amp;kind=expense';
+  const chipBase='/reports?basis=consumption&preset=month&month='+YM+'&from='+YM+'-01&to='+YM+'-'+monthEnd+'&year='+YM.slice(0,4)+'&kind=expense';
   /* --- 一级视图：排行榜一级分类可点下钻（本次修复点） --- */
   r = await req('GET', `/reports?${EXPENSE_Q}`, { cookie });
   check('报表页 200', r.status === 200, `HTTP ${r.status}`);
   check('一级「餐饮」渲染为下钻链接（属性内 & 转义为 &amp;）', r.text.includes(
-    `<a class="rank-name" href="/reports?preset=month&amp;month=${YM}&amp;kind=expense&amp;top=${enc('餐饮')}" title="餐饮">餐饮</a>`
+    `<a class="rank-name" href="${rankBase}&amp;top=${enc('餐饮')}" title="餐饮">餐饮</a>`
   ), '');
   check('一级「交通」同样可点', r.text.includes(
-    `<a class="rank-name" href="/reports?preset=month&amp;month=${YM}&amp;kind=expense&amp;top=${enc('交通')}" title="交通">交通</a>`
+    `<a class="rank-name" href="${rankBase}&amp;top=${enc('交通')}" title="交通">交通</a>`
   ), '');
   check('二级行保持纯文本（餐饮/午餐）', r.text.includes('>餐饮/午餐</span>'), '');
   check('二级行不再渲染链接', !r.text.includes(`&amp;top=${enc('午餐')}"`), '');
   check('一级行不再错挂「未分类/」前缀', !r.text.includes('未分类/餐饮') && !r.text.includes('未分类/交通'), '');
   check('XSS 分类名渲染为全转义的下钻链接', r.text.includes(
-    `<a class="rank-name" href="/reports?preset=month&amp;month=${YM}&amp;kind=expense&amp;top=${enc(xssName)}" title="怪&lt;em&gt;分&lt;/em&gt;类">怪&lt;em&gt;分&lt;/em&gt;类</a>`
+    `<a class="rank-name" href="${rankBase}&amp;top=${enc(xssName)}" title="怪&lt;em&gt;分&lt;/em&gt;类">怪&lt;em&gt;分&lt;/em&gt;类</a>`
   ), '');
   check('XSS 分类 href 无裸 HTML 字符', !r.text.includes('top=怪<em') && !r.text.includes('>怪<em'), '');
   check('未分类账目在排行行显示「未分类」', r.text.includes('class="rank-name" title="未分类">未分类</span>'), '');
   check('不再出现「未分类/null」', !r.text.includes('未分类/null'), '');
-  check('chip 快捷行仍带 top= 链接', r.text.includes(`class="chip" href="/reports?preset=month&month=${YM}&kind=expense&top=${enc('餐饮')}"`), '');
+  check('chip 快捷行仍带 top= 链接', r.text.includes(`class="chip" href="${chipBase}&top=${enc('餐饮')}"`), '');
 
   /* --- 下钻视图 --- */
   r = await req('GET', `/reports?${EXPENSE_Q}&top=${enc('餐饮')}`, { cookie });

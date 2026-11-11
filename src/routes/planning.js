@@ -314,6 +314,7 @@ router.post('/goals/:id/deposit', auth.requireLogin, auth.requireLedgerWrite, (r
   if (!g) { res.flash('error', '目标不存在'); return res.redirect('/goals'); }
   const delta = u.parseAmountToCents(req.body.amount);
   if (!delta) { res.flash('error', '请填写金额（取出请填负数）'); return res.redirect('/goals'); }
+  if(req.body.create_txn) { try { require('../lib/account-policy').validate(ledgerId,delta>0?'expense':'income',req.body.account_id||g.account_id,null); } catch(e) { res.flash('error',e.message); return res.redirect('/goals'); } }
   const saved = Math.max(0, Number(g.saved_cents) + delta);
   const status = saved >= Number(g.target_cents) ? 'done' : 'active';
   run('UPDATE goals SET saved_cents = ?, status = ? WHERE id = ?', saved, status, g.id);

@@ -22,6 +22,7 @@ async function login(username, password) {
   check('管理员登录', (await login('admin', 'admin888')).status === 302);
   let r = await request('/');
   check('总览可渲染', r.status === 200);
+  check('资金流与消费同屏且无切换链接',r.html.includes('data-summary-basis="cashflow"')&&r.html.includes('data-summary-basis="consumption"')&&!r.html.includes('&basis=consumption">消费收支'));
   check('收入空状态', r.html.includes('本月还没有收入记录'));
   check('储蓄空状态', r.html.includes('为下一件期待的事存钱'));
   check('无前月基数不显示虚假环比', r.html.includes('暂无可比数据'));
@@ -35,7 +36,7 @@ async function login(username, password) {
   r = await request('/');
   check('收入构成模块', r.html.includes('id="income-composition"'));
   check('收入金额来自统计', r.html.includes('1,234.56'));
-  check('收入分类可下钻', r.html.includes('/reports?basis=cashflow&amp;kind=income&amp;'));
+  check('收入分类可下钻', r.html.includes('/reports?basis=consumption&amp;kind=income&amp;'));
   check('目标名转义', r.html.includes('超额目标&lt;script&gt;') && !r.html.includes('超额目标<script>'));
   check('零分母受保护', !/NaN|Infinity/.test(r.html));
   check('超额目标进度封顶', r.html.includes('100.0%'));
@@ -49,6 +50,8 @@ async function login(username, password) {
   check('收入分类不被前六项截断', r.html.includes('其他收入8'));
   check('微小占比无负数 SVG dasharray', !/stroke-dasharray="-/.test(r.html));
   check('历史月份构成链接保留月份', (await request('/?month=2026-01')).html.includes('本月还没有收入记录'));
+  const historical=await request('/?month=2020-02');
+  check('两套趋势共同截至所选历史月',historical.html.split('>9月</text>').length===3&&historical.html.split('>2月</text>').length===3);
   const outsider = db.run("INSERT INTO users(username,password_hash,display_name,created_at) VALUES ('outsider',?,'其他用户',?)", auth.hashPassword('testpass123'), db.nowStr()).lastInsertRowid;
   const otherLedger = db.createDefaultLedger(outsider, '隔离');
   db.run("INSERT INTO goals(ledger_id,name,icon,target_cents,saved_cents,status,created_at) VALUES (?,'不应泄漏的目标','🎯',100,0,'active',?)", otherLedger, db.nowStr());

@@ -373,6 +373,7 @@ router.get('/accounts', (req, res) => {
     net: overview.net, assets: overview.assets, liabilities: overview.liabilities,
     accounts: overview.accounts.map((a) => ({
       id: a.id, name: a.name, type: a.type, icon: a.icon, currency: a.currency,
+      transaction_types:require('../lib/account-policy').decorate([a])[0].transaction_types.split(',').filter(Boolean),
       balance_cents: Number(a.balance_cents), initial_cents: Number(a.initial_cents),
       credit_limit: a.credit_limit ? Number(a.credit_limit) : null,
       bill_day: a.bill_day, due_day: a.due_day, is_archived: !!a.is_archived,
@@ -1046,6 +1047,7 @@ router.post('/subscriptions', requireWrite, (req, res) => {
   const d = readSubBody(req.body || {});
   if (!d.name) return bad(res, 400, '请填写订阅名称');
   if (!d.amount_cents) return bad(res, 400, '请填写每期扣费金额');
+  require('../lib/account-policy').validate(ledgerId,'expense',d.account_id,null);
   d.account_id = validAccountId(ledgerId, d.account_id);
   d.category_id = validCategoryId(ledgerId, d.category_id);
   const info = run(
@@ -1083,6 +1085,7 @@ router.post('/subscriptions/:id', requireWrite, (req, res) => {
     next_charge_at: body.next_charge_at ?? old.next_charge_at,
   });
   if (!d.name || !d.amount_cents) return bad(res, 400, '名称与金额不能为空');
+  require('../lib/account-policy').validate(ledgerId,'expense',d.account_id,null);
   d.account_id = validAccountId(ledgerId, d.account_id);
   d.category_id = require('../lib/categories').forUpdate(ledgerId,d.category_id,old.category_id)?.id || null;
   run(

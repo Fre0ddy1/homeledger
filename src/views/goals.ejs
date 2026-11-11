@@ -43,7 +43,7 @@
           </form>
           <form method="post" action="/goals/<%= g.id %>/delete" data-confirm="删除储蓄目标「<%= g.name %>」？">
             <input type="hidden" name="_csrf" value="<%= csrf %>">
-            <button class="btn btn-sm btn-ghost">删除</button>
+            <button class="btn btn-sm btn-danger">删除</button>
           </form>
         </div>
       </div>
@@ -65,7 +65,7 @@
           <label>存入账户（可选）</label>
           <select name="account_id">
             <option value="">不指定</option>
-            <% form.accounts.forEach(function(a){ %><option value="<%= a.id %>"><%= a.icon %> <%= a.name %></option><% }); %>
+            <% form.accounts.filter(function(a){return a.transaction_types.split(',').includes('expense');}).forEach(function(a){ %><option value="<%= a.id %>"><%= a.icon %> <%= a.name %></option><% }); %>
           </select>
         </div>
         <div class="field"><label>目标日期（可选）</label><input type="date" name="target_date"></div>

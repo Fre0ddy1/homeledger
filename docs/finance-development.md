@@ -10,6 +10,12 @@
 - 本轮核销仅本位币、同币种；本位币汇率固定1，已有来源检查rate/amount_base_cents。钱按整数分计算，分币尾差进末期，模型不做算术。
 - 合同及卡片关联账户不能通过普通账户编辑、删除、停用或调整余额破坏引用。期初卡余额进入指定账单，不重复计消费；放款流水受合同保护。
 
+## 普通记账账户资格（2026-11-11）
+
+- src/lib/account-policy.js 是 UI/API/定期/订阅/导入共用的资格规则。普通日常收支排除 loan/receivable/payable，credit 保留消费与退款。普通 transfer 两端及投资、借钱本金排除负债账户，实际还款使用统一入口。
+- 受控金融服务以 createTransaction 第四个参数传入 channel:finance；不得从请求正文的 source/channel 推导权限。银行导入允许保留已经发生的金融转账和贷款入账，后续核销仍须公共金融服务。
+- GET /api/open/accounts 新增 transaction_types 数组；不删账户或历史查询范围。表单只保留仍符合当前类型的账户选择，切换类型后无效选择清空；SSR 原生下拉与增强下拉一致。
+
 ## 不变量与操作
 
 - operation_key是一次操作的身份；同key同请求复用结果，变参拒绝。更正付款使用新key，旧记录replaced_by保留追溯。来源只能由一份有效付款占用，撤销后可重新关联，恢复旧付款须再次检查占用及容量。
@@ -33,6 +39,6 @@ Agent技能的维护主副本在skills/homeledger-bookkeeping，openclaw-skill�
 
 ## 追加：记一笔还款及资金流
 
-用户2026-11-11批准两套口径、默认资金流；src/lib/cashflow.js用SQL计算cash/debit/virtual/prepaid资金账户的净影响，自有资金互转抵销，待确认与adjust排除。消费、预算、年度消费报告和AI消费查询保持原消费口径并标注。首页/报表可切换，资金流分组可查明细及分页，跨天日期按真实日期分组，日金额由SQL计算。API旧summary缺省保持消费，新调用显式basis=cashflow，两个对象均返回；详细接口同步技能参考。
+用户2026-11-11批准两套口径、默认资金流；src/lib/cashflow.js用SQL计算cash/debit/virtual/prepaid资金账户的净影响，自有资金互转抵销，待确认与adjust排除。消费、预算、年度消费报告和AI消费查询保持原消费口径并标注。首页两套口径同屏、报表可切换，资金流分组可查明细及分页，跨天日期按真实日期分组，日金额由SQL计算。API旧summary缺省保持消费，新调用显式basis=cashflow，两个对象均返回；详细接口同步技能参考。
 
 记一笔的repayment为界面操作，不是交易类型；统一还款对象/付款API复用payments.repay，不另写流水。所有详情/编辑页的返回入口通过navigation.js与三种layout公共组件生成；仅当前页已校验对象决定父级，外部/脚本back参数不采信，不能依赖history.back。

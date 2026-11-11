@@ -279,6 +279,7 @@ function importRecords({
         if(rec.type==='adjust'&&require('./finance/account-guard').bound(ledgerId,accountId))throw Error('金融账户不能通过导入调整余额，请在对应台账核对本金及实际流水');
         if(toAccountId)require('./finance/common').account(ledgerId,toAccountId);
         if(['transfer','invest_buy','invest_sell'].includes(rec.type)&&(!toAccountId||Number(toAccountId)===Number(accountId)))throw Error('转账与投资交易须有两个不同的当前账本账户');
+        require('./account-policy').validate(ledgerId,rec.type,accountId,toAccountId,'import');
         // 余额调整回导保留负金额（调减为带符号数），方向不能翻转；
         // 但 expense/income 直接以负数入库会把方向写反（txnEffects 对 expense 取 -a），钳回正数
         const signedAmount = rec.type === 'adjust' ? rec.amount_cents : Math.abs(rec.amount_cents);

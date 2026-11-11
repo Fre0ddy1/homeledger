@@ -12,6 +12,7 @@ function activate(d){
   if(!d.managed)run('UPDATE debts SET managed=1,opening_cents=?,initial_principal_cents=? WHERE id=?',d.balance_cents,d.principal_cents,d.id);
 }
 function validateAccount(lid,id,currency='CNY'){
+  require('./account-policy').validate(lid,'lend',id,null);
   const a=get('SELECT * FROM accounts WHERE ledger_id=? AND id=? AND is_archived=0',lid,Number(id));
   if(!a)throw Error('请选择当前账本有效账户');
   if(a.currency!==currency)throw Error('借钱和付款账户必须使用相同币种');

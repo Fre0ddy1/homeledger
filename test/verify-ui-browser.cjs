@@ -54,6 +54,7 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
       metrics.dashboardColumns=layout.columns;metrics.columnGaps=layout.gaps;
      }
      if(route==='/transactions')metrics.listWidth=await page.locator('.transactions-primary').evaluate(el=>el.getBoundingClientRect().width);
+     metrics.controlFontMismatches=await page.evaluate(()=>{const font=getComputedStyle(document.body).fontFamily;return [...document.querySelectorAll('button,input,select,textarea')].filter(el=>el.getClientRects().length&&!el.closest('.mono')&&getComputedStyle(el).fontFamily!==font).map(el=>el.tagName+'.'+el.className);});
      metrics.contentScrollers=await page.evaluate(findContentScrollers);
      if(/^\/finance\/(loans|cards|statements|payments)\/\d+$/.test(route)||/^\/(debts|accounts)\/\d+$/.test(route)||route.startsWith('/transactions/new'))metrics.hasReturn=await page.locator('.detail-navigation a').count()===1;
      if(['/accounts','/debts','/finance'].includes(route)){
@@ -207,6 +208,40 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   const naturalCards=results.filter(r=>r.cards).every(r=>r.cards.every(c=>c.slack<=80))&&results.every(r=>r.contentScrollers.length===0&&r.flatCategories!==false)&&variants.every(r=>r.contentScrollers.length===0);
   const boundedPages=results.filter(r=>r.width>=1920&&!['/','/more','/not-found'].includes(r.route.split('?')[0])).every(r=>r.pageWidth<=1465);
   const variantLayouts=variants.every(v=>!v.overflow&&v.visible!==false&&v.cardsFit!==false&&(!v.pageWidth||v.pageWidth<=1281));
+  const reportChecks=[];
+  for(const theme of ['light','dark'])for(const width of [390,820,1280,1920,2560]){
+    await page.setViewportSize({width,height:1080});await page.goto('http://127.0.0.1:5113/theme/'+theme);
+    const snapshots=[];
+    for(const basis of ['cashflow','consumption']){
+      await page.goto('http://127.0.0.1:5113/reports?basis='+basis+'&preset=custom&from=2020-02-02&to=2020-02-20&kind=income');
+      snapshots.push(await page.locator('.report-toolbar').evaluate(el=>({controls:[...el.querySelectorAll('a,input,button')].map(c=>{const s=getComputedStyle(c);return [c.tagName,c.type,s.fontFamily,s.fontSize,s.padding,s.borderRadius,s.minHeight];}),head:Math.round(el.querySelector('.report-toolbar-head').getBoundingClientRect().height)})));
+      const target=await page.locator('.report-toolbar [aria-label="统计口径"] a').filter({hasText:basis==='cashflow'?'消费收支':'资金流'}).getAttribute('href');
+      reportChecks.push({theme,width,basis,preserves:target.includes('from=2020-02-02')&&target.includes('to=2020-02-20')&&target.includes('kind=income')});
+      if([390,1920].includes(width))await page.screenshot({path:root+'/.screenshots/unified-'+theme+'-'+width+'-'+basis+'.png',fullPage:true,animations:'disabled'});
+    }
+    reportChecks.push({theme,width,same:JSON.stringify(snapshots[0])===JSON.stringify(snapshots[1])});
+  }
+  const reportToolbarConsistent=reportChecks.every(x=>x.same!==false&&x.preserves!==false);
+  await page.setViewportSize({width:390,height:844});
+  await page.locator('.report-range-form .hl-date-trigger').first().click();
+  const reportCalendarGrid=await page.locator('.report-range-form .hl-date-menu button.hl-date-cell').first().evaluate(el=>getComputedStyle(el).gridColumnStart==='auto'&&el.getBoundingClientRect().width<el.parentElement.getBoundingClientRect().width/5);
+  await page.keyboard.press('Escape');
+  const controlFontsConsistent=results.every(r=>r.controlFontMismatches.length===0);
+  await page.goto('http://127.0.0.1:5113/transactions/new');
+  const creditOption=await page.locator('#transaction-account-options').evaluate(el=>[...el.content.querySelectorAll('option')].find(o=>o.dataset.types?.split(',').includes('expense')&&!o.dataset.types.split(',').includes('transfer'))?.value);
+  if(!creditOption)throw Error('缺少信用卡测试账户');
+  async function chooseEnhanced(select,value) {
+    const index=await select.evaluate((el,id)=>[...el.options].findIndex(o=>o.value===id),value);
+    const wrapper=select.locator('..');
+    await wrapper.locator('.hl-select-trigger').click();
+    await wrapper.locator('.hl-select-opt').nth(index).click();
+  }
+  await chooseEnhanced(page.locator('#f-account'),creditOption);await page.locator('#txn-form [data-type=transfer]').click();
+  const transferFiltered=await page.locator('#f-account').evaluate((el,id)=>el.value===''&&![...el.options].some(o=>o.value===id),creditOption);
+  await page.locator('#txn-form [data-type=expense]').click();
+  const expenseCardRestored=await page.locator('#f-account').evaluate((el,id)=>el.value===''&&[...el.options].some(o=>o.value===id),creditOption);
+  await page.goto('http://127.0.0.1:5113/recurring');await chooseEnhanced(page.locator('#rec-items [name=item_account_id]').first(),creditOption);await chooseEnhanced(page.locator('#rec-items [name=item_type]').first(),'transfer');
+  const recurringAccountFiltered=await page.locator('#rec-items [name=item_account_id]').first().evaluate((el,id)=>el.value===''&&![...el.options].some(o=>o.value===id),creditOption);
   const darkAuth=await browser.newContext({colorScheme:'dark',viewport:{width:390,height:844}});const darkLogin=await darkAuth.newPage();
   await darkLogin.goto('http://127.0.0.1:5113/login');
   const darkLoginTheme=await darkLogin.locator('html').getAttribute('data-theme')==='dark';
@@ -215,7 +250,7 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   const kindTrigger=page.locator('.category-modal .hl-select-trigger').first();await kindTrigger.click();await page.locator('.category-modal .modal-title').click();await kindTrigger.click();
   const selectReopensAfterOutside=await kindTrigger.getAttribute('aria-expanded')==='true';await page.keyboard.press('Escape');await page.keyboard.press('Escape');
   const wideContentFills=results.filter(r=>r.route==='/'&&r.width>=1920).every(r=>Math.abs(r.contentWidth-(r.width-240))<=1)&&tabletDrawerLayout&&phoneDrawerLayout;
-  const interaction={returnNavigation,financeLayout,menuClosed,focusReturned,rowFocusReturned,trapped,drawerClosed,resizedDrawerReleased,reduced,minimal,coarseTablet,zoom200,wideContentFills,ledgerMenuFits,dashboardGaps,compactLedger,advancedCollapsed,inlineDetails,inspectorFocusReturned,inspectorResizeReleased,mobileDetails,mobileOrder,inspectorControlsReachable,glassMaterial,categorySoftDeleted,categoryRestored,compactPageSize,categoryKindSync,categoryModalFocusReturned,categoryDropdownEscape,recurringClonedSelect,categoryNoJs,naturalCards,boundedPages,variantLayouts,darkLoginTheme,selectReopensAfterOutside};
+  const interaction={reportCalendarGrid,reportToolbarConsistent,controlFontsConsistent,transferFiltered,expenseCardRestored,recurringAccountFiltered,returnNavigation,financeLayout,menuClosed,focusReturned,rowFocusReturned,trapped,drawerClosed,resizedDrawerReleased,reduced,minimal,coarseTablet,zoom200,wideContentFills,ledgerMenuFits,dashboardGaps,compactLedger,advancedCollapsed,inlineDetails,inspectorFocusReturned,inspectorResizeReleased,mobileDetails,mobileOrder,inspectorControlsReachable,glassMaterial,categorySoftDeleted,categoryRestored,compactPageSize,categoryKindSync,categoryModalFocusReturned,categoryDropdownEscape,recurringClonedSelect,categoryNoJs,naturalCards,boundedPages,variantLayouts,darkLoginTheme,selectReopensAfterOutside};
   const summary={financeJourneys,pages:results.length,failures:results.filter(x=>x.overflow||x.status>=500),errors,interaction,authChecks,variants,results};
   if(financeJourneys.some(j=>!j.reversed||!j.restored||!j.allocationVisible||j.overflow)||summary.failures.length||errors.length||Object.values(interaction).some(v=>!v)||authChecks.some(x=>x.overflow))process.exitCode=1;
 
