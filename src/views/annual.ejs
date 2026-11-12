@@ -75,7 +75,25 @@
   <% } %>
 </div>
 
-<div class="card mb16">
+<div class="report-workspace"><div class="report-column"><div class="card">
+    <div class="card-head"><h2>钱都花在哪</h2><span class="muted small">支出 Top <%= stats.topCats.length %> 分类</span></div>
+    <% if (stats.topCats.length) { %>
+      <%- charts.rankBars(stats.topCats.map(function (c) { return { name: c.name, value: yuan(c.total), color: '#4f7cff' }; }), { valueUnit: '' }) %>
+    <% } else { %><p class="muted small">这一年没有支出记录</p><% } %>
+  </div>
+<% if (stats.owners.length) { %>
+<div class="card">
+  <div class="card-head"><h2>为谁花的</h2><span class="muted small">归属人支出分布</span></div>
+  <% stats.owners.forEach(function (o) { %>
+    <div class="row between" style="padding:7px 0;border-bottom:1px dashed var(--border);gap:10px">
+      <span><b><%= o.label %></b> <span class="tiny muted"><%= o.cnt %> 笔</span></span>
+      <span class="amount expense small"><%= f(o.expense) %></span>
+    </div>
+    <div class="mt8"><%- charts.progressBar(Number(o.expense), ownerMax, { color: '#eb2f96' }) %></div>
+  <% }) %>
+</div>
+<% } %>
+</div><aside class="report-column"><div class="card mb16">
   <div class="card-head"><h2>每月收支</h2><span class="muted small">十二个月的起落</span></div>
   <div class="chart-box">
     <%- charts.barChart({
@@ -88,15 +106,7 @@
     }) %>
   </div>
 </div>
-
-<div class="grid grid-2 mb16">
-  <div class="card">
-    <div class="card-head"><h2>钱都花在哪</h2><span class="muted small">支出 Top <%= stats.topCats.length %> 分类</span></div>
-    <% if (stats.topCats.length) { %>
-      <%- charts.rankBars(stats.topCats.map(function (c) { return { name: c.name, value: yuan(c.total), color: '#4f7cff' }; }), { valueUnit: '' }) %>
-    <% } else { %><p class="muted small">这一年没有支出记录</p><% } %>
-  </div>
-  <div class="card">
+<div class="card">
     <div class="card-head"><h2>最常去的地方</h2><span class="muted small">按笔数排</span></div>
     <% if (stats.topMerchants.length) { %>
       <% stats.topMerchants.forEach(function (m) { %>
@@ -110,10 +120,7 @@
       <p class="muted small">这一年没有带商户名的支出</p>
     <% } %>
   </div>
-</div>
-
-<div class="grid grid-2 mb16">
-  <div class="card">
+<div class="card">
     <div class="card-head"><h2>最大的一笔</h2></div>
     <% if (stats.biggest) { %>
       <div class="amount expense" style="font-size:26px"><%= f(stats.biggest.amount) %></div>
@@ -121,8 +128,7 @@
         <%= stats.biggest.txn_date %> · <%= stats.biggest.merchant || stats.biggest.note || '未记商户' %>
       </div>
     <% } else { %><p class="muted small">没有支出记录</p><% } %>
-  </div>
-  <div class="card">
+  </div><div class="card">
     <div class="card-head"><h2>这一年的第一笔</h2></div>
     <% if (stats.first) { %>
       <div class="amount <%= stats.first.type === 'income' ? 'income' : 'expense' %>" style="font-size:26px"><%= f(stats.first.amount) %></div>
@@ -130,21 +136,7 @@
         <%= stats.first.txn_date %> · <%= stats.first.merchant || stats.first.note || '未记商户' %> · <%= stats.first.type === 'income' ? '收入' : '支出' %>
       </div>
     <% } else { %><p class="muted small">没有账目</p><% } %>
-  </div>
-</div>
-
-<% if (stats.owners.length) { %>
-<div class="card">
-  <div class="card-head"><h2>为谁花的</h2><span class="muted small">归属人支出分布</span></div>
-  <% stats.owners.forEach(function (o) { %>
-    <div class="row between" style="padding:7px 0;border-bottom:1px dashed var(--border);gap:10px">
-      <span><b><%= o.label %></b> <span class="tiny muted"><%= o.cnt %> 笔</span></span>
-      <span class="amount expense small"><%= f(o.expense) %></span>
-    </div>
-    <div class="mt8"><%- charts.progressBar(Number(o.expense), ownerMax, { color: '#eb2f96' }) %></div>
-  <% }) %>
-</div>
-<% } %>
+  </div></aside></div>
 
 <% } %>
 

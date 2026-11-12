@@ -51,13 +51,13 @@ router.get('/reports', auth.requireLogin, (req, res) => {
   const basis=req.query.basis==='cashflow'?'cashflow':req.query.basis==='consumption'||req.query.kind||req.query.top?'consumption':'cashflow';
   if(basis==='cashflow'){
     const flow=require('../lib/cashflow');
-    return res.render('cashflow-report',{title:'报表分析',activeNav:'reports',range,kind,basis,today:todayStr(),sum:flow.summary(ledgerId,range.start,range.end),trend:flow.monthly(ledgerId,12),outflow:flow.breakdown(ledgerId,range.start,range.end,'expense'),inflow:flow.breakdown(ledgerId,range.start,range.end,'income'),top:String(req.query.top||''),entries:req.query.top?flow.entries(ledgerId,range.start,range.end,{kind,group:req.query.top,page:req.query.page}):null,groupCashDates:flow.groupDates});
+    return res.render('cashflow-report',{title:'报表分析',activeNav:'reports',range,kind,basis,today:todayStr(),sum:flow.summary(ledgerId,range.start,range.end),trend:flow.monthly(ledgerId,12,range.end.slice(0,7)),analysis:flow.analysis(ledgerId,range.start,range.end),consumption:txn.summary(ledgerId,range.start,range.end),outflow:flow.breakdown(ledgerId,range.start,range.end,'expense'),inflow:flow.breakdown(ledgerId,range.start,range.end,'income'),top:String(req.query.top||''),entries:req.query.top?flow.entries(ledgerId,range.start,range.end,{kind,group:req.query.top,page:req.query.page}):null,groupCashDates:flow.groupDates});
   }
 
   const sum = txn.summary(ledgerId, range.start, range.end);
   const cats = txn.categoryBreakdown(ledgerId, range.start, range.end, kind);
   const subcats = txn.subcategoryBreakdown(ledgerId, range.start, range.end, kind, req.query.top || null);
-  const trend = txn.monthlyTrend(ledgerId, 12);
+  const trend = txn.monthlyTrend(ledgerId,12,new Date(range.end.slice(0,7)+'-15T12:00:00'));
   const days = txn.dailyBreakdown(ledgerId, range.start, range.end);
   const members = txn.memberBreakdown(ledgerId, range.start, range.end);
   const owners = txn.ownerBreakdown(ledgerId, range.start, range.end);

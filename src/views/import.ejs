@@ -1,3 +1,4 @@
+<div class="import-workspace">
 <div class="card">
   <div class="card-head">
     <h2>导入支付宝 / 微信账单</h2>
@@ -25,6 +26,7 @@
 </div>
 
 <div class="card"><div class="field"><label for="imp-default-account">未识别到账户时使用</label><select id="imp-default-account"><option value="">请选择；没有账户的行将拒绝导入</option><% accounts.forEach(a=>{ %><option value="<%= a.id %>"><%= a.name %></option><% }); %></select></div><p class="small muted">借钱本金不选收支分类。已记录的贷款或信用卡还款导入后，请在<a href="/finance">贷款与信用卡</a>预览来源并关联核销，避免再次创建付款。</p></div>
+</div>
 <div id="import-preview"></div>
 
 <div class="card">

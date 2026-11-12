@@ -25,3 +25,10 @@ for(const [word,name]of [['食堂','午餐'],['外卖','午餐'],['油','加油'
 }
 
 db.run("UPDATE transactions SET note=? WHERE merchant IN (?,?)", "长备注与详情阅读验证。".repeat(25), "UI 演示工资", "UI 演示奖金");
+
+// Existing income-category choices must survive editing all income-like types.
+const preservedCategory=db.get("SELECT id FROM categories WHERE kind='income' AND parent_id IS NOT NULL LIMIT 1").id;
+for(const type of ['interest','refund','reimburse']){
+ const merchant='分类保留-'+type;
+ if(!db.get('SELECT id FROM transactions WHERE ledger_id=1 AND merchant=?',merchant))txn.createTransaction(1,uid,{type,amount_cents:100,account_id:acc,category_id:preservedCategory,txn_date:db.todayStr(),merchant});
+}

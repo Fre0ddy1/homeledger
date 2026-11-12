@@ -18,6 +18,8 @@ description: 家账簿（HomeLedger）记账、亲友借钱、贷款与信用卡
 
 用户提到借出、借入、收还款、车贷、房贷、信用卡账单、分期或还款时，先读 [金融与定期记账 API](references/finance-api.md)。这些场景不走普通消费自动入账：本金没有收支分类，金融付款须核对本金、费用、账户及已有流水。用户要求记录或核销不等于授权银行扣款，API只维护账本。
 
+资金流分析API支持日均、笔均和可比期间，空基数为null；历史趋势可指定month，详见references/finance-api.md。
+
 首页同屏展示资金进出与消费收支；报表默认资金流，可切换消费口径。询问可用资金变化时读cashflow，询问消费与预算时读consumption，回执说明口径；还款操作用金融API，不把还款标成第二份消费。
 
 信用卡还款默认自动抵扣最早到期的已出账账单，余款后续出账自动抵扣；普通流程不需要confirm账单或传allocations。贷款正常还款可先读repayment-options的next_installment，再仅传实付总额；实付与计划不同须明确分项，不猜利息。手动指定账单仅用于用户明确要求的例外。
@@ -127,7 +129,7 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 | `GET /api/open/transactions/:id` | 单笔详情（含分账与截图） |
 | `GET /api/open/summary?from=&to=` | 区间收入/支出/结余 |
 | `GET /api/open/reports/categories?kind=expense&from=&to=` | 分类构成（`top=分类名` 下钻二级） |
-| `GET /api/open/reports/trend?months=6` | 近 N 月收支趋势 |
+| `GET /api/open/reports/trend?months=6` | 近 N 月收支趋势；可选 month=YYYY-MM 指定截止月 |
 | `GET /api/open/accounts` / `GET /api/open/accounts` 含净资产 | 账户余额、净资产 |
 | `GET /api/open/categories` / `GET /api/open/tags` | 有效分类扁平清单、标签；分类可用 `show=deleted` 查询已删除项 |
 | `GET /api/open/debts` / `GET /api/open/budgets` / `GET /api/open/goals` / `GET /api/open/subscriptions` / `GET /api/open/recurring` | 借钱台账 / 预算 / 目标 / 订阅 / 定期记账 |

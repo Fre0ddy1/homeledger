@@ -16,7 +16,7 @@
             <div><%= a.merchant || '—' %></div>
             <div class="tiny"><%= helpers.fmtDate(a.created_at) %> · <%= Math.round((a.size || 0) / 1024) %> KB</div>
             <div class="row mt8" style="gap:8px">
-              <% if (a.txn_id) { %><a href="/transactions/<%= a.txn_id %>/edit" class="tiny">查看记录</a><% } %>
+              <% if (a.txn_id) { %><a href="/transactions/<%= a.txn_id %>/edit" class="btn btn-sm">查看记录</a><% } %>
               <form method="post" action="/attachments/<%= a.id %>/delete" data-confirm="删除这张截图？">
                 <input type="hidden" name="_csrf" value="<%= csrf %>">
                 <button class="btn btn-sm btn-danger tiny">删除</button>

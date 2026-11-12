@@ -58,14 +58,14 @@
   <div>
     <div class="card sticky-side">
       <div class="card-head"><h2>新建定期记账</h2></div>
-      <form method="post" action="/recurring" id="rec-form">
+      <form method="post" action="/recurring" id="rec-form" class="compact-form">
         <input type="hidden" name="_csrf" value="<%= csrf %>">
         <div class="field">
           <label>名称</label>
           <input type="text" name="name" placeholder="例如：房租" required>
         </div>
 
-        <div class="field">
+        <div class="field field-wide" style="grid-column:1/-1">
           <label>金额明细</label>
           <template id="rec-account-options"><option value="">请选择账户</option><% form.accounts.forEach(a=>{ %><option value="<%= a.id %>" data-types="<%= a.transaction_types %>"><%= a.name %></option><% }); %></template>
           <div id="rec-items">

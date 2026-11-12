@@ -23,7 +23,7 @@
   var isExtra = moreTypes.some(function(x){ return x.key === cur; });
   var multiAccount = ['transfer','invest_buy','invest_sell'].includes(cur);
   var noCategory = ['transfer','adjust','lend','borrow','repay_receive','repay_pay','invest_buy','invest_sell'].includes(cur);
-  var catKind = cur === 'income' ? 'income' : 'expense';
+  var catKind = form.incomeTree.some(root=>Number(root.id)===Number(t.category_id)||root.children.some(c=>Number(c.id)===Number(t.category_id)))?'income':form.expenseTree.some(root=>Number(root.id)===Number(t.category_id)||root.children.some(c=>Number(c.id)===Number(t.category_id)))?'expense':['income','interest'].includes(cur)?'income':'expense';
   var amountValue = t.amount !== undefined ? t.amount : (t.amount_cents !== undefined && t.amount_cents !== null ? (t.amount_cents / 100).toFixed(2) : '');
   if (typeof amountValue === 'number') amountValue = amountValue.toFixed(2);
   var action = mode === 'edit' ? ('/transactions/' + t.id) : '/transactions';
@@ -37,7 +37,6 @@
   <template id="transaction-account-options"><option value="">请选择账户…</option><% form.accounts.forEach(function(a){ %><option value="<%= a.id %>" data-types="<%= a.transaction_types %>"><%= a.icon %> <%= a.name %>（<%= helpers.fmtAmount(a.balance_cents) %>）</option><% }); %></template>
   <input type="hidden" name="_csrf" value="<%= csrf %>">
   <input type="hidden" name="type" id="f-type" value="<%= cur %>">
-  <input type="hidden" name="category_id" id="f-category" value="<%= t.category_id || '' %>">
   <input type="hidden" name="back" value="<%= back %>">
 
   <div class="grid grid-main">
@@ -164,7 +163,7 @@
         </details>
       </div>
 
-      <div class="card">
+      <div class="card"><details <%= splitRows?.length?'open':'' %>><summary>AA 分账（选填）</summary>
         <div class="card-head">
           <h2>AA 分账</h2>
           <span class="muted small">可选，用于朋友聚餐/团队开销</span>
@@ -181,7 +180,7 @@
         <div class="row">
           <button type="button" class="btn btn-sm" id="add-split">＋ 添加分摊人</button>
           <button type="button" class="btn btn-sm btn-ghost" id="split-average">按人数均摊</button>
-        </div>
+        </div></details>
       </div>
     </div>
 
@@ -192,41 +191,34 @@
           <span class="muted small" id="cat-hint"><%= t.category_path && t.category_path !== '未分类' ? t.category_path : '未选择' %></span>
         </div>
 
-        <% ['expense','income'].forEach(function(kind){ %>
-          <div class="cat-section <%= kind === catKind ? '' : 'hidden' %>" data-cat-kind="<%= kind %>">
-            <div class="type-tabs mb12" style="background:transparent;border:0;padding:0;gap:6px">
-              <% (kind === 'expense' ? form.expenseTree : form.incomeTree).forEach(function(root, idx){ %>
-                <span class="chip cat-parent" data-target="root-<%= kind %>-<%= root.id %>" style="cursor:pointer"><%= root.icon %> <%= root.name %></span>
-              <% }); %>
+        <div class="field category-native"><label for="f-category">选择分类</label>
+          <select name="category_id" id="f-category" data-native>
+            <option value="">未分类</option>
+            <% if(t.category_id&&!form.expenseTree.concat(form.incomeTree).some(root=>Number(root.id)===Number(t.category_id)||root.children.some(c=>Number(c.id)===Number(t.category_id)))){ %><option value="<%= t.category_id %>" selected>保留当前分类（已删除）</option><% } %>
+            <% ['expense','income'].forEach(function(kind){ (kind==='expense'?form.expenseTree:form.incomeTree).forEach(function(root){ %>
+            <optgroup label="<%= root.name %>" data-kind="<%= kind %>" <%= kind!==catKind?'hidden':'' %>>
+              <% [root].concat(root.children).forEach(function(c){ %><option value="<%= c.id %>" data-path="<%= root.name+(c.id===root.id?'（不细分）':'/'+c.name) %>" <%= Number(t.category_id)===Number(c.id)?'selected':'' %>><%= root.name %> / <%= c.id===root.id?'不细分':c.name %></option><% }); %>
+            </optgroup><% }); }); %>
+          </select>
+        </div>
+        <div class="entry-category-picker hidden">
+          <div class="field"><label for="category-query">搜索分类</label><input id="category-query" type="search" placeholder="分类名称或完整路径" autocomplete="off"></div>
+          <div id="category-search-results" class="cat-grid hidden" aria-label="分类搜索结果"></div>
+          <p id="category-search-empty" class="help hidden">没有匹配的分类</p>
+          <% ['expense','income'].forEach(function(kind){const tree=kind==='expense'?form.expenseTree:form.incomeTree;const selectedRoot=tree.find(root=>Number(root.id)===Number(t.category_id)||root.children.some(c=>Number(c.id)===Number(t.category_id)))||tree[0]; %>
+          <div class="cat-section <%= kind===catKind?'':'hidden' %>" data-cat-kind="<%= kind %>">
+            <div class="category-parent-grid mb16" aria-label="一级分类">
+              <% tree.forEach(root=>{ %><button type="button" class="chip cat-parent <%= root===selectedRoot?'primary':'' %>" data-root="<%= root.id %>" aria-pressed="<%= root===selectedRoot %>"><%= root.icon %> <%= root.name %></button><% }); %>
             </div>
-            <div>
-              <% (kind === 'expense' ? form.expenseTree : form.incomeTree).forEach(function(root){ %>
-                <div class="cat-group mb12">
-                  <div class="small bold muted mb8"><%= root.icon %> <%= root.name %></div>
-                  <div class="cat-grid">
-                    <% root.children.forEach(function(c){ %>
-                      <a class="cat-item <%= Number(t.category_id) === Number(c.id) ? 'selected' : '' %>" href="#" data-id="<%= c.id %>" data-name="<%= c.name %>" data-path="<%= root.name %>/<%= c.name %>">
-                        <span class="ci"><%= c.icon %></span>
-                        <span><%= c.name %></span>
-                      </a>
-                    <% }); %>
-                    <a class="cat-item <%= Number(t.category_id) === Number(root.id) ? 'selected' : '' %>" href="#" data-id="<%= root.id %>" data-name="<%= root.name %>" data-path="<%= root.name %>（不细分）">
-                      <span class="ci">📁</span>
-                      <span>不细分</span>
-                    </a>
-                  </div>
-                </div>
-              <% }); %>
-            </div>
-          </div>
-        <% }); %>
+            <% tree.forEach(root=>{ %><div class="cat-group <%= root===selectedRoot?'':'hidden' %>" data-root="<%= root.id %>">
+              <h3 class="small muted mb12"><%= root.icon %> <%= root.name %></h3><div class="cat-grid">
+              <% root.children.concat([root]).forEach(c=>{const path=root.name+(c.id===root.id?'（不细分）':'/'+c.name); %><button type="button" class="cat-item <%= Number(t.category_id)===Number(c.id)?'selected':'' %>" data-id="<%= c.id %>" data-root="<%= root.id %>" data-kind="<%= kind %>" data-path="<%= path %>"><span class="ci"><%= c.icon %></span><span><%= c.id===root.id?'不细分':c.name %></span></button><% }); %>
+              </div></div><% }); %>
+          </div><% }); %>
+        </div>
       </div>
 
-      <div class="card">
-        <div class="row">
-          <button class="btn btn-primary btn-lg" type="submit" id="submit-btn" style="flex:1"><%= mode === 'edit' ? '保存修改' : '保存这一笔' %></button>
-          <a class="btn btn-lg" href="<%= back %>">取消</a>
-        </div>
+      <% if(mode==='edit'){ %><div class="card entry-record-meta">
         <% if (mode === 'edit') { %>
         <div class="mt12">
           <div class="kv"><span class="k">创建时间</span><span class="v mono"><%= helpers.fmtDateTime(t.created_at) %></span></div>
@@ -236,12 +228,14 @@
         <% } %>
       </div>
 
+      <% } %>
       <div class="notice small">
-        💡 提示：<b>转账</b>、<b>借贷</b>、<b>投资买卖</b> 不计入收支统计，只影响账户余额，这样统计口径更准确。
+        自有资金账户之间转账不重复统计；借钱、还款本金和投资转入影响资金流，消费收支单独统计。
       </div>
     </div>
   </div>
 </form>
+<% if(typeof embeddedEntry==='undefined'||!embeddedEntry){ %><%- include('partials/entry-actions',{entryFormId:'txn-form',entryLabel:mode==='edit'?'保存修改':'保存这一笔'}) %><% } %>
 
 <% if (mode === 'edit' && typeof images !== 'undefined' && images.length) { %>
   <div class="card" id="txn-images">
@@ -266,6 +260,7 @@
 (function(){
   // 类型相关的字段显隐（服务端已渲染，JS 仅做交互增强）
   var curType = <%- helpers.jsonForScript(cur) %>;
+  var firstType=true;
   function applyType(type){
     document.querySelectorAll('[data-for-type]').forEach(function(el){
       el.classList.toggle('hidden', !el.dataset.forType.split(',').includes(type));
@@ -275,7 +270,7 @@
     });
     var catWrap = document.getElementById('f-cat-wrap');
     if (catWrap) catWrap.classList.toggle('hidden', ['transfer','adjust','lend','borrow','repay_receive','repay_pay','invest_buy','invest_sell'].includes(type));
-    var kind = type === 'income' ? 'income' : 'expense';
+    var kind=firstType?<%- helpers.jsonForScript(catKind) %>:['income','interest'].includes(type)?'income':'expense';firstType=false;
     document.querySelectorAll('.cat-section').forEach(function(el){
       el.classList.toggle('hidden', el.dataset.catKind !== kind);
     });
@@ -302,17 +297,6 @@
     btn.addEventListener('click', function(){
       document.querySelectorAll('.chip[data-type]').forEach(function(b){ b.classList.toggle('primary', b === btn); });
       applyType(btn.dataset.type);
-    });
-  });
-  // 分类父级跳转
-  document.querySelectorAll('.cat-parent').forEach(function(p){
-    p.addEventListener('click', function(e){
-      e.preventDefault();
-      var name = p.textContent.trim().replace(/^\S+\s*/, '');
-      document.querySelectorAll('.cat-group').forEach(function(g){
-        var head = g.querySelector('.small.bold');
-        if (head && head.textContent.indexOf(name) >= 0) g.scrollIntoView({ behavior:'smooth', block:'start' });
-      });
     });
   });
 })();

@@ -75,7 +75,7 @@ function barChart({ labels = [], series = [], height = 240, width = 720, showLeg
       }
       x0 += barW + gap;
     });
-    s += `<text x="${cx.toFixed(1)}" y="${H - 10}" font-size="11" fill="${C.axis}" text-anchor="middle">${esc(lab)}</text>`;
+    if (i % Math.ceil(n / 12) === 0 || i === n - 1) s += `<text x="${cx.toFixed(1)}" y="${H - 10}" font-size="11" fill="${C.axis}" text-anchor="middle">${esc(lab)}</text>`;
   });
   // 图例
   if (showLegend) {
@@ -134,7 +134,7 @@ function lineChart({ labels = [], series = [], height = 220, fill = true, valueU
     });
   });
   labels.forEach((lab, i) => {
-    if (n > 14 && i % 2 !== 0 && i !== n - 1) return;
+    if (i % Math.ceil(n / 12) !== 0 && i !== n - 1) return;
     s += `<text x="${xAt(i).toFixed(1)}" y="${H - 10}" font-size="11" fill="${C.axis}" text-anchor="middle">${esc(lab)}</text>`;
   });
   let lx = padL;
