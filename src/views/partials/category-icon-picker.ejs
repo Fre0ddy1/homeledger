@@ -1,5 +1,15 @@
 <%
- const iconChoices=[['🍽️','餐饮'],['☕','咖啡'],['🚗','交通'],['🛍️','购物'],['🏠','居家'],['💊','医疗'],['📚','教育'],['🎮','娱乐'],['🎁','礼物'],['💰','收入'],['💳','金融'],['🏷️','其他'],['🥣','早餐'],['🍜','用餐'],['🧋','饮品'],['🍎','水果'],['🚇','地铁'],['✈️','旅行'],['⛽','加油'],['👕','服饰'],['🧴','日用'],['📱','数码'],['🌐','网络'],['💡','电费'],['💧','水费'],['🛠️','维修'],['🐾','宠物'],['👶','育儿'],['🏋️','运动'],['🎬','影音'],['🏦','银行'],['📈','投资'],['🧾','账单'],['💼','工作'],['🎉','庆祝'],['🪙','储蓄']];
+ const iconChoices=[
+   ['🍽️','餐饮'],['☕','咖啡'],['🚗','交通'],['🛍️','购物'],['🏠','居家'],['💊','医疗'],['📚','教育'],['🎮','娱乐'],['🎁','礼物'],['💰','收入'],['💳','金融'],['🏷️','其他'],
+   ['🥣','早餐'],['🍜','用餐'],['🧋','饮品'],['🍎','水果'],['🚇','地铁'],['✈️','旅行'],['⛽','加油'],['👕','服饰'],['🧴','日用'],['📱','数码'],['🌐','网络'],['💡','电费'],
+   ['💧','水费'],['🛠️','维修'],['🐾','宠物'],['👶','育儿'],['🏋️','运动'],['🎬','影音'],['🏦','银行'],['📈','投资'],['🧾','账单'],['💼','工作'],['🎉','庆祝'],['🪙','储蓄'],
+   ['🍚','米饭'],['🍱','便当'],['🥟','饺子'],['🍲','火锅'],['🍔','快餐'],['🍕','披萨'],['🍣','寿司'],['🥗','沙拉'],['🍰','甜点'],['🍦','冰淇淋'],['🍞','面包'],['🥛','牛奶'],
+   ['🚕','打车'],['🚌','公交'],['🚲','骑行'],['🛵','电动车'],['🚄','高铁'],['🅿️','停车'],['🛣️','路桥费'],['🚢','轮船'],
+   ['🔥','燃气'],['🧹','保洁'],['🧺','洗衣'],['🛋️','家具'],['🛏️','床品'],['🔑','房租'],['🏢','物业'],['🏡','房屋'],
+   ['👟','鞋履'],['💄','美妆'],['💇','理发'],['🧸','玩具'],['🍼','奶粉'],['🐶','狗狗'],['🐱','猫咪'],['🦷','牙科'],['🏥','医院'],['🩺','体检'],
+   ['✏️','文具'],['🎓','学费'],['🎨','绘画'],['🎵','音乐'],['🏊','游泳'],['⚽','足球'],['🏕️','露营'],['🏖️','度假'],['🏨','住宿'],['🎟️','门票'],
+   ['💵','工资'],['🧧','红包'],['↩️','退款'],['🎯','目标'],['🧮','税费'],['🛡️','保险'],['🤝','人情'],['❤️','公益'],['🧑‍💻','兼职'],['📦','快递'],['📮','邮寄'],['📅','定期']
+ ];
  const currentIcon=iconValue||'🏷️';
 %>
 <div class="field category-icon-field category-icon-picker" data-fallback-icon="<%= currentIcon %>">
@@ -8,7 +18,7 @@
   <datalist id="<%= fieldId %>-options"><% iconChoices.forEach(([icon,label])=>{ %><option value="<%= icon %>" label="<%= label %>"></option><% }); %></datalist>
   <p class="help" id="<%= fieldId %>-hint">可输入或粘贴自定义表情</p>
   <div class="category-icon-choices hidden">
-    <div class="category-icon-grid" role="group" aria-label="常用分类图标"><% iconChoices.slice(0,12).forEach(([icon,label])=>{ %><button type="button" class="category-icon-choice" data-icon-choice="<%= icon %>" aria-label="选择<%= label %>图标" title="<%= label %>" aria-pressed="<%= currentIcon===icon %>"><%= icon %></button><% }); %></div>
-    <details class="category-icon-more"><summary>更多图标</summary><div class="category-icon-grid" role="group" aria-label="更多分类图标"><% iconChoices.slice(12).forEach(([icon,label])=>{ %><button type="button" class="category-icon-choice" data-icon-choice="<%= icon %>" aria-label="选择<%= label %>图标" title="<%= label %>" aria-pressed="<%= currentIcon===icon %>"><%= icon %></button><% }); %></div></details>
+    <div class="category-icon-grid" role="group" aria-label="常用分类图标"><% iconChoices.slice(0,24).forEach(([icon,label])=>{ %><button type="button" class="category-icon-choice" data-icon-choice="<%= icon %>" aria-label="选择<%= label %>图标" title="<%= label %>" aria-pressed="<%= currentIcon===icon %>"><%= icon %></button><% }); %></div>
+    <details class="category-icon-more"><summary>更多图标</summary><div class="category-icon-grid" role="group" aria-label="更多分类图标"><% iconChoices.slice(24).forEach(([icon,label])=>{ %><button type="button" class="category-icon-choice" data-icon-choice="<%= icon %>" aria-label="选择<%= label %>图标" title="<%= label %>" aria-pressed="<%= currentIcon===icon %>"><%= icon %></button><% }); %></div></details>
   </div>
 </div>
