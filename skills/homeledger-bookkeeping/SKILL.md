@@ -108,7 +108,7 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 
 - `GET /api/open/categories`：返回当前有效分类的扁平清单，含 `id/parent_id/path/kind`；新记账从此清单选择。
 - `GET /api/open/categories?show=deleted`：查询已删除分类；不要依赖此清单一定有 `path`，用名称、类型与父级 ID 识别。
-- `POST /api/open/categories/:id`：修改名称、图标、颜色，例如 `{"name":"咖啡时光","icon":"☕","color":"#99704b"}`。
+- `POST /api/open/categories/:id`：修改名称、图标、颜色；已有二级分类可传 `parent_id` 调整到当前账本同类型、未删除的一级分类，例如 `{"parent_id":123}`。省略则保留父级；不支持升降层级，已删除分类或原一级须先恢复。保留分类身份与历史引用（首次内置修改按既有账本副本映射），历史一级汇总随之改变；返回的有效ID及父级可用GET分类清单核对。
 - `POST /api/open/categories/:id/delete`：软删除；历史账单与分类引用保留。删除一级分类会隐藏其子分类。
 - `POST /api/open/categories/:id/restore`：恢复；子分类须先恢复父级。恢复父级不会撤销子分类各自的删除状态。
 

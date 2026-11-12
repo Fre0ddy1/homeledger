@@ -362,8 +362,9 @@ body:has(.entry-actionbar) .ai-fab { bottom:112px; }
 .category-editor-modal { width: min(480px,calc(100vw - 32px)); max-width: 480px; }
 .category-modal { overflow-y: auto; align-items: start; }
 .category-modal .category-editor-modal { margin-block: auto; max-height: none; overflow: visible; }
-.category-editor-modal .category-edit-form { grid-template-columns: minmax(0,1fr) 80px 64px; padding: 18px 0; background: transparent; }
-.category-edit-form > .field:first-of-type { grid-column: 1 / -1; }
+.category-edit-form { grid-template-columns:80px 64px minmax(0,1fr); }
+.category-editor-modal .category-edit-form { grid-template-columns:80px 64px minmax(0,1fr); padding: 18px 0; background: transparent; }
+.category-edit-form > .field:first-of-type, .category-edit-form > .category-parent-field, .category-edit-form > button { grid-column:1/-1; }
 .category-editor-modal .category-edit-form > button { min-height: 44px; }
 .category-editor-modal .category-edit-form .field { margin-bottom: 0; }
 .category-editor-modal .category-delete { margin: 14px 0 0; color: var(--expense); }
