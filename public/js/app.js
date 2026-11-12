@@ -1708,6 +1708,26 @@
     }, { passive: true });
   }
 
+  function initCategoryIcons() {
+    $$('.category-icon-picker').forEach(picker=>{
+      const input=$('[name=icon]',picker),preview=$('.category-icon-preview',picker),choices=$('.category-icon-choices',picker);
+      function render(){
+        const value=input.value||picker.dataset.fallbackIcon;
+        preview.textContent=value;
+        $$('[data-icon-choice]',picker).forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.iconChoice===value)));
+      }
+      choices.classList.remove('hidden');
+      choices.addEventListener('click',event=>{
+        const button=event.target.closest('[data-icon-choice]');if(!button)return;
+        input.value=button.dataset.iconChoice;
+        input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));
+      });
+      input.addEventListener('input',render);input.addEventListener('change',render);
+      picker.closest('form').addEventListener('reset',()=>queueMicrotask(()=>{render();$$('.category-icon-more',picker).forEach(details=>details.open=false);}));
+      render();
+    });
+  }
+
   function initCategoryWorkbench() {
     $$('.category-entry,.category-create-disclosure').forEach(entry => {
       const trigger = entry.querySelector(':scope > summary');
@@ -1731,8 +1751,11 @@
         mask.addEventListener('click',e=>{if(e.target===mask)close();}); document.addEventListener('keydown',onKey);
       });
     });
-    const focusId = $('.category-workspace')?.dataset.focusCategory;
-    if (focusId) { const summary = $('.category-entry[data-category-id="'+focusId+'"] > summary'); if(summary)summary.focus(); }
+    const workspace=$('.category-workspace'),focusId=workspace?.dataset.focusCategory;
+    if (focusId) {
+      const target=workspace.dataset.sorting==='true'?document.getElementById('category-order-'+focusId):$('.category-entry[data-category-id="'+focusId+'"] > summary');
+      if(target)target.focus();
+    }
     const kind = $('#new-cat-kind'), parent = $('#new-cat-parent');
     if (kind && parent) {
       const update = () => {
@@ -1768,6 +1791,7 @@
     initCurrencySymbol();
     enhanceSelects();
     initCategoryWorkbench();
+    initCategoryIcons();
     // 记一笔/编辑页本身就是记账界面，AI 悬浮球会遮挡底部按钮，不出现
     if ($('#txn-form')) { const f = $('#aiFab'); if (f) f.remove(); }
   });

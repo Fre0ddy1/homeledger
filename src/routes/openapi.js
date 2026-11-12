@@ -386,7 +386,7 @@ router.get('/accounts', (req, res) => {
 
 router.get('/categories', (req, res) => {
   const { ledgerId } = req.openAuth;
-  ok(res, { categories: (req.query.show === 'deleted' ? require('../lib/categories').list(ledgerId,null,true).filter(c=>c.is_archived) : fd.flatCategories(ledgerId)).map((c) => ({ id: c.id, name: c.name, path: c.path, kind: c.kind, icon: c.icon, color: c.color, parent_id: c.parent_id, is_system: !!c.is_system })) });
+  ok(res, { categories: (req.query.show === 'deleted' ? require('../lib/categories').list(ledgerId,null,true).filter(c=>c.is_archived) : fd.flatCategories(ledgerId)).map((c) => ({ id: c.id, name: c.name, path: c.path, kind: c.kind, icon: c.icon, color: c.color, parent_id: c.parent_id, sort_order: c.sort_order, is_system: !!c.is_system })) });
 });
 
 router.get('/tags', (req, res) => {
@@ -838,6 +838,13 @@ function apiCategoryAction(action,label) {
   };
 }
 router.post('/categories',requireWrite,apiCategoryAction((lid,req)=>require('../lib/categories').create(lid,req.body||{}),'create'));
+router.post('/categories/reorder',requireWrite,(req,res)=>{
+  try {
+    const ids=require('../lib/categories').reorder(req.openAuth.ledgerId,req.body||{});
+    auth.audit(req,'api.category.reorder',{ledgerId:req.openAuth.ledgerId,entity:'category',detail:JSON.stringify(ids)});
+    ok(res,{ids});
+  } catch(e) { bad(res,400,e.message); }
+});
 router.post('/categories/:id',requireWrite,apiCategoryAction((lid,req)=>require('../lib/categories').update(lid,req.params.id,req.body||{}),'update'));
 router.post('/categories/:id/delete',requireWrite,apiCategoryAction((lid,req)=>require('../lib/categories').archive(lid,req.params.id),'delete'));
 router.post('/categories/:id/restore',requireWrite,apiCategoryAction((lid,req)=>require('../lib/categories').restore(lid,req.params.id),'restore'));

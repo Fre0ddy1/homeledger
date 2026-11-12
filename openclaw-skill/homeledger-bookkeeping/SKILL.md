@@ -106,9 +106,10 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 
 内置分类与自建分类都可由当前账本的可写成员修改。先查询分类清单并按名称、收支类型及父级确认对象；不能把 `is_system: true` 当作只读标记。
 
-- `GET /api/open/categories`：返回当前有效分类的扁平清单，含 `id/parent_id/path/kind`；新记账从此清单选择。
+- `GET /api/open/categories`：返回当前有效分类的扁平清单，含 `id/parent_id/path/kind/sort_order`；新记账从此清单选择。
 - `GET /api/open/categories?show=deleted`：查询已删除分类；不要依赖此清单一定有 `path`，用名称、类型与父级 ID 识别。
 - `POST /api/open/categories/:id`：修改名称、图标、颜色；已有二级分类可传 `parent_id` 调整到当前账本同类型、未删除的一级分类，例如 `{"parent_id":123}`。省略则保留父级；不支持升降层级，已删除分类或原一级须先恢复。保留分类身份与历史引用（首次内置修改按既有账本副本映射），历史一级汇总随之改变；返回的有效ID及父级可用GET分类清单核对。
+- `POST /api/open/categories/reorder`：设置同一组的完整有效分类顺序。一级例如 `{"kind":"expense","ids":[12,11,13],"expected_ids":[11,12,13]}`（ID仅示意，必须来自GET）；二级再传 `parent_id`，ids为该父级下全部有效二级ID。先GET清单并按kind/parent_id分组，按期望顺序提交ids，同时传expected_ids（操作前的完整顺序）以避免覆盖其他页面更新；不能遗漏/重复/混入其他组或已删除ID。成员变化或提供的expected_ids过期返回400，重新获取；目标顺序已等于当前时重试仍成功。API省略expected_ids表示显式替换当前组顺序，界面始终携带该字段；只读返回403。相同顺序重复提交幂等。旧模板ID会映射当前账本副本，返回`ids`为有效ID；GET清单和记账选择顺序同步，报表排行仍按金额。
 - `POST /api/open/categories/:id/delete`：软删除；历史账单与分类引用保留。删除一级分类会隐藏其子分类。
 - `POST /api/open/categories/:id/restore`：恢复；子分类须先恢复父级。恢复父级不会撤销子分类各自的删除状态。
 

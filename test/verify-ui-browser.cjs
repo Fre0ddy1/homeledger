@@ -183,9 +183,9 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
    for(const route of ['/','/join/ui-qa-invite']){await authPage.goto('http://127.0.0.1:5113'+route);await inspect(route==='/'?'no-ledger':'join',width);}
   }
   await page.setViewportSize({width:1280,height:900});await page.goto('http://127.0.0.1:5113/categories');
-  let editor=page.locator('.category-entry').first();await editor.locator('summary').click();await page.locator('.category-modal [name=name]').fill('浏览器恢复分类');
-  await Promise.all([page.waitForNavigation(),page.locator('.category-modal .category-edit-form button').click()]);
-  editor=page.locator('.category-entry').filter({has:page.locator('summary',{hasText:'浏览器恢复分类'})}).first();await editor.locator('summary').click();await page.locator('.category-modal .category-delete').click();
+  let editor=page.locator('.category-entry').first();await editor.locator(':scope > summary').click();await page.locator('.category-modal [name=name]').fill('浏览器恢复分类');
+  await Promise.all([page.waitForNavigation(),page.locator('.category-modal .category-edit-form button[type=submit]').click()]);
+  editor=page.locator('.category-entry').filter({has:page.locator('summary',{hasText:'浏览器恢复分类'})}).first();await editor.locator(':scope > summary').click();await page.locator('.category-modal .category-delete').click();
   await Promise.all([page.waitForNavigation(),page.locator('.modal [data-act=ok]').click()]);
   await page.goto('http://127.0.0.1:5113/categories?show=deleted');
   const deleted=page.locator('.category-deleted-row').filter({hasText:'浏览器恢复分类'});const categorySoftDeleted=await deleted.count()===1;
@@ -206,6 +206,10 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   const categoryNoJs=await noJsPage.locator('.category-edit-form').first().isVisible();
   const categoryParentChecks=await require('./ui-category-parent-checks.cjs')(browser,context,'http://127.0.0.1:5113');
   const categoryParentChanged=categoryParentChecks.every(check=>check.changed&&check.returned&&!check.overflow);
+  const categoryIconChecks=await require('./ui-category-icon-checks.cjs')(browser,context,'http://127.0.0.1:5113');
+  const categoryIcons=categoryIconChecks.every(check=>check.pass);
+  const categorySortChecks=await require('./ui-category-sort-checks.cjs')(browser,context,'http://127.0.0.1:5113');
+  const categorySorting=categorySortChecks.every(check=>check.pass);
   const preservedCategories=[];
   for(const checkPage of [noJsPage,page])for(const row of financeIds.categoryEdits){
     await checkPage.goto('http://127.0.0.1:5113/transactions/'+row.id+'/edit');
@@ -294,8 +298,8 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   const wideContentFills=results.filter(r=>r.route==='/'&&r.width>=1920).every(r=>Math.abs(r.contentWidth-(r.layoutViewport-240))<=1)&&tabletDrawerLayout&&phoneDrawerLayout;
   const adaptiveChecks=[];for(const theme of ['light','dark']){await page.goto('http://127.0.0.1:5113/theme/'+theme);adaptiveChecks.push(...(await require('./ui-workspace-checks.cjs')(page,'http://127.0.0.1:5113')).map(check=>({...check,theme})));}
   const adaptiveWorkspace=adaptiveChecks.every(check=>check.pass);
-  const interaction={categoryParentChanged,categoryEditPreserved,adaptiveWorkspace,foreignAmountNotCopied,entryStable,reportCalendarGrid,reportToolbarConsistent,controlFontsConsistent,transferFiltered,expenseCardRestored,recurringAccountFiltered,returnNavigation,financeLayout,menuClosed,focusReturned,rowFocusReturned,trapped,drawerClosed,resizedDrawerReleased,reduced,minimal,coarseTablet,zoom200,wideContentFills,ledgerMenuFits,dashboardGaps,compactLedger,advancedCollapsed,inlineDetails,inspectorFocusReturned,inspectorResizeReleased,mobileDetails,mobileOrder,inspectorControlsReachable,glassMaterial,categorySoftDeleted,categoryRestored,compactPageSize,categoryKindSync,categoryModalFocusReturned,categoryDropdownEscape,recurringClonedSelect,categoryNoJs,naturalCards,boundedPages,variantLayouts,darkLoginTheme,selectReopensAfterOutside};
-  const summary={categoryParentChecks,adaptiveChecks,financeJourneys,pages:results.length,failures:results.filter(x=>x.overflow||x.status>=500),errors,interaction,authChecks,variants,results};
+  const interaction={categorySorting,categoryIcons,categoryParentChanged,categoryEditPreserved,adaptiveWorkspace,foreignAmountNotCopied,entryStable,reportCalendarGrid,reportToolbarConsistent,controlFontsConsistent,transferFiltered,expenseCardRestored,recurringAccountFiltered,returnNavigation,financeLayout,menuClosed,focusReturned,rowFocusReturned,trapped,drawerClosed,resizedDrawerReleased,reduced,minimal,coarseTablet,zoom200,wideContentFills,ledgerMenuFits,dashboardGaps,compactLedger,advancedCollapsed,inlineDetails,inspectorFocusReturned,inspectorResizeReleased,mobileDetails,mobileOrder,inspectorControlsReachable,glassMaterial,categorySoftDeleted,categoryRestored,compactPageSize,categoryKindSync,categoryModalFocusReturned,categoryDropdownEscape,recurringClonedSelect,categoryNoJs,naturalCards,boundedPages,variantLayouts,darkLoginTheme,selectReopensAfterOutside};
+  const summary={categorySortChecks,categoryIconChecks,categoryParentChecks,adaptiveChecks,financeJourneys,pages:results.length,failures:results.filter(x=>x.overflow||x.status>=500),errors,interaction,authChecks,variants,results};
   if(financeJourneys.some(j=>!j.reversed||!j.restored||!j.allocationVisible||j.overflow)||summary.failures.length||errors.length||Object.values(interaction).some(v=>!v)||authChecks.some(x=>x.overflow))process.exitCode=1;
 
   fs.writeFileSync(root+'/.screenshots/qa.json',JSON.stringify(summary,null,2));

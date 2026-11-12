@@ -22,7 +22,7 @@ function list(ledgerId, kind = null, includeArchived = false) {
     LEFT JOIN categories p ON p.id=c.parent_id
     WHERE (c.ledger_id=? OR (c.ledger_id IS NULL AND NOT EXISTS
       (SELECT 1 FROM category_copies m WHERE m.ledger_id=? AND m.source_id=c.id)))
-    ORDER BY c.kind DESC, COALESCE(p.sort_order,c.sort_order),c.sort_order,c.id`, ledgerId, ledgerId);
+    ORDER BY c.kind DESC, COALESCE(p.sort_order,c.sort_order),COALESCE(p.id,c.id),CASE WHEN c.parent_id IS NULL THEN 0 ELSE 1 END,c.sort_order,c.id`, ledgerId, ledgerId);
   return rows.filter(c => (!kind || c.kind === kind) && (includeArchived || (!c.is_archived && !c.parent_archived)));
 }
 function materialize(ledgerId) {
@@ -97,6 +97,29 @@ function update(ledgerId,id,body) {
     return c.id;
   });
 }
+function reorder(ledgerId,body) {
+  return tx(() => {
+    if (!['expense','income'].includes(body.kind) || !Array.isArray(body.ids) || !body.ids.length) throw new Error('请提交同一分组的完整分类顺序');
+    const hasParent=body.parent_id!==undefined && body.parent_id!==null && body.parent_id!=='';
+    if (hasParent) {
+      const parent=find(ledgerId,body.parent_id,true);
+      if (!parent || parent.parent_id || parent.kind!==body.kind) throw new Error('请选择当前账本同类型的有效一级分类');
+    }
+    materialize(ledgerId);
+    const parentId=hasParent?resolveId(ledgerId,body.parent_id):null;
+    const siblings=list(ledgerId,body.kind).filter(c=>Number(c.parent_id||0)===Number(parentId||0));
+    const ids=body.ids.map(id=>resolveId(ledgerId,id));
+    if (ids.some(id=>!id) || new Set(ids).size!==ids.length || ids.length!==siblings.length || siblings.some(c=>!ids.includes(Number(c.id)))) throw new Error('分类列表已变化或包含其他分组，请刷新后重新排序');
+    if (Object.prototype.hasOwnProperty.call(body,'expected_ids')) {
+      if (!Array.isArray(body.expected_ids)) throw new Error('操作前顺序无效，请刷新后重新排序');
+      const expected=body.expected_ids.map(id=>resolveId(ledgerId,id)),current=siblings.map(c=>Number(c.id));
+      if (expected.length!==current.length || new Set(expected).size!==expected.length || current.some(id=>!expected.includes(id))) throw new Error('操作前顺序无效，请刷新后重新排序');
+      if (expected.join(',')!==current.join(',') && ids.join(',')!==current.join(',')) throw new Error('分类顺序已被修改，请刷新后重新排序');
+    }
+    ids.forEach((id,index)=>run('UPDATE categories SET sort_order=? WHERE id=? AND ledger_id=?',index,id,ledgerId));
+    return ids;
+  });
+}
 function archive(ledgerId,id) {
   return tx(() => { const c=mutable(ledgerId,id); run('UPDATE categories SET is_archived=1,deleted_at=COALESCE(deleted_at,?) WHERE id=? AND ledger_id=?',nowStr(),c.id,ledgerId); return c.id; });
 }
@@ -107,4 +130,4 @@ function restore(ledgerId,id) {
     run('UPDATE categories SET is_archived=0,deleted_at=NULL WHERE id=? AND ledger_id=?',c.id,ledgerId); return c.id;
   });
 }
-module.exports={resolveId,find,forUpdate,list,materialize,create,update,archive,restore};
+module.exports={resolveId,find,forUpdate,list,materialize,create,update,reorder,archive,restore};
