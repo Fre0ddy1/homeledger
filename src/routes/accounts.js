@@ -200,13 +200,14 @@ router.get('/categories', auth.requireLogin, (req, res) => {
   const activeTree=categoryKind==='income'?decoratedIncome:decoratedExpense;
   const selectedId=categories.resolveId(ledgerId,req.query.group);
   const selectedGroup=activeTree.find(c=>Number(c.id)===selectedId)||activeTree[0]||null;
-  const categorySearch=String(req.query.q||'').trim().slice(0,40);
-  const categoryBack='/categories?kind='+categoryKind+(selectedGroup?'&group='+selectedGroup.id:'');
+  const sorting=req.query.sort==='1' && auth.canWrite(res.locals.ledger.role);
+  const categorySearch=sorting?'':String(req.query.q||'').trim().slice(0,40);
+  const categoryBack='/categories?kind='+categoryKind+(selectedGroup?'&group='+selectedGroup.id:'')+(sorting?'&sort=1':'');
   res.render('categories', {
     title: '分类管理', activeNav: 'categories',
     expenseTree: decoratedExpense,
     incomeTree: decoratedIncome,
-    categoryKind, activeTree, selectedGroup, categorySearch, categoryBack,
+    categoryKind, activeTree, selectedGroup, categorySearch, categoryBack, sorting,
     categoryFocus: categories.resolveId(ledgerId,req.query.focus),
     deletedCategories: categories.list(ledgerId, null, true).filter(c => c.is_archived),
     showDeleted: req.query.show === 'deleted',
@@ -221,22 +222,28 @@ function categoryAction(action, message) {
       const id=action(ledgerId,req);
       changedId=id;
       auth.audit(req,'category.'+message,{entity:'category',entityId:id,ledgerId});
-      res.flash('success',message==='delete'?'分类已移入已删除分类，历史账单保留':message==='restore'?'分类已恢复':'分类已保存');
+      res.flash('success',message==='delete'?'分类已移入已删除分类，历史账单保留':message==='restore'?'分类已恢复':message==='reorder'?'分类顺序已保存':'分类已保存');
     } catch(e) { res.flash('error',e.message); }
     const back=String(req.body.return_to||'');
     const target=/^\/categories(?:\?|$)/.test(back)?back:(message==='restore'?'/categories?show=deleted':'/categories');
     const destination=new URL(target,'http://localhost');
-    if(changedId && (message==='create'||message==='update')) {
+    if(changedId && ['create','update','reorder'].includes(message)) {
       destination.searchParams.set('focus',String(changedId));
       const c=categories.find(ledgerId,changedId);
       destination.searchParams.set('kind',c.kind);
       destination.searchParams.set('group',String(c.parent_id||c.id));
       destination.searchParams.delete('q');
+      if(message==='reorder')destination.hash='category-order-'+changedId;
     }
-    res.redirect(destination.pathname+destination.search);
+    res.redirect(destination.pathname+destination.search+destination.hash);
   };
 }
 router.post('/categories',auth.requireLogin,auth.requireLedgerWrite,categoryAction((lid,req)=>categories.create(lid,req.body),'create'));
+router.post('/categories/reorder',auth.requireLogin,auth.requireLedgerWrite,categoryAction((lid,req)=>{
+  const ids=categories.reorder(lid,{kind:req.body.kind,parent_id:req.body.parent_id,ids:JSON.parse(req.body.ids||'null'),expected_ids:JSON.parse(req.body.expected_ids||'null')});
+  const focus=categories.resolveId(lid,req.body.focus_id);
+  return ids.includes(focus)?focus:ids[0];
+},'reorder'));
 router.post('/categories/:id',auth.requireLogin,auth.requireLedgerWrite,categoryAction((lid,req)=>categories.update(lid,req.params.id,req.body),'update'));
 router.post('/categories/:id/delete',auth.requireLogin,auth.requireLedgerWrite,categoryAction((lid,req)=>categories.archive(lid,req.params.id),'delete'));
 router.post('/categories/:id/restore',auth.requireLogin,auth.requireLedgerWrite,categoryAction((lid,req)=>categories.restore(lid,req.params.id),'restore'));

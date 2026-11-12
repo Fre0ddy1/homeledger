@@ -62,6 +62,30 @@ async function web(path,form){
  check('无效父级请求不改变原关联',Number(cats.find(moveLedger,child.id).parent_id)===Number(privateTarget));
  r=await web('/categories?kind=expense&group='+root.id);
  check('二级分类编辑提供同类型一级选择',r.text.includes('id="cat-parent-'+child.id+'"')&&r.text.includes('调整后，历史账单也会归入新的一级分类'));
+ const sortLedger=db.createDefaultLedger(uid,'分类排序回归');
+ const rootOrder=fd.categoryTree(sortLedger,'expense').map(c=>Number(c.id)),reversedRoots=[...rootOrder].reverse(),otherOrder=fd.categoryTree(other,'expense').map(c=>Number(c.id));
+ const actualRoots=cats.reorder(sortLedger,{kind:'expense',ids:reversedRoots});
+ check('一级分类可使用旧模板ID排序并映射副本',fd.categoryTree(sortLedger,'expense').map(c=>Number(c.id)).join(',')===actualRoots.join(',')&&actualRoots[0]===cats.resolveId(sortLedger,reversedRoots[0]));
+ check('一级排序不影响其他账本',fd.categoryTree(other,'expense').map(c=>Number(c.id)).join(',')===otherOrder.join(','));
+ const sortParent=cats.find(sortLedger,root.id),childOrder=fd.categoryTree(sortLedger,'expense').find(c=>Number(c.id)===Number(sortParent.id)).children.map(c=>Number(c.id));
+ const desiredChildren=[...childOrder].reverse();cats.reorder(sortLedger,{kind:'expense',parent_id:root.id,ids:desiredChildren});
+ check('二级顺序在所属一级内调整',fd.categoryTree(sortLedger,'expense').find(c=>Number(c.id)===Number(sortParent.id)).children.map(c=>Number(c.id)).join(',')===desiredChildren.join(','));
+ check('扁平分类清单顺序同步且父级在子级前',fd.flatCategories(sortLedger,'expense').filter(c=>Number(c.id)===Number(sortParent.id)||Number(c.parent_id)===Number(sortParent.id)).map(c=>Number(c.id)).join(',')===[Number(sortParent.id),...desiredChildren].join(','));
+ const ownSorted=[...desiredChildren];cats.reorder(sortLedger,{kind:'expense',parent_id:root.id,ids:desiredChildren});
+ check('相同顺序重试幂等',fd.categoryTree(sortLedger,'expense').find(c=>Number(c.id)===Number(sortParent.id)).children.map(c=>Number(c.id)).join(',')===ownSorted.join(','));
+ const concurrentOrder=[...desiredChildren];[concurrentOrder[0],concurrentOrder[1]]=[concurrentOrder[1],concurrentOrder[0]];
+ cats.reorder(sortLedger,{kind:'expense',parent_id:root.id,ids:concurrentOrder,expected_ids:desiredChildren});
+ check('过期顺序不能覆盖其他页面刚保存的结果',rejects(()=>cats.reorder(sortLedger,{kind:'expense',parent_id:root.id,ids:desiredChildren,expected_ids:desiredChildren})));
+ check('目标已保存时旧预期重试仍幂等',cats.reorder(sortLedger,{kind:'expense',parent_id:root.id,ids:concurrentOrder,expected_ids:desiredChildren}).join(',')===concurrentOrder.join(','));
+ cats.reorder(sortLedger,{kind:'expense',parent_id:root.id,ids:desiredChildren,expected_ids:concurrentOrder});
+ check('排序拒绝缺少分类和重复ID',rejects(()=>cats.reorder(sortLedger,{kind:'expense',parent_id:root.id,ids:desiredChildren.slice(1)}))&&rejects(()=>cats.reorder(sortLedger,{kind:'expense',parent_id:root.id,ids:desiredChildren.map(()=>desiredChildren[0])})));
+ check('排序拒绝跨父级混入ID',rejects(()=>cats.reorder(sortLedger,{kind:'expense',parent_id:root.id,ids:[actualRoots[0],...desiredChildren.slice(1)]})));
+ check('排序拒绝收支类型不匹配',rejects(()=>cats.reorder(sortLedger,{kind:'income',ids:actualRoots})));
+ cats.archive(sortLedger,desiredChildren[0]);
+ check('过期排序列表包含已删除项时拒绝',rejects(()=>cats.reorder(sortLedger,{kind:'expense',parent_id:root.id,ids:desiredChildren})));
+ cats.restore(sortLedger,desiredChildren[0]);
+ const invalidSortLedger=db.createDefaultLedger(uid,'排序回滚');
+ check('首次排序非法时副本映射整批回滚',rejects(()=>cats.reorder(invalidSortLedger,{kind:'expense',ids:[root.id,root.id]}))&&db.get('SELECT COUNT(*) AS n FROM category_copies WHERE ledger_id=?',invalidSortLedger).n===0);
  const account=db.get('SELECT id FROM accounts WHERE ledger_id=1').id;
  const history=txn.createTransaction(1,uid,{type:'expense',amount_cents:1234,account_id:account,category_id:child.id,txn_date:db.todayStr()});
  const historyId=Number(history.id||history);
@@ -115,6 +139,18 @@ async function web(path,form){
  check('迁移异常整批回滚',rejects(()=>cats.update(rollbackLedger,root.id,{name:'不会保存'}))&&db.get('SELECT COUNT(*) AS n FROM category_copies WHERE ledger_id=?',rollbackLedger).n===0);
  const token='hl_category_regression';db.run("INSERT INTO api_tokens(user_id,ledger_id,name,token_hash,token_tail,created_at)VALUES(?,1,'分类回归',?,'test',?)",uid,crypto.createHash('sha256').update(token).digest('hex'),db.nowStr());
  async function api(path,body){const r=await fetch('http://127.0.0.1:8099/api/open'+path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:body?JSON.stringify(body):undefined});return {status:r.status,data:await r.json()};}
+ const apiRoots=fd.categoryTree(1,'expense').map(c=>Number(c.id));
+ r=await api('/categories/reorder',{kind:'expense',ids:[...apiRoots].reverse(),expected_ids:apiRoots});
+ check('API一级排序可调用且返回有效ID',r.status===200&&r.data.ids.join(',')===[...apiRoots].reverse().join(','));
+ const sortedList=await api('/categories');
+ check('分类API公开sort_order并按新顺序返回',sortedList.data.categories.every(c=>Number.isInteger(c.sort_order))&&sortedList.data.categories.filter(c=>!c.parent_id&&c.kind==='expense').map(c=>c.id).join(',')===[...apiRoots].reverse().join(','));
+ check('API拒绝顺序过期但成员未变的请求',(await api('/categories/reorder',{kind:'expense',ids:apiRoots,expected_ids:apiRoots})).status===400);
+ await api('/categories/reorder',{kind:'expense',ids:apiRoots});
+ check('API拒绝非法排序',(await api('/categories/reorder',{kind:'expense',ids:[foreign]})).status===400);
+ r=await web('/categories?sort=1');check('网页排序模式提供上下移按钮',r.text.includes('category-order-actions')&&r.text.includes('下移'));
+ r=await web('/categories/reorder',{kind:'expense',ids:JSON.stringify([...apiRoots].reverse()),expected_ids:JSON.stringify(apiRoots),focus_id:String(apiRoots[0]),return_to:'/categories?sort=1'});
+ check('原生网页排序保存且保留排序模式',r.status===302&&new URL(r.location,'http://localhost').searchParams.get('sort')==='1'&&fd.categoryTree(1,'expense')[0].id===apiRoots.at(-1));
+ cats.reorder(1,{kind:'expense',ids:apiRoots});
  const apiParent=cats.create(1,{name:'API新父级',kind:'expense'});
  r=await api('/categories/'+child.id,{parent_id:apiParent});
  check('API可修改已有二级分类父级',r.status===200&&Number(cats.find(1,child.id).parent_id)===Number(apiParent));
@@ -161,6 +197,7 @@ async function web(path,form){
  check('只读 API 禁止删除',(await api('/categories/'+root.id+'/delete',{})).status===403);
  check('只读网页禁止修改',(await web('/categories/'+root.id,{name:'不应改名'})).status===403);
  check('只读API禁止调整父级',(await api('/categories/'+child.id,{parent_id:apiParent})).status===403);
+ check('只读API和网页禁止排序',(await api('/categories/reorder',{kind:'expense',ids:apiRoots})).status===403&&(await web('/categories/reorder',{kind:'expense',ids:JSON.stringify(apiRoots)})).status===403);
  r=await web('/categories');check('只读不展示编辑表单',!r.text.includes('class="category-edit-form"'));
   // The HTTP server still owns this WAL database. Never remove its schema or
   // reopen/unlink its WAL from a second process; restore needs an exclusive DB.

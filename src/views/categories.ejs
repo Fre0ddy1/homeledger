@@ -1,21 +1,22 @@
 <header class="category-heading">
   <div><div class="eyebrow">YOUR CATEGORIES</div><h2>把收支整理得更清楚</h2><p>按自己的习惯分类。删除后仍保留历史账单，随时可以恢复。</p></div>
   <% if(ledger && canWrite(ledger.role) && !showDeleted){ %>
+  <div class="category-heading-actions"><a class="btn" href="<%= sorting?categoryBack.replace('&sort=1',''):categoryBack+'&sort=1' %>"><%= sorting?'完成排序':'调整顺序' %></a>
   <details class="category-create-disclosure" data-name="新建分类"><summary class="btn btn-primary"><svg class="icon"><use href="#i-plus"></use></svg>新建分类</summary>
     <form method="post" action="/categories" class="category-create-form card">
       <input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="return_to" value="<%= categoryBack %>">
-      <div class="field"><label for="new-cat-name">分类名称</label><input id="new-cat-name" name="name" placeholder="例如：咖啡时光" maxlength="20" required></div>
+      <div class="field"><label for="new-cat-name">分类名称</label><input id="new-cat-name" name="name" type="text" placeholder="例如：咖啡时光" maxlength="20" required></div>
       <div class="field"><label for="new-cat-kind">收支类型</label><select id="new-cat-kind" name="kind"><option value="expense" <%= categoryKind==='expense'?'selected':'' %>>支出</option><option value="income" <%= categoryKind==='income'?'selected':'' %>>收入</option></select></div>
       <div class="field"><label for="new-cat-parent">所属一级分类</label><select id="new-cat-parent" name="parent_id"><option value="">作为一级分类</option><% [{title:'支出',tree:expenseTree},{title:'收入',tree:incomeTree}].forEach(function(sec){ %><optgroup label="<%= sec.title %>"><% sec.tree.forEach(function(r){ %><option value="<%= r.id %>" <%= selectedGroup && Number(selectedGroup.id)===Number(r.id)?'selected':'' %>><%= r.icon %> <%= r.name %></option><% }); %></optgroup><% }); %></select></div>
-      <div class="field"><label for="new-cat-icon">图标</label><input id="new-cat-icon" name="icon" value="🏷️" maxlength="8"></div>
+      <%- include('partials/category-icon-picker',{fieldId:'new-cat-icon',iconValue:'🏷️'}) %>
       <div class="field"><label for="new-cat-color">颜色</label><input id="new-cat-color" name="color" type="color" value="#0071e3"></div>
       <button class="btn btn-primary" type="submit">创建分类</button>
     </form>
-  </details><% } %>
+  </details></div><% } %>
 </header>
 <nav class="category-toolbar" aria-label="分类类型">
-  <a href="/categories?kind=expense" <%- !showDeleted && categoryKind==='expense'?'aria-current="page"':'' %>>支出分类<span class="count"><%= expenseTree.length %></span></a>
-  <a href="/categories?kind=income" <%- !showDeleted && categoryKind==='income'?'aria-current="page"':'' %>>收入分类<span class="count"><%= incomeTree.length %></span></a>
+  <a href="/categories?kind=expense<%= sorting?'&sort=1':'' %>" <%- !showDeleted && categoryKind==='expense'?'aria-current="page"':'' %>>支出分类<span class="count"><%= expenseTree.length %></span></a>
+  <a href="/categories?kind=income<%= sorting?'&sort=1':'' %>" <%- !showDeleted && categoryKind==='income'?'aria-current="page"':'' %>>收入分类<span class="count"><%= incomeTree.length %></span></a>
   <a href="/categories?show=deleted" <%- showDeleted?'aria-current="page"':'' %>>已删除<span class="count"><%= deletedCategories.length %></span></a>
 </nav>
 <% if(showDeleted) { %>
@@ -25,18 +26,18 @@
 <% if(ledger && canWrite(ledger.role)){ %><form method="post" action="/categories/<%= c.id %>/restore"><input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="return_to" value="/categories?show=deleted"><button class="btn btn-sm" <%= c.parent_archived ? 'disabled' : '' %>>恢复</button></form><% } %></div><% }); %>
 </section>
 <% } else { %>
-<div class="category-workspace" data-focus-category="<%= categoryFocus || '' %>">
+<div class="category-workspace" data-focus-category="<%= categoryFocus || '' %>" data-sorting="<%= sorting %>">
   <nav class="category-navigation" aria-label="一级分类"><div class="category-navigation-label">选择一级分类</div>
-    <% activeTree.forEach(function(r){ %><a href="/categories?kind=<%= categoryKind %>&amp;group=<%= r.id %>" <%- selectedGroup && Number(selectedGroup.id)===Number(r.id)?'aria-current="page"':'' %>><span><%= r.icon %></span><span><%= r.name %></span><span class="count"><%= r.children.length %></span></a><% }); %>
+    <% activeTree.forEach(function(r,index){ %><div class="category-nav-item" <% if(sorting){ %>id="category-order-<%= r.id %>" tabindex="-1"<% } %>><a href="/categories?kind=<%= categoryKind %>&amp;group=<%= r.id %><%= sorting?'&sort=1':'' %>" <%- selectedGroup && Number(selectedGroup.id)===Number(r.id)?'aria-current="page"':'' %>><span><%= r.icon %></span><span><%= r.name %></span><span class="count"><%= r.children.length %></span></a><% if(sorting){ %><%- include('partials/category-order-actions',{node:r,siblings:activeTree,index}) %><% } %></div><% }); %>
   </nav>
   <section class="category-stage" aria-label="当前分类">
     <% if(selectedGroup){ %>
     <%- include('partials/category-entry',{node:selectedGroup}) %>
     <div class="category-section-head"><h3>子分类 <span class="muted tiny">· <%= selectedGroup.children.length %> 个</span></h3>
-      <form class="category-search" method="get" action="/categories"><input type="hidden" name="kind" value="<%= categoryKind %>"><input type="hidden" name="group" value="<%= selectedGroup.id %>"><input name="q" type="search" value="<%= categorySearch %>" placeholder="搜索当前分类" aria-label="搜索当前分类"><button class="btn btn-sm" type="submit">搜索</button></form>
+      <% if(sorting){ %><span class="small muted">在当前一级内上移或下移，顺序会自动保存</span><% }else{ %><form class="category-search" method="get" action="/categories"><input type="hidden" name="kind" value="<%= categoryKind %>"><input type="hidden" name="group" value="<%= selectedGroup.id %>"><input name="q" type="search" value="<%= categorySearch %>" placeholder="搜索当前分类" aria-label="搜索当前分类"><button class="btn btn-sm" type="submit">搜索</button></form><% } %>
     </div>
     <% var visibleChildren=selectedGroup.children.filter(function(c){return !categorySearch||c.name.toLowerCase().includes(categorySearch.toLowerCase());}); %>
-    <div class="category-children-grid"><% visibleChildren.forEach(function(c){ %><%- include('partials/category-entry',{node:c}) %><% }); %></div>
+    <div class="category-children-grid"><% visibleChildren.forEach(function(c){ %><div class="category-child-item" <% if(sorting){ %>id="category-order-<%= c.id %>" tabindex="-1"<% } %>><%- include('partials/category-entry',{node:c}) %><% if(sorting){ %><%- include('partials/category-order-actions',{node:c,siblings:selectedGroup.children,index:selectedGroup.children.indexOf(c)}) %><% } %></div><% }); %></div>
     <% if(!visibleChildren.length){ %><div class="category-empty"><%= categorySearch?'没有找到匹配的子分类':'这里还没有子分类，点击「新建分类」添加。' %></div><% } %>
     <p class="tiny muted mt16">仅修改当前账本的分类 · 近一年使用统计</p>
     <% } else { %><div class="category-empty">还没有分类，从新建一个一级分类开始。</div><% } %>

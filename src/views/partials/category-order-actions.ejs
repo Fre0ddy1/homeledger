@@ -1,0 +1,8 @@
+<div class="category-order-actions" aria-label="<%= node.name %>排序操作">
+<% ['up','down'].forEach(function(direction){const ids=siblings.map(c=>Number(c.id));const next=direction==='up'?index-1:index+1;const disabled=next<0||next>=ids.length;if(!disabled)[ids[index],ids[next]]=[ids[next],ids[index]]; %>
+  <form method="post" action="/categories/reorder">
+    <input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="kind" value="<%= node.kind %>"><input type="hidden" name="parent_id" value="<%= node.parent_id||'' %>"><input type="hidden" name="ids" value="<%= JSON.stringify(ids) %>"><input type="hidden" name="expected_ids" value="<%= JSON.stringify(siblings.map(c=>Number(c.id))) %>"><input type="hidden" name="focus_id" value="<%= node.id %>"><input type="hidden" name="return_to" value="<%= categoryBack %>">
+    <button class="btn btn-sm" type="submit" data-direction="<%= direction %>" aria-label="<%= direction==='up'?'上移':'下移' %><%= node.name %>" <%= disabled?'disabled':'' %>><%= direction==='up'?'↑ 上移':'↓ 下移' %></button>
+  </form>
+<% }); %>
+</div>

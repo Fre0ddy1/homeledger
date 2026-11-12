@@ -5,7 +5,7 @@ module.exports=async function(browser,session,base){
   try{
    const page=await context.newPage();await page.goto(base+'/theme/'+theme);await page.goto(base+'/categories');
    const entry=page.locator('.category-children-grid .category-entry').first();
-   await entry.locator('summary').click();
+   await entry.locator(':scope > summary').click();
    let form=native?entry.locator('.category-edit-form'):page.locator('.category-modal .category-edit-form');
    let select=form.locator('[name=parent_id]');const original=await select.inputValue();
    const target=await select.evaluate(el=>[...el.options].find(o=>o.value!==el.value).value);
@@ -20,7 +20,7 @@ module.exports=async function(browser,session,base){
    await page.screenshot({path:'.screenshots/audit-after/category-parent-'+theme+'-'+width+'-'+(native?'native':'js')+'.png',animations:'disabled'});
    await Promise.all([page.waitForNavigation(),form.locator('button[type=submit]').click()]);
    const moved=new URL(page.url()),focus=moved.searchParams.get('focus');
-   const newEntry=page.locator('.category-entry[data-category-id="'+focus+'"]');await newEntry.locator('summary').click();
+   const newEntry=page.locator('.category-entry[data-category-id="'+focus+'"]');await newEntry.locator(':scope > summary').click();
    form=native?newEntry.locator('.category-edit-form'):page.locator('.category-modal .category-edit-form');select=form.locator('[name=parent_id]');
    const changed=moved.searchParams.get('group')===target&&await select.inputValue()===target;
    await choose(select,original);await Promise.all([page.waitForNavigation(),form.locator('button[type=submit]').click()]);
