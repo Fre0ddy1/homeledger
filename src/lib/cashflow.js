@@ -19,10 +19,11 @@ const CTE=`WITH classified AS (
  WHEN type IN ('transfer','invest_buy','invest_sell') THEN amount_base_cents*(to_fund-from_fund)
  ELSE 0 END AS delta FROM classified
 )`;
+function validDate(value){return /^\d{4}-\d{2}-\d{2}$/.test(String(value))&&Number.isFinite(Date.parse(value+'T00:00:00Z'))&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;}
 function params(lid,start,end){if(!/^\d{4}-\d{2}-\d{2}$/.test(String(start))||!/^\d{4}-\d{2}-\d{2}$/.test(String(end))||start>end)throw Error('资金流日期范围无效');return [Number(lid),start,end];}
-function summary(lid,start,end){const r=db.get(CTE+` SELECT COALESCE(SUM(CASE WHEN delta>0 THEN delta ELSE 0 END),0) AS income,COALESCE(SUM(CASE WHEN delta<0 THEN -delta ELSE 0 END),0) AS expense,COUNT(CASE WHEN delta<>0 THEN 1 END) AS count FROM effects`,...params(lid,start,end));return {...r,basis:'cashflow',inflow:r.income,outflow:r.expense,net:r.income-r.expense};}
+function summary(lid,start,end){const r=db.get(CTE+` SELECT COALESCE(SUM(CASE WHEN delta>0 THEN delta ELSE 0 END),0) AS income,COALESCE(SUM(CASE WHEN delta<0 THEN -delta ELSE 0 END),0) AS expense,COUNT(CASE WHEN delta<>0 THEN 1 END) AS count,COUNT(CASE WHEN delta<0 THEN 1 END) AS outflow_count,COUNT(CASE WHEN delta>0 THEN 1 END) AS inflow_count FROM effects`,...params(lid,start,end));return {...r,basis:'cashflow',inflow:r.income,outflow:r.expense,net:r.income-r.expense};}
 function daily(lid,start,end){return db.all(CTE+` SELECT txn_date AS date,SUM(CASE WHEN delta>0 THEN delta ELSE 0 END) AS income,SUM(CASE WHEN delta<0 THEN -delta ELSE 0 END) AS expense,COUNT(*) AS count FROM effects WHERE delta<>0 GROUP BY txn_date ORDER BY txn_date`,...params(lid,start,end));}
-function monthly(lid,n=6,month=db.todayStr().slice(0,7)){n=Math.max(1,Math.min(36,Number(n)||6));if(!/^\d{4}-\d{2}$/.test(month))throw Error('月份无效');const first=u.addMonths(month,1-n),rows=db.all(CTE+` SELECT substr(txn_date,1,7) AS month,SUM(CASE WHEN delta>0 THEN delta ELSE 0 END) AS income,SUM(CASE WHEN delta<0 THEN -delta ELSE 0 END) AS expense FROM effects GROUP BY month`,...params(lid,first+'-01',month+'-31'));return Array.from({length:n},(_,i)=>{const m=u.addMonths(first,i),r=rows.find(x=>x.month===m);return {month:m,income:r?.income||0,expense:r?.expense||0};});}
+function monthly(lid,n=6,month=db.todayStr().slice(0,7)){n=Math.floor(Math.max(1,Math.min(36,Number(n)||6)));if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))throw Error('月份无效');const first=u.addMonths(month,1-n),rows=db.all(CTE+` SELECT substr(txn_date,1,7) AS month,SUM(CASE WHEN delta>0 THEN delta ELSE 0 END) AS income,SUM(CASE WHEN delta<0 THEN -delta ELSE 0 END) AS expense FROM effects GROUP BY month`,...params(lid,first+'-01',u.monthEnd(month)));return Array.from({length:n},(_,i)=>{const m=u.addMonths(first,i),r=rows.find(x=>x.month===m);return {month:m,income:r?.income||0,expense:r?.expense||0};});}
 const GROUP=`CASE WHEN type='lend' THEN '借出' WHEN type='borrow' THEN '借入' WHEN type='repay_pay' THEN '亲友还款' WHEN type='repay_receive' THEN '收回借款'
  WHEN type IN ('transfer','invest_buy','invest_sell') AND delta<0 AND to_type='credit' THEN '信用卡还款'
  WHEN type IN ('transfer','invest_buy','invest_sell') AND delta<0 AND to_type='loan' THEN '贷款还本'
@@ -35,4 +36,34 @@ const GROUP=`CASE WHEN type='lend' THEN '借出' WHEN type='borrow' THEN '借入
 function breakdown(lid,start,end,kind='expense'){return db.all(CTE+` SELECT ${GROUP} AS name,SUM(ABS(delta)) AS total,COUNT(*) AS count FROM effects WHERE delta ${kind==='income'?'>':'<'}0 GROUP BY name ORDER BY total DESC`,...params(lid,start,end)).map((r,i)=>({...r,id:null,icon:kind==='income'?'↙':'↗',color:['#0071e3','#248544','#c28c32','#8b72c5','#cd6464'][i%5]}));}
 function entries(lid,start,end,{kind='expense',group='',page=1,pageSize=20}={}){page=Math.max(1,Math.floor(Number(page)||1));pageSize=Math.max(1,Math.min(80,Math.floor(Number(pageSize)||20)));const where=` WHERE delta ${kind==='income'?'>':'<'}0`+(group?` AND (${GROUP})=?`:''),args=[...params(lid,start,end),...(group?[String(group)]:[])],total=db.get(CTE+' SELECT COUNT(*) AS n FROM effects'+where,...args).n,rows=db.all(CTE+' SELECT *,SUM(CASE WHEN delta>0 THEN delta ELSE 0 END) OVER(PARTITION BY txn_date) AS cash_day_income,SUM(CASE WHEN delta<0 THEN -delta ELSE 0 END) OVER(PARTITION BY txn_date) AS cash_day_expense FROM effects'+where+' ORDER BY txn_date DESC,id DESC LIMIT ? OFFSET ?',...args,pageSize,(page-1)*pageSize).map(require('./txn').decorate);return {rows,total,page,pages:Math.max(1,Math.ceil(total/pageSize)),pageSize};}
 function groupDates(rows){const groups=new Map();for(const r of rows){if(!groups.has(r.txn_date))groups.set(r.txn_date,{date:r.txn_date,income:r.cash_day_income,expense:r.cash_day_expense,items:[]});groups.get(r.txn_date).items.push(r);}return [...groups.values()];}
-module.exports={summary,daily,monthly,breakdown,entries,groupDates};
+/** Read-only report metrics. Comparisons always expose their exact dates. */
+function analysis(lid,start,end,{today=db.todayStr()}={}){
+  params(lid,start,end);if(!validDate(start)||!validDate(end)||!validDate(today))throw Error('分析日期无效');
+  const sum=summary(lid,start,end),effectiveTo=end<today?end:today;
+  const elapsedDays=effectiveTo<start?0:Math.round((Date.parse(effectiveTo+'T00:00:00Z')-Date.parse(start+'T00:00:00Z'))/86400000)+1;
+  const elapsed=elapsedDays?summary(lid,start,effectiveTo):null;
+  let compareFrom=null,compareTo=null;
+  if(elapsedDays){
+    if(start.endsWith('-01')&&end===u.monthEnd(start.slice(0,7))){
+      const previous=u.addMonths(start.slice(0,7),-1);
+      compareFrom=previous+'-01';
+      compareTo=end<=today?u.monthEnd(previous):previous+'-'+u.pad(Math.min(Number(effectiveTo.slice(8)),u.daysInMonth(previous)));
+    }else{compareTo=u.addDays(start,-1);compareFrom=u.addDays(start,-elapsedDays);}
+  }
+  const previous=compareFrom?summary(lid,compareFrom,compareTo):null;
+  const days=daily(lid,start,end),maxDay=days.reduce((a,b)=>!a||b.expense>a.expense?b:a,null);
+  const span=Math.round((Date.parse(end+'T00:00:00Z')-Date.parse(start+'T00:00:00Z'))/86400000)+1;
+  const chartUnit=span>62?'month':'day';
+  let chart;
+  if(chartUnit==='month'){
+    chart=db.all(CTE+` SELECT substr(txn_date,1,7) AS date,SUM(CASE WHEN delta>0 THEN delta ELSE 0 END) AS income,SUM(CASE WHEN delta<0 THEN -delta ELSE 0 END) AS expense FROM effects WHERE delta<>0 GROUP BY substr(txn_date,1,7) ORDER BY date`,...params(lid,start,end));
+  }else{
+    const indexed=new Map(days.map(d=>[d.date,d]));
+    chart=Array.from({length:span},(_,i)=>{const date=u.addDays(start,i);return indexed.get(date)||{date,income:0,expense:0};});
+  }
+  return {outflow_count:sum.outflow_count,inflow_count:sum.inflow_count,avg_outflow:sum.outflow_count?Math.round(sum.outflow/sum.outflow_count):null,
+    elapsed_days:elapsedDays,effective_to:elapsedDays?effectiveTo:null,avg_daily_outflow:elapsedDays?Math.round(elapsed.outflow/elapsedDays):null,
+    max_day:maxDay&&maxDay.expense>0?maxDay:null,compare_from:compareFrom,compare_to:compareTo,current_comparable:elapsed,previous,
+    change_pct:previous&&previous.outflow>0?(elapsed.outflow-previous.outflow)/previous.outflow*100:null,chart_unit:chartUnit,chart};
+}
+module.exports={summary,daily,monthly,breakdown,entries,groupDates,analysis};

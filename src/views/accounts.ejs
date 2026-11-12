@@ -125,7 +125,7 @@
         <% ['CNY','USD','EUR','HKD','JPY','GBP','SGD'].forEach(function(c){ %><option value="<%= c %>" <%= c === baseCurrency ? 'selected' : '' %>><%= c %></option><% }); %>
       </select></div>
     </div>
-    <div class="account-fields">
+    <div class="account-fields account-credit-fields">
       <div class="field" style="flex:1;min-width:130px"><label>额度（信用卡）</label><input type="text" name="credit_limit" inputmode="decimal"></div>
       <div class="field" style="flex:1;min-width:100px"><label>账单日</label><input type="number" name="bill_day" min="1" max="31"></div>
       <div class="field" style="flex:1;min-width:100px"><label>还款日</label><input type="number" name="due_day" min="1" max="31"></div>

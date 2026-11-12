@@ -99,8 +99,14 @@ POST /transactions 及编辑、订阅、定期规则会在服务端检查，不�
 
 首页、报表默认资金流，可显式切换basis=consumption查看消费收支。预算、年度消费报告、原消费问账继续使用消费口径，不能混称。用户问“实际资金流出/还款后现金少多少”使用cashflow；问“餐饮消费/消费预算”使用consumption，回复时说明口径。
 
-- GET /cashflow?from=YYYY-MM-DD&to=YYYY-MM-DD&months=6：返回basis=cashflow、inflow/outflow/net（分）、income/expense别名、daily/trend、inflow_groups/outflow_groups；可加kind=expense或income、group=分组名、page/page_size，返回有分页的entries。
+- GET /cashflow?from=YYYY-MM-DD&to=YYYY-MM-DD&months=6&month=YYYY-MM：返回basis=cashflow、inflow/outflow/net（分）、income/expense别名、daily/trend、inflow_groups/outflow_groups；可加kind=expense或income、group=分组名、page/page_size，返回有分页的entries。
 - GET /summary?basis=cashflow&from=&to=：顶层按资金流汇总，另有consumption及cashflow两个明确对象；原/summary缺省仍为consumption以保持已有调用语义。务必显式传basis，不根据数值猜测口径。
 - GET /reports/categories?basis=cashflow及/reports/trend?basis=cashflow支持同口径；缺省仍为consumption。资金流分组不是收支分类ID，不拿它创建分类或传category_id。
 
 资金账户限定cash/debit/virtual/prepaid。内部互转抵销；借入/放款/收回借款等入账为流入，还本/借出/转入投资等为流出；信用卡消费计消费，实际还款计资金流，不能把两套金额相加当支出。待确认流水与余额调整不算实际资金流，期初余额也不是本期入账。金额和分组取服务端SQL结果，模型不加总。
+
+### 资金流分析与历史趋势（2026-11-12）
+
+GET /cashflow 新增 analysis：outflow_count/inflow_count、avg_outflow、avg_daily_outflow（金额为整数分，空笔均/未来日均为null）、elapsed_days/effective_to、max_day、compare_from/compare_to、current_comparable/previous、change_pct、chart_unit/chart。日均只计算区间内截至今天的自然日，前期为零时change_pct=null，不解释为0%增长。完整月份比较上月；进行中的月份比较上月同进度；自定义区间比较紧邻等长前期。界面消费参考独立，不与资金流相加。
+
+GET /cashflow 和 GET /reports/trend 支持可选 month=YYYY-MM，作为趋势截止月份；省略仍截至本月，非法月份返回400。cashflow分析日期须为真实日期且from<=to。GET /reports/trend 的消费口径也支持相同月份锚点。展示时说明区间与截止月份；本金和还款资格不变。

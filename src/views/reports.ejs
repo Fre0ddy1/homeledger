@@ -36,6 +36,7 @@
 </div>
 <% } %>
 
+<div class="report-workspace consumption-workspace"><div class="report-column">
 <% if (compare) { %>
 <div class="card">
   <div class="card-head"><h2>同期对比</h2></div>
@@ -75,41 +76,7 @@
   </div>
 </div>
 <% } %>
-
 <div class="card">
-  <div class="card-head"><h2>近 12 个月收支趋势</h2></div>
-  <div class="chart-box">
-    <%- charts.barChart({
-      labels: trend.map(function(t){ return helpers.monthShort(t.month); }),
-      series: [
-        { name: '支出', color: '#f5222d', data: trend.map(function(t){ return t.expense / 100; }) },
-        { name: '收入', color: '#52c41a', data: trend.map(function(t){ return t.income / 100; }) }
-      ]
-    }) %>
-  </div>
-</div>
-
-<div class="grid grid-2">
-  <div class="card">
-    <div class="card-head">
-      <h2><%= kind === 'expense' ? '支出' : '收入' %>构成</h2>
-      <span class="muted small"><%= range.label %></span>
-    </div>
-    <% if (!donutItems.length) { %>
-      <div class="empty"><span class="big">📊</span>该区间没有数据</div>
-    <% } else { %>
-      <div class="row" style="gap:16px;align-items:flex-start;flex-wrap:wrap">
-        <div style="flex:0 0 180px">
-          <%- charts.donutChart(donutItems, { size: 175, thickness: 24, centerValue: helpers.compactMoney(kind === 'expense' ? sum.expense : sum.income), centerTitle: kind === 'expense' ? '总支出' : '总收入' }) %>
-        </div>
-        <div style="flex:1;min-width:210px">
-          <%- charts.donutLegend(donutItems, (kind === 'expense' ? sum.expense : sum.income) / 100) %>
-        </div>
-      </div>
-    <% } %>
-  </div>
-
-  <div class="card">
     <div class="card-head">
       <h2>分类排行榜</h2>
       <span class="muted small"><%= top ? '下钻：' + top : '一级分类' %></span>
@@ -138,34 +105,7 @@
       </div>
     <% } %>
   </div>
-</div>
-
 <div class="card">
-  <div class="card-head"><h2>每日支出走势</h2>
-    <% if (maxDay) { %><span class="muted small">支出最高的一天：<%= maxDay.date %>（<%= helpers.fmtAmount(maxDay.expense) %>）</span><% } %>
-  </div>
-  <div class="chart-box">
-    <%- charts.lineChart({
-      labels: days.map(function(d){ return d.date.slice(5); }),
-      series: [{ name: '每日支出', color: '#f5222d', data: days.map(function(d){ return d.expense / 100; }) }],
-      height: 200
-    }) %>
-  </div>
-</div>
-
-<div class="grid grid-2">
-  <div class="card">
-    <div class="card-head"><h2>星期消费分布</h2><span class="muted small">看你的钱花在哪几天</span></div>
-    <div class="chart-box">
-      <%- charts.barChart({
-        labels: weekdayLabels,
-        series: [{ name: '支出', color: '#722ed1', data: weekday.map(function(v){ return v / 100; }) }],
-        height: 190, showLegend: false
-      }) %>
-    </div>
-  </div>
-
-  <div class="card">
     <div class="card-head"><h2>成员消费对比</h2><span class="muted small">家庭账本很有用</span></div>
     <% if (!members.length) { %>
       <div class="empty"><span class="big">👨‍👩‍👧</span>没有数据</div>
@@ -181,10 +121,8 @@
       <% }); %>
     <% } %>
   </div>
-
-  <% // P11 归属人统计：这笔钱为谁花（AI 记账提取的标签，与成员=谁记账互补） %>
-  <div class="card">
-    <div class="card-head"><h2>归属人消费</h2><span class="muted small">这笔钱为谁花 · <a class="tiny" href="/transactions?owner=">筛选归属人</a></span></div>
+<div class="card">
+    <div class="card-head"><h2>归属人消费</h2><span class="muted small">这笔钱为谁花 · <a class="btn btn-sm" href="/transactions?owner=">筛选归属人</a></span></div>
     <% if (!owners.length) { %>
       <div class="empty"><span class="big">🏷️</span>还没有带归属人的账目<small class="muted"><br>AI 记账时说「给老妈买药 50 元」会自动带上归属人，也可在记一笔/编辑里填写</small></div>
     <% } else { %>
@@ -199,24 +137,6 @@
       <% }); %>
     <% } %>
   </div>
-</div>
-
-<div class="card">
-  <div class="card-head"><h2>净资产走势（近 12 个月）</h2><span class="muted small">含所有账户余额累计</span></div>
-  <div class="chart-box">
-    <%- charts.lineChart({
-      labels: netWorth.map(function(t){ return helpers.monthShort(t.month); }),
-      series: [{ name: '净资产', color: '#4f7cff', data: netWorth.map(function(t){ return t.value / 100; }) }],
-      height: 210
-    }) %>
-  </div>
-  <div class="row wrap" style="gap:16px">
-    <span class="small muted">当前净资产 <b class="amount"><%= helpers.money(overview.net) %></b></span>
-    <span class="small muted">总资产 <b class="amount"><%= helpers.money(overview.assets) %></b></span>
-    <span class="small muted">总负债 <b class="amount expense"><%= helpers.money(overview.liabilities) %></b></span>
-  </div>
-</div>
-
 <div class="card">
   <div class="card-head"><h2>账户余额一览</h2><a class="btn btn-sm btn-ghost" href="/accounts">管理 →</a></div>
   <%# 手机端 responsive 规则隐藏第 4+ 列：把「当前余额」放第 3 列保证核心数据可见 %>
@@ -236,3 +156,72 @@
     </tbody>
   </table>
 </div>
+</div><aside class="report-column">
+<div class="card">
+  <div class="card-head"><h2>近 12 个月收支趋势</h2><span class="small muted">截至 <%= trend.at(-1).month %></span></div>
+  <div class="chart-box">
+    <%- charts.barChart({
+      labels: trend.map(function(t){ return helpers.monthShort(t.month); }),
+      series: [
+        { name: '支出', color: '#f5222d', data: trend.map(function(t){ return t.expense / 100; }) },
+        { name: '收入', color: '#52c41a', data: trend.map(function(t){ return t.income / 100; }) }
+      ]
+    }) %>
+  </div>
+</div>
+<div class="card">
+    <div class="card-head">
+      <h2><%= kind === 'expense' ? '支出' : '收入' %>构成</h2>
+      <span class="muted small"><%= range.label %></span>
+    </div>
+    <% if (!donutItems.length) { %>
+      <div class="empty"><span class="big">📊</span>该区间没有数据</div>
+    <% } else { %>
+      <div class="row" style="gap:16px;align-items:flex-start;flex-wrap:wrap">
+        <div style="flex:0 0 180px">
+          <%- charts.donutChart(donutItems, { size: 175, thickness: 24, centerValue: helpers.compactMoney(kind === 'expense' ? sum.expense : sum.income), centerTitle: kind === 'expense' ? '总支出' : '总收入' }) %>
+        </div>
+        <div style="flex:1;min-width:210px">
+          <%- charts.donutLegend(donutItems, (kind === 'expense' ? sum.expense : sum.income) / 100) %>
+        </div>
+      </div>
+    <% } %>
+  </div>
+<div class="card">
+  <div class="card-head"><h2>每日支出走势</h2>
+    <% if (maxDay) { %><span class="muted small">支出最高的一天：<%= maxDay.date %>（<%= helpers.fmtAmount(maxDay.expense) %>）</span><% } %>
+  </div>
+  <div class="chart-box">
+    <%- charts.lineChart({
+      labels: days.map(function(d){ return d.date.slice(5); }),
+      series: [{ name: '每日支出', color: '#f5222d', data: days.map(function(d){ return d.expense / 100; }) }],
+      height: 200
+    }) %>
+  </div>
+</div>
+<div class="card">
+    <div class="card-head"><h2>星期消费分布</h2><span class="muted small">看你的钱花在哪几天</span></div>
+    <div class="chart-box">
+      <%- charts.barChart({
+        labels: weekdayLabels,
+        series: [{ name: '支出', color: '#722ed1', data: weekday.map(function(v){ return v / 100; }) }],
+        height: 190, showLegend: false
+      }) %>
+    </div>
+  </div>
+<div class="card">
+  <div class="card-head"><h2>净资产走势（近 12 个月）</h2><span class="muted small">含所有账户余额累计</span></div>
+  <div class="chart-box">
+    <%- charts.lineChart({
+      labels: netWorth.map(function(t){ return helpers.monthShort(t.month); }),
+      series: [{ name: '净资产', color: '#4f7cff', data: netWorth.map(function(t){ return t.value / 100; }) }],
+      height: 210
+    }) %>
+  </div>
+  <div class="row wrap" style="gap:16px">
+    <span class="small muted">当前净资产 <b class="amount"><%= helpers.money(overview.net) %></b></span>
+    <span class="small muted">总资产 <b class="amount"><%= helpers.money(overview.assets) %></b></span>
+    <span class="small muted">总负债 <b class="amount expense"><%= helpers.money(overview.liabilities) %></b></span>
+  </div>
+</div>
+</aside></div>

@@ -4,4 +4,5 @@
 </nav></section>
 <div id="ordinary-entry" class="<%= initialType==='repayment'?'hidden':'' %>"><%- include('txn-form',{embeddedEntry:true}) %></div>
 <div id="repayment-entry-panel" class="<%= initialType==='repayment'?'':'hidden' %>"><%- include('repayment-form',{embeddedEntry:true}) %></div>
+<%- include('partials/entry-actions',{entryFormId:initialType==='repayment'?(selected?'finance-payment-'+selected.target_kind+'-'+selected.target_id:''):'txn-form',entryLabel:initialType==='repayment'?'确认实际付款':'保存这一笔'}) %>
 </div>

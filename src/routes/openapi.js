@@ -345,7 +345,7 @@ router.get('/summary', (req, res) => {
   ok(res, { from,to,basis,...(basis==='cashflow'?cashflow:consumption),consumption,cashflow });
 });
 
-router.get('/cashflow',(req,res)=>{try{const lid=req.openAuth.ledgerId,from=DATE_RE.test(String(req.query.from||''))?req.query.from:todayStr().slice(0,7)+'-01',to=DATE_RE.test(String(req.query.to||''))?req.query.to:todayStr(),flow=require('../lib/cashflow');ok(res,{from,to,basis:'cashflow',...flow.summary(lid,from,to),daily:flow.daily(lid,from,to),trend:flow.monthly(lid,req.query.months),outflow_groups:flow.breakdown(lid,from,to,'expense'),inflow_groups:flow.breakdown(lid,from,to,'income'),entries:req.query.group?flow.entries(lid,from,to,{kind:req.query.kind,group:req.query.group,page:req.query.page,pageSize:req.query.page_size}):null});}catch(e){bad(res,400,e.message);}});
+router.get('/cashflow',(req,res)=>{try{const lid=req.openAuth.ledgerId,from=DATE_RE.test(String(req.query.from||''))?req.query.from:todayStr().slice(0,7)+'-01',to=DATE_RE.test(String(req.query.to||''))?req.query.to:todayStr(),flow=require('../lib/cashflow');ok(res,{from,to,basis:'cashflow',...flow.summary(lid,from,to),daily:flow.daily(lid,from,to),trend:flow.monthly(lid,req.query.months,req.query.month||undefined),analysis:flow.analysis(lid,from,to),outflow_groups:flow.breakdown(lid,from,to,'expense'),inflow_groups:flow.breakdown(lid,from,to,'income'),entries:req.query.group?flow.entries(lid,from,to,{kind:req.query.kind,group:req.query.group,page:req.query.page,pageSize:req.query.page_size}):null});}catch(e){bad(res,400,e.message);}});
 
 router.get('/reports/categories', (req, res) => {
   const { ledgerId } = req.openAuth;
@@ -361,7 +361,10 @@ router.get('/reports/categories', (req, res) => {
 
 router.get('/reports/trend', (req, res) => {
   const { ledgerId } = req.openAuth;
-  const months=Math.min(24, Math.max(2, Number(req.query.months)||6)),basis=req.query.basis==='cashflow'?'cashflow':'consumption';ok(res,{months,basis,trend:basis==='cashflow'?require('../lib/cashflow').monthly(ledgerId,months):txn.monthlyTrend(ledgerId,months)});
+  const months=Math.floor(Math.min(24,Math.max(2,Number(req.query.months)||6))),basis=req.query.basis==='cashflow'?'cashflow':'consumption';
+  const month=req.query.month||undefined;
+  if(month&&!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(month)))return bad(res,400,'月份无效');
+  ok(res,{months,basis,trend:basis==='cashflow'?require('../lib/cashflow').monthly(ledgerId,months,month):txn.monthlyTrend(ledgerId,months,month?new Date(month+'-01T12:00:00'):undefined)});
 });
 
 /* ------------------------------- 查询：账户 ------------------------------- */
