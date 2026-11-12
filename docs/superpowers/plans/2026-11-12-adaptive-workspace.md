@@ -51,4 +51,4 @@ Files: test/verify-ui-browser.cjs、docs/ui-development.md、finance-development
 - [x] 静态检查和全量Windows22/24回归；命令`node test/selfcheck-static.js`、`node test/run-all.js`。
 - [x] 浏览器5断点×明暗全路由及相关编辑/只读/无JS状态，检查截图、滚动和保存操作。
 - [x] 独立审查，修复发现并复测受影响项；更新同一归档的产出、数据、风险与接续入口。
-- [ ] PR、Linux CI22/24、合并main，确认本地/远端文件树一致；重启本任务5112演示并说明。
+- [x] PR、Linux CI22/24、合并main，确认本地/远端文件树一致；重启本任务5112演示并说明。PR #5、CI 43151434869及最终状态见本轮归档。
