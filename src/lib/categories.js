@@ -82,7 +82,18 @@ function update(ledgerId,id,body) {
     const c=mutable(ledgerId,id);
     const name=String(body.name??c.name).trim().slice(0,20);
     if (!name) throw new Error('请填写分类名称');
-    run('UPDATE categories SET name=?,icon=?,color=? WHERE id=? AND ledger_id=?',name,String(body.icon||c.icon).slice(0,8),u.safeColor(body.color,c.color),c.id,ledgerId);
+    let parentId=c.parent_id;
+    if (Object.prototype.hasOwnProperty.call(body,'parent_id')) {
+      if (!c.parent_id) {
+        if (body.parent_id!==null && body.parent_id!=='') throw new Error('一级分类不能调整为二级分类');
+      } else {
+        const parent=find(ledgerId,body.parent_id,true);
+        if (!parent || parent.parent_id || parent.kind!==c.kind) throw new Error('请选择当前账本同类型的有效一级分类');
+        if (Number(parent.id)!==Number(c.parent_id) && !find(ledgerId,c.id,true)) throw new Error('请先恢复分类及其所属一级分类，再调整所属一级分类');
+        parentId=parent.id;
+      }
+    }
+    run('UPDATE categories SET name=?,icon=?,color=?,parent_id=? WHERE id=? AND ledger_id=?',name,String(body.icon||c.icon).slice(0,8),u.safeColor(body.color,c.color),parentId,c.id,ledgerId);
     return c.id;
   });
 }

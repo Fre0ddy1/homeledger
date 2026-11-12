@@ -24,6 +24,44 @@ async function web(path,form){
   check('工作台搜索仅展示匹配子分类',r.text.includes('id="cat-name-'+child.id+'"')&&!r.text.includes('id="cat-name-'+child2.id+'"'));
   r=await web('/categories?kind=expense&group='+root.id+'&q='+encodeURIComponent('不会存在的分类名称'));
   check('分类搜索空状态',r.text.includes('没有找到匹配的子分类'));
+ // Reparenting is an edit, not delete-and-recreate; first shared edit maps references.
+ const moveLedger=db.createDefaultLedger(uid,'父级调整回归');
+ const moveAccount=db.get('SELECT id FROM accounts WHERE ledger_id=?',moveLedger).id;
+ const targetRoot=db.get("SELECT * FROM categories WHERE ledger_id IS NULL AND kind='expense' AND parent_id IS NULL AND id<>? ORDER BY id",root.id);
+ const movedTxn=txn.createTransaction(moveLedger,uid,{type:'expense',amount_cents:4321,account_id:moveAccount,category_id:child.id,txn_date:db.todayStr()});
+ const movedTxnId=Number(movedTxn.id||movedTxn);
+ cats.update(moveLedger,child.id,{parent_id:targetRoot.id});
+ const moved=cats.find(moveLedger,child.id),mappedTarget=cats.find(moveLedger,targetRoot.id);
+ check('内置二级分类可调整到映射后的一级副本',Number(moved.parent_id)===Number(mappedTarget.id)&&Number(mappedTarget.ledger_id)===moveLedger);
+ check('更换父级保留历史流水映射及金额',Number(db.get('SELECT category_id FROM transactions WHERE id=?',movedTxnId).category_id)===Number(moved.id)&&txn.summary(moveLedger,'2000-01-01','2099-12-31').expense===4321);
+ check('历史一级汇总随所属一级调整',txn.categoryBreakdown(moveLedger,'2000-01-01','2099-12-31').some(row=>row.name===mappedTarget.name&&row.total===4321));
+ check('调整父级不影响其他账本及模板',Number(cats.find(other,child.id).parent_id)===Number(root.id)&&Number(db.get('SELECT parent_id FROM categories WHERE id=?',child.id).parent_id)===Number(root.id));
+ const privateTarget=cats.create(moveLedger,{name:'自定义新父级',kind:'expense'});
+ const moveBudget=Number(db.run("INSERT INTO budgets(ledger_id,name,scope,category_id,amount_cents,created_at)VALUES(?,'父级移动预算','category',?,10000,?)",moveLedger,moved.id,db.nowStr()).lastInsertRowid);
+ cats.update(moveLedger,child.id,{parent_id:privateTarget});
+ check('再次移动保留二级分类ID及预算引用',cats.find(moveLedger,child.id).id===moved.id&&Number(cats.find(moveLedger,child.id).parent_id)===Number(privateTarget)&&Number(db.get('SELECT category_id FROM budgets WHERE id=?',moveBudget).category_id)===Number(moved.id));
+ cats.update(moveLedger,child.id,{name:'移动后只改名称'});
+ check('省略parent_id仍保留现有父级',Number(cats.find(moveLedger,child.id).parent_id)===Number(privateTarget));
+ check('二级分类不可通过空父级意外升级',rejects(()=>cats.update(moveLedger,child.id,{parent_id:''})));
+ check('一级分类不允许挂到另一一级下',rejects(()=>cats.update(moveLedger,privateTarget,{parent_id:targetRoot.id})));
+ check('父级不允许选择自己或二级分类',rejects(()=>cats.update(moveLedger,child.id,{parent_id:moved.id})));
+ const moveIncome=cats.create(moveLedger,{name:'收入父级',kind:'income'});
+ check('更换父级拒绝跨收支类型',rejects(()=>cats.update(moveLedger,child.id,{parent_id:moveIncome})));
+ const moveForeign=cats.create(other,{name:'跨账本父级',kind:'expense'});
+ check('更换父级拒绝其他账本分类',rejects(()=>cats.update(moveLedger,child.id,{parent_id:moveForeign})));
+ cats.archive(moveLedger,targetRoot.id);
+ check('更换父级拒绝已删除目标',rejects(()=>cats.update(moveLedger,child.id,{parent_id:targetRoot.id})));
+ cats.restore(moveLedger,targetRoot.id);cats.archive(moveLedger,privateTarget);
+ check('原一级已删除时不可通过移动绕过恢复',rejects(()=>cats.update(moveLedger,child.id,{parent_id:targetRoot.id})));
+ cats.restore(moveLedger,privateTarget);
+ const incomeTarget=cats.create(moveLedger,{name:'另一个收入父级',kind:'income'}),incomeChild=cats.create(moveLedger,{name:'收入子分类',kind:'income',parent_id:moveIncome});
+ cats.update(moveLedger,incomeChild,{parent_id:incomeTarget});
+ check('收入二级分类也可在收入一级间移动',Number(cats.find(moveLedger,incomeChild).parent_id)===Number(incomeTarget));
+ const invalidMoveLedger=db.createDefaultLedger(uid,'父级失败回滚');
+ check('内置分类非法移动回滚副本及引用',rejects(()=>cats.update(invalidMoveLedger,child.id,{parent_id:moveForeign}))&&db.get('SELECT COUNT(*) AS n FROM category_copies WHERE ledger_id=?',invalidMoveLedger).n===0);
+ check('无效父级请求不改变原关联',Number(cats.find(moveLedger,child.id).parent_id)===Number(privateTarget));
+ r=await web('/categories?kind=expense&group='+root.id);
+ check('二级分类编辑提供同类型一级选择',r.text.includes('id="cat-parent-'+child.id+'"')&&r.text.includes('调整后，历史账单也会归入新的一级分类'));
  const account=db.get('SELECT id FROM accounts WHERE ledger_id=1').id;
  const history=txn.createTransaction(1,uid,{type:'expense',amount_cents:1234,account_id:account,category_id:child.id,txn_date:db.todayStr()});
  const historyId=Number(history.id||history);
@@ -77,6 +115,17 @@ async function web(path,form){
  check('迁移异常整批回滚',rejects(()=>cats.update(rollbackLedger,root.id,{name:'不会保存'}))&&db.get('SELECT COUNT(*) AS n FROM category_copies WHERE ledger_id=?',rollbackLedger).n===0);
  const token='hl_category_regression';db.run("INSERT INTO api_tokens(user_id,ledger_id,name,token_hash,token_tail,created_at)VALUES(?,1,'分类回归',?,'test',?)",uid,crypto.createHash('sha256').update(token).digest('hex'),db.nowStr());
  async function api(path,body){const r=await fetch('http://127.0.0.1:8099/api/open'+path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:body?JSON.stringify(body):undefined});return {status:r.status,data:await r.json()};}
+ const apiParent=cats.create(1,{name:'API新父级',kind:'expense'});
+ r=await api('/categories/'+child.id,{parent_id:apiParent});
+ check('API可修改已有二级分类父级',r.status===200&&Number(cats.find(1,child.id).parent_id)===Number(apiParent));
+ check('API拒绝无效父级',(await api('/categories/'+child.id,{parent_id:foreign})).status===400);
+ r=await web('/categories/'+child.id,{parent_id:String(root.id),return_to:'/categories?kind=expense&group='+apiParent});
+ const movedLocation=new URL(r.location,'http://localhost');
+ check('网页移动后导航到新一级并定位二级',r.status===302&&movedLocation.searchParams.get('group')===String(copy.id)&&movedLocation.searchParams.get('focus')===String(leaf.id)&&Number(cats.find(1,child.id).parent_id)===Number(copy.id));
+ const searchedChild=cats.create(1,{name:'父级筛选原名',kind:'expense',parent_id:apiParent});
+ r=await web('/categories/'+searchedChild,{name:'父级筛选新名',parent_id:String(root.id),return_to:'/categories?kind=expense&group='+apiParent+'&q='+encodeURIComponent('父级筛选原名')});
+ const searchedLocation=new URL(r.location,'http://localhost'),searchedPage=await web(r.location);
+ check('改名并换父级后清除旧搜索且条目可定位',r.status===302&&!searchedLocation.searchParams.has('q')&&searchedLocation.searchParams.get('group')===String(copy.id)&&searchedPage.text.includes('id="cat-name-'+searchedChild+'"')&&searchedPage.text.includes('父级筛选新名'));
  check('API 可用旧 ID 编辑副本',(await api('/categories/'+root.id,{name:'API 餐饮'})).data.ok===true);
  check('API 分类删除',(await api('/categories/'+child.id+'/delete',{})).data.archived===true);
  check('API 可恢复分类',(await api('/categories/'+child.id+'/restore',{})).data.restored===true);
@@ -111,6 +160,7 @@ async function web(path,form){
  db.run("UPDATE ledger_members SET role='viewer' WHERE ledger_id=1 AND user_id=?",uid);
  check('只读 API 禁止删除',(await api('/categories/'+root.id+'/delete',{})).status===403);
  check('只读网页禁止修改',(await web('/categories/'+root.id,{name:'不应改名'})).status===403);
+ check('只读API禁止调整父级',(await api('/categories/'+child.id,{parent_id:apiParent})).status===403);
  r=await web('/categories');check('只读不展示编辑表单',!r.text.includes('class="category-edit-form"'));
   // The HTTP server still owns this WAL database. Never remove its schema or
   // reopen/unlink its WAL from a second process; restore needs an exclusive DB.

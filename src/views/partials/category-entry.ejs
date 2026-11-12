@@ -3,8 +3,9 @@
   <% if(ledger && canWrite(ledger.role)){ %>
   <form method="post" action="/categories/<%= node.id %>" class="category-edit-form">
     <input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="return_to" value="<%= categoryBack %>">
-    <div class="field"><label for="cat-name-<%= node.id %>">名称</label><input id="cat-name-<%= node.id %>" name="name" maxlength="20" required value="<%= node.name %>"></div>
-    <div class="field"><label for="cat-icon-<%= node.id %>">图标</label><input id="cat-icon-<%= node.id %>" name="icon" maxlength="8" value="<%= node.icon %>"></div>
+    <div class="field"><label for="cat-name-<%= node.id %>">名称</label><input id="cat-name-<%= node.id %>" name="name" type="text" maxlength="20" required value="<%= node.name %>"></div>
+    <% if(node.parent_id){ %><div class="field category-parent-field"><label for="cat-parent-<%= node.id %>">所属一级分类</label><select id="cat-parent-<%= node.id %>" name="parent_id" required><% (node.kind==='income'?incomeTree:expenseTree).forEach(function(parent){ %><option value="<%= parent.id %>" <%= Number(node.parent_id)===Number(parent.id)?'selected':'' %>><%= parent.icon %> <%= parent.name %></option><% }); %></select><p class="help">调整后，历史账单也会归入新的一级分类。</p></div><% } %>
+    <div class="field"><label for="cat-icon-<%= node.id %>">图标</label><input id="cat-icon-<%= node.id %>" name="icon" type="text" maxlength="8" value="<%= node.icon %>"></div>
     <div class="field"><label for="cat-color-<%= node.id %>">颜色</label><input id="cat-color-<%= node.id %>" name="color" type="color" value="<%= helpers.safeColor(node.color) %>"></div>
     <button class="btn btn-sm btn-primary" type="submit">保存</button>
   </form>

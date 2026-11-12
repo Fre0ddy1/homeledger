@@ -228,7 +228,10 @@ function categoryAction(action, message) {
     const destination=new URL(target,'http://localhost');
     if(changedId && (message==='create'||message==='update')) {
       destination.searchParams.set('focus',String(changedId));
-      if(message==='create') { const c=categories.find(ledgerId,changedId); destination.searchParams.set('kind',c.kind); destination.searchParams.set('group',String(c.parent_id||c.id)); }
+      const c=categories.find(ledgerId,changedId);
+      destination.searchParams.set('kind',c.kind);
+      destination.searchParams.set('group',String(c.parent_id||c.id));
+      destination.searchParams.delete('q');
     }
     res.redirect(destination.pathname+destination.search);
   };
