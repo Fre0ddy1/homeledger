@@ -1,0 +1,1 @@
+<% if(draft){ %><div class="notice warn mb16" role="status">已保留上次提交的时间，请修正后重试。<% if(draft.start_date!==undefined){ %> 起始日期：<%= draft.start_date||'未填写' %>。<% } %><% if(draft.date!==undefined){ %> 交易日期：<%= draft.date||'未填写' %>。<% } %><% if(draft.time!==undefined){ %> 交易时刻：<%= draft.time||'未提供' %>。<% } %></div><% } %>

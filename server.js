@@ -139,6 +139,7 @@ app.use((req, res, next) => {
     css: APP_VERSION + '-' + assetStamp('css/app.css'),
     workspace: APP_VERSION + '-' + assetStamp('css/workspace.css'),
     js: APP_VERSION + '-' + assetStamp('js/app.js'),
+    categoryIcons: APP_VERSION + '-' + assetStamp('js/category-icons.js'),
     assistant: APP_VERSION + '-' + assetStamp('js/assistant.js'),
     m: APP_VERSION + '-' + assetStamp('js/m.js'),
   };

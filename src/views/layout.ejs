@@ -196,6 +196,7 @@
 <% } %>
 
 <script src="/static/js/app.js?v=<%= assetV.js %>" defer></script>
+<script src="/static/js/category-icons.js?v=<%= typeof assetV !== 'undefined' ? assetV.categoryIcons : '' %>" defer></script>
 <script src="/static/js/assistant.js?v=<%= assetV.assistant %>" defer></script>
 </body>
 </html>

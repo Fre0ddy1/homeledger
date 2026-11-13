@@ -14,6 +14,16 @@ description: 家账簿（HomeLedger）记账、亲友借钱、贷款与信用卡
 
 两个变量缺一个时，先向用户询问，不要猜。
 
+## 交易时间与账户辨识
+
+- `date`（兼容`txn_date`）是交易发生日，格式`YYYY-MM-DD`，创建缺省为实例当天；`time`（兼容`txn_time`）是可选实际时刻，接受`HH:mm`或`HH:mm:ss`，保存后返回`txn_time`（`HH:mm:ss`或`null`）。建议使用`date/time`，不同时提交同义字段。
+- 创建未提供时刻保留未知；普通交易局部更新省略`time/txn_time`保留原值，显式`null`或空串清除。非法日期或时刻会报错，不会自动改为今天。`created_at`是录入时间，不是交易发生时间，也不能由调用方改写。
+- 遇到“今天/昨天”等相对日期，先用`GET /ping`返回的`today/server_time/timezone`核对实例日期与时区；`server_time`是实例本地时间字符串。不要拿机器人的本机日期或UTC日期替代。跨时区有歧义时先确认交易日期口径。
+- 用户明确说“昨天18:35”时传对应`date`和`time:"18:35"`；只有“昨天午饭”“昨天下午”或截图没有钟点时，时刻留空，不猜12:00/15:00，不复制录入时刻。AI草稿中的`txn_time`也须有原文/截图依据。
+- `GET /accounts`含`type/type_label/transaction_types`；例如`debit/储蓄卡`、`credit/信用卡`。先辨别账户类型和可用交易类型，同名账户使用已核实的ID，不从名称或图标猜类型。
+- 交易列表、recent和单笔详情返回`txn_date/txn_time/created_at`及`account_type/account_type_label`、`to_account_type/to_account_type_label`。转账分别说明两端类型；空账户不解释成现金。
+- 创建/更新回执的`transaction`可直接核验交易时间和账户类型。AI批量回执只有IDs时按ID查询详情；未知时刻如实说未提供，不能用`created_at`替代。CSV导出含独立“时间”列，回导保留已知时刻，JSON导出保留`txn_time`。
+
 ## 借钱、贷款、信用卡与定期记账
 
 用户提到借出、借入、收还款、车贷、房贷、信用卡账单、分期或还款时，先读 [金融与定期记账 API](references/finance-api.md)。这些场景不走普通消费自动入账：本金没有收支分类，金融付款须核对本金、费用、账户及已有流水。用户要求记录或核销不等于授权银行扣款，API只维护账本。
@@ -27,6 +37,10 @@ description: 家账簿（HomeLedger）记账、亲友借钱、贷款与信用卡
 已有借款按稳定条目ID关联，不能按姓名自动合并。同一操作超时重试须复用同一个operation_key及相同参数；不能换key反复创建。付款有关联流水时，通过付款详情整体更正、撤销或恢复。
 
 普通收支不得选 loan/receivable/payable 账户；信用卡可用于消费、退款等日常收支。普通转账两端不得选 credit/loan/receivable/payable，信用卡及贷款还款统一用金融还款 API。先读 GET /accounts 的 transaction_types 选择账户；被拒绝时不换成普通支出或伪造来源重试。
+
+余额调整、储蓄目标实际入账（`create_txn=true`）和批量报销等现有资金接口也可传`date/time`；只有计划/进度登记时不填实际时刻。返回交易时间是资金发生依据，关联已有来源时以公共服务的来源保护为准。
+
+修改已有交易或金融付款时，日期不能清除：明确传空串或null日期会被拒绝，省略日期才保留原发生日。时刻可按上述规则独立清除。
 
 ## 工作流程
 
@@ -42,7 +56,7 @@ curl -sS -X POST "$HOMELEDGER_URL/api/open/ai/bill" \
 ```
 
 - `confirm: true` 表示识别后直接入库；若用户说"先给我看看"，改为 `confirm: false`，
-  把返回的 `drafts`（每笔含 `type/txn_date/amount_cents/merchant/note`）列给用户确认后再以 `confirm: true` 重发。
+  把返回的 `drafts`（每笔含 `type/txn_date/txn_time/amount_cents/merchant/note`）列给用户确认后再以 `confirm: true` 重发。
 - 返回 `ok: true` 时，用 `created`（笔数）和 `warnings` 向用户汇报；`errors` 非空要如实转述。
 
 **截图会自动存档**：`confirm: true` 入库时，家账簿会把本次图片一并保存到账本附件库，
@@ -88,19 +102,19 @@ curl -sS -X POST "$HOMELEDGER_URL/api/open/transactions" \
 - `type`：`expense` 支出 / `income` 收入 / `transfer` 转账（也接受中文"支出/收入/转账"）
 - `amount`：元（小数）；`category`：分类名，如"餐饮"、"交通/打车"（父/子分类）
 - `account`：支付账户名，不存在会自动创建并在响应 `accounts_created` 里提示
-- `date`：`YYYY-MM-DD`，缺省为今天
+- `date`：实际交易日期`YYYY-MM-DD`；可另传`time:"18:35"`，仅在用户确有明确时刻时填写，完整规则见上文“交易时间与账户辨识”。
 
 ### 3. 查询连通性与最近记录
 
 ```bash
-# 连通性（返回绑定账本、角色、是否站点管理员）
+# 连通性（含绑定账本、角色、today/server_time/timezone）
 curl -sS "$HOMELEDGER_URL/api/open/ping" -H "Authorization: Bearer $HOMELEDGER_TOKEN"
 
-# 最近 10 笔（每笔含 images：已关联的账单截图）
+# 按发生日期/时刻排序的近期 10 笔（含交易时刻、账户类型、images）
 curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorization: Bearer $HOMELEDGER_TOKEN"
 ```
 
-用户问「刚才那笔记上了吗」时用 `/transactions/recent` 回答，不要凭记忆编。
+用户问「刚才那笔记上了吗」时，优先依据本次创建回执的`transaction`或返回ID查询详情。`/transactions/recent`按交易发生日/时刻排序，刚补记的往日账不一定出现在前10条，不能因此断言未入账，也不要凭记忆编造。
 
 ## 分类编辑、删除与恢复
 
@@ -126,12 +140,12 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 
 | 接口 | 用途 |
 | --- | --- |
-| `GET /api/open/transactions?type=&kind=&category_id=&account_id=&month=&from=&to=&q=&sort=&page=&page_size=` | 明细筛选（支持关键词、时间区间、分页，含每笔金额/分类/账户/标签/截图） |
-| `GET /api/open/transactions/:id` | 单笔详情（含分账与截图） |
+| `GET /api/open/transactions?type=&kind=&category_id=&account_id=&month=&from=&to=&q=&sort=&page=&page_size=` | 明细筛选（支持关键词、时间区间、分页，含每笔发生日期/时刻、录入时间、金额/分类/两端账户类型/标签/截图） |
+| `GET /api/open/transactions/:id` | 单笔详情（含实际时间/录入时间、两端账户类型、分账与截图） |
 | `GET /api/open/summary?from=&to=` | 区间收入/支出/结余 |
 | `GET /api/open/reports/categories?kind=expense&from=&to=` | 分类构成（`top=分类名` 下钻二级） |
 | `GET /api/open/reports/trend?months=6` | 近 N 月收支趋势；可选 month=YYYY-MM 指定截止月 |
-| `GET /api/open/accounts` / `GET /api/open/accounts` 含净资产 | 账户余额、净资产 |
+| `GET /api/open/accounts` | 账户余额、净资产及`type/type_label/transaction_types` |
 | `GET /api/open/categories` / `GET /api/open/tags` | 有效分类扁平清单、标签；分类可用 `show=deleted` 查询已删除项 |
 | `GET /api/open/debts` / `GET /api/open/budgets` / `GET /api/open/goals` / `GET /api/open/subscriptions` / `GET /api/open/recurring` | 借钱台账 / 预算 / 目标 / 订阅 / 定期记账 |
 | `GET /api/open/settings` | 站点与 AI 配置（API Key 永不回显，只有 `api_key_set`） |
@@ -144,7 +158,7 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 | `POST /api/open/transactions/:id` | **修改一笔**——只传要改的字段，其余沿用（如 `{"amount":58,"note":"改备注"}`） |
 | `POST /api/open/transactions/:id/delete` 或 `DELETE /api/open/transactions/:id` | **删除**（软删，可恢复） |
 | `POST /api/open/transactions/:id/restore` | 恢复已删除记录 |
-| `POST /api/open/transactions/bulk-delete` / `bulk-category` / `bulk-tag` / `bulk-reimburse` | 批量删除 / 改分类 / 加标签 / 报销入账（body: `ids` 数组） |
+| `POST /api/open/transactions/bulk-delete` / `bulk-category` / `bulk-tag` / `bulk-reimburse` | 批量删除 / 改分类 / 加标签 / 报销入账（body: `ids` 数组；`bulk-reimburse`可传实际入账`date/time`） |
 | `POST /api/open/accounts` / `:id` / `:id/archive` / `:id/delete` / `:id/adjust` | 账户增改停删；`adjust` 传 `actual_balance` 对齐余额（差额自动记余额调整） |
 | `POST /api/open/categories` / `:id` / `:id/delete` / `:id/restore`；`POST /api/open/tags` / `:id/delete` | 内置/自建分类的增改、软删除与恢复；标签管理 |
 | `POST /api/open/debts`（`create_txn:true` 同时记借出/借入流水）/ `:id/settle`（收还款，缺省金额=全部余额）/ `:id/delete` / `:id/restore` / `:id/link` | 借钱台账（完整参数见金融参考） |
@@ -164,7 +178,7 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 
 ## 汇报格式
 
-记账成功后向用户简要汇报，例如：
+记账成功后向用户简要汇报，并在补记或用户指定钟点时注明返回的实际交易日期/时刻及账户类型；时刻未知就省略钟点或标明未提供。例如：
 
 > ✅ 已记 2 笔：餐饮/午餐 ¥35.00（微信零钱）、交通/打车 ¥26.50（微信零钱），来自截图识别。
 

@@ -8,6 +8,7 @@
  */
 const { all, get, run, tx, nowStr, todayStr, recalcBalances } = require('../db');
 const { parseAmountToCents, monthOf } = require('./util');
+const transactionTime = require('./transaction-time');
 const { classifyByKeywords, guessAccountName, resolveCategoryId, resolveAccountId, cleanOwnerLabel } = require('./ai');
 
 /* ------------------------------- 编码与 CSV ------------------------------- */
@@ -85,7 +86,7 @@ const SKIP_STATUS = /已关闭|交易关闭|已退款|全额退款|退款成功|
 /** 导出 CSV type_key 列的合法值 */
 const TXN_KEYS = new Set(['expense','income','transfer','lend','borrow','repay_receive','repay_pay','reimburse','refund','fee','interest','invest_buy','invest_sell','adjust']);
 
-function normalizeRow({ date, direction, amountText, merchant, desc, categoryText, accountText, toAccountText, status, orderNo, typeKey, ownerText, noRhythmText }) {
+function normalizeRow({ date, time, clockSource, direction, amountText, merchant, desc, categoryText, accountText, toAccountText, status, orderNo, typeKey, ownerText, noRhythmText }) {
   const amountCents = parseAmountToCents(amountText);
   const dir = String(direction || '').trim();
   const key = String(typeKey || '').trim();
@@ -106,12 +107,24 @@ function normalizeRow({ date, direction, amountText, merchant, desc, categoryTex
   } else if (/收入|收/.test(dir)) type = 'income';
   else if (/支出|支/.test(dir)) type = 'expense';
   const text = `${categoryText || ''} ${desc || ''} ${merchant || ''}`;
+  let txnDate,txnTime=null,importError=null;
+  try {
+    txnDate=normalizeDate(date);
+    if(time===undefined&&clockSource&&/\d{4}[-\/年.]/.test(clockSource)&&normalizeDate(clockSource)!==txnDate)throw Error('交易日期与完整交易时间不一致');
+    const rawTime=time===undefined?timeFromDate(clockSource===undefined?date:clockSource):time;
+    txnTime=transactionTime.normalizeTime(rawTime ? String(rawTime).trim().replace(/^(\d):/,'0$1:') : null);
+  } catch(e) {
+    txnDate=String(date||'').slice(0,40);
+    importError=e.message;
+  }
   return {
     skip: false,
     neutral,
     type,
     amount_cents: amountCents,
-    txn_date: normalizeDate(date),
+    txn_date: txnDate,
+    txn_time: txnTime,
+    import_error: importError,
     merchant: (merchant || desc || '').slice(0, 60) || null,
     note: [categoryText, desc, status].filter(Boolean).join(' · ').slice(0, 200) || null,
     category_hint: categoryText || null,
@@ -128,11 +141,25 @@ function normalizeRow({ date, direction, amountText, merchant, desc, categoryTex
 
 function normalizeDate(v) {
   const s = String(v || '').trim();
-  let m = s.match(/(20\d{2})[-\/年.](\d{1,2})[-\/月.](\d{1,2})/);
-  if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
-  m = s.match(/(\d{1,2})[-\/](\d{1,2})[-\/](20\d{2})/);
-  if (m) return `${m[3]}-${String(m[1]).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}`;
-  return todayStr();
+  let m = s.match(/(\d{4})[-\/年.](\d{1,2})[-\/月.](\d{1,2})/);
+  if (m) return transactionTime.normalizeDate(`${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`);
+  m = s.match(/(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+  if (m) return transactionTime.normalizeDate(`${m[3]}-${String(m[1]).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}`);
+  return transactionTime.normalizeDate(s,todayStr());
+}
+
+function timeFromDate(value) {
+  const s=String(value||'').trim();
+  const m=/(?:^|[T\s])(\d{1,2}:\d{2}(?::\d{2})?)(?=$|\s)/.exec(s);
+  if(m)return m[1];
+  if(/[T\s]\d+:/.test(s))throw Error('交易时刻格式无效');
+  return null;
+}
+
+// 独立「时间」列只能精确匹配，避免误抓「交易时间」「最近修改时间」。
+function headerName(value) {return String(value||'').replace(/[（(].*?[)）]/g,'').trim().toLowerCase();}
+function exactHeaderIndex(header,candidates) {
+  return header.findIndex(h=>candidates.includes(headerName(h)));
 }
 
 /* --------------------------------- 主解析器 -------------------------------- */
@@ -148,7 +175,9 @@ function parseBill(buffer) {
   const source = detectSource(header, text);
   const body = rows.slice(headerIdx + 1).filter((r) => r.length > 2 && r.join('').replace(/[-,\s]/g, '').length > 0);
 
-  const iDate = headerIndex(header, ['交易时间', '交易日期', '日期', '时间', 'date']);
+  const iDate = exactHeaderIndex(header,['交易日期','日期','date','txn_date']);
+  const timestampIndices=['付款时间','交易时间','交易创建时间'].map(name=>exactHeaderIndex(header,[name])).filter(i=>i>=0);
+  const iTime = exactHeaderIndex(header,['时间','时刻','交易时刻','time','txn_time']);
   const iDir = headerIndex(header, ['收/支', '收支', '类型', '方向']);
   const iAmount = headerIndex(header, ['金额(元)', '金额', 'amount']);
   const iMerchant = headerIndex(header, ['交易对方', '对方', 'merchant', '商家']);
@@ -168,8 +197,12 @@ function parseBill(buffer) {
   for (const r of body) {
     const status = iStatus >= 0 ? r[iStatus] : '';
     if (status && SKIP_STATUS.test(status)) { skipped++; continue; }
+    const timestampIndex=timestampIndices.find(i=>r[i]);
     const norm = normalizeRow({
-      date: iDate >= 0 ? r[iDate] : '',
+      date: (iDate>=0?r[iDate]:'') || (timestampIndex===undefined?'':r[timestampIndex]),
+      time: iTime>=0?(r[iTime]||''):undefined,
+      // 订单创建时间不是付款时刻：只在没有其他日期时沿用其日期，不伪造发生时刻。
+      clockSource: timestampIndex===undefined?undefined:headerName(header[timestampIndex])==='交易创建时间'?'':r[timestampIndex],
       direction: iDir >= 0 ? r[iDir] : '',
       amountText: iAmount >= 0 ? r[iAmount] : '',
       merchant: iMerchant >= 0 ? r[iMerchant] : '',
@@ -224,21 +257,28 @@ function importRecords({
   const errors = [];
   let imported = 0, skipped = 0, failed = 0;
   const list = includeNeutral ? records.concat(neutralRecords) : records.slice();
-  const dupSet = new Set();
+  const dupSet = new Set(),baseSet = new Set(),unknownSet = new Set();
   // 预载已有记录指纹，避免重复导入
   for (const t of all(
-    'SELECT txn_date, amount_base_cents, merchant FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND source = ?',
+    'SELECT txn_date, txn_time, amount_base_cents, merchant FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND source = ?',
     ledgerId, 'import'
   )) {
-    dupSet.add(`${t.txn_date}|${t.amount_base_cents}|${t.merchant || ''}`);
+    const base=`${t.txn_date}|${t.amount_base_cents}|${t.merchant || ''}`;
+    baseSet.add(base);
+    dupSet.add(`${base}|${t.txn_time||''}`);
+    if(!t.txn_time)unknownSet.add(base);
   }
 
   tx(() => {
     for (const rec of list) {
       try {
         require('../db').db.exec('SAVEPOINT import_row');
-        const fp = `${rec.txn_date}|${rec.amount_cents}|${rec.merchant || ''}`;
-        if (dupSet.has(fp)) { skipped++; require('../db').db.exec('RELEASE import_row'); continue; }
+        if(rec.import_error)throw Error(rec.import_error);
+        const txnDate=transactionTime.normalizeDate(rec.txn_date,todayStr());
+        const txnTime=transactionTime.normalizeTime(rec.txn_time);
+        const base = `${txnDate}|${rec.amount_cents}|${rec.merchant || ''}`;
+        const fp = `${base}|${txnTime||''}`;
+        if (txnTime ? dupSet.has(fp)||unknownSet.has(base) : baseSet.has(base)) { skipped++; require('../db').db.exec('RELEASE import_row'); continue; }
 
         let categoryId = null;
         let toAccountId = null;
@@ -287,10 +327,10 @@ function importRecords({
         const inserted=run(
           `INSERT INTO transactions
            (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id, to_account_id, category_id,
-            user_id, txn_date, note, merchant, status, source, ai_json, owner_label, no_rhythm, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            user_id, txn_date, txn_time, note, merchant, status, source, ai_json, owner_label, no_rhythm, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           ledgerId, rec.type, signedAmount, 'CNY', 1, signedAmount,
-          accountId, toAccountId, categoryId, userId, rec.txn_date, rec.note, rec.merchant,
+          accountId, toAccountId, categoryId, userId, txnDate, txnTime, rec.note, rec.merchant,
           'cleared', 'import', JSON.stringify({ source, order_no: rec.order_no, neutral: !!rec.neutral }),
           rec.owner_label || null,
           rec.no_rhythm ? 1 : 0,
@@ -302,6 +342,8 @@ function importRecords({
         require('./finance/cards').afterTransactions(ledgerId,[inserted.lastInsertRowid]);
         require('../db').db.exec('RELEASE import_row');
         dupSet.add(fp);
+        baseSet.add(base);
+        if(!txnTime)unknownSet.add(base);
         imported++;
       } catch (e) {
         require('../db').db.exec('ROLLBACK TO import_row');require('../db').db.exec('RELEASE import_row');
@@ -339,13 +381,13 @@ function toCsv(header, rows) {
   return '\uFEFF' + lines.join('\r\n') + '\r\n';
 }
 
-// 第二列「类型」是人读中文 label，type_key 是机读枚举（回导时优先用它精确还原类型）；
+// 「类型」是人读中文 label，type_key 是机读枚举（回导时优先用它精确还原类型）；
 // 「一次性大额」是 P7 修订的人工标记（1/空），回读后预测节奏外推必剔
-const EXPORT_HEADER = ['日期', '类型', '金额', '币种', '折算金额', '分类', '账户', '转入账户', '成员', '归属人', '一次性大额', '商家', '备注', '标签', '来源', '状态', '备注2', 'type_key'];
+const EXPORT_HEADER = ['日期', '时间', '类型', '金额', '币种', '折算金额', '分类', '账户', '转入账户', '成员', '归属人', '一次性大额', '商家', '备注', '标签', '来源', '状态', '备注2', 'type_key'];
 
 function exportRows(ledgerId, rows) {
   return rows.map((t) => [
-    t.txn_date, t.type_label || t.type, (t.amount_cents / 100).toFixed(2), t.currency,
+    t.txn_date, t.txn_time || '', t.type_label || t.type, (t.amount_cents / 100).toFixed(2), t.currency,
     (t.amount_base_cents / 100).toFixed(2), t.category_path || '', t.account_name || '',
     t.to_account_name || '', t.member_name || '', t.owner_label || '',
     Number(t.no_rhythm) === 1 ? '1' : '', t.merchant || '', t.note || '',

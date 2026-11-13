@@ -143,6 +143,7 @@
         <option value="">报销入账到…</option>
         <% form.accounts.forEach(function(a){ %><option value="<%= a.id %>"><%= a.name %></option><% }); %>
       </select>
+      <details><summary class="btn btn-sm">报销时间（可选）</summary><div class="row wrap mt8"><div class="field"><label>报销入账日期</label><input type="date" name="date"></div><div class="field"><label>交易时刻</label><input type="time" step="1" name="time"></div></div></details>
       <button class="btn btn-sm btn-primary" name="action" value="reimburse" type="submit">报销入账</button>
     </div>
   </div>

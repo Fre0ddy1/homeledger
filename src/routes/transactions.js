@@ -31,6 +31,7 @@ function readForm(body) {
     category_id: body.category_id || null,
     debt_id: body.debt_id || null,
     txn_date: body.txn_date || todayStr(),
+    txn_time: body.txn_time,
     note: body.note || '',
     merchant: body.merchant || '',
     owner_label: body.owner_label || null,
@@ -106,6 +107,7 @@ router.get('/new', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
     type,
     amount: req.query.amount || '',
     txn_date: req.query.date || todayStr(),
+    txn_time: req.query.time || '',
     category_id: req.query.category_id || '',
     account_id: req.query.account_id || (form.accounts[0] ? form.accounts[0].id : ''),
     to_account_id: '',
@@ -192,7 +194,7 @@ router.post('/bulk', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
         const reimburseAcc = req.body.account_id
           ? Number(req.body.account_id)
           : Number(get('SELECT id FROM accounts WHERE ledger_id = ? AND is_archived = 0 ORDER BY sort_order, id LIMIT 1', ledgerId)?.id) || null;
-        const r = txn.markReimbursed(ids, ledgerId, req.session.userId, reimburseAcc);
+        const r = txn.markReimbursed(ids, ledgerId, req.session.userId, reimburseAcc,req.body);
         res.flash('success', `已标记 ${r.count} 笔为已报销，生成入账 ${(r.total / 100).toFixed(2)}`);
       } catch (e) {
         res.flash('error', e.message);

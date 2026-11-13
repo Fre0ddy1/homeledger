@@ -33,8 +33,8 @@
   <div class="flash error"><span><%= error %></span></div>
 <% } %>
 
-<form method="post" action="<%= action %>" id="txn-form">
-  <template id="transaction-account-options"><option value="">请选择账户…</option><% form.accounts.forEach(function(a){ %><option value="<%= a.id %>" data-types="<%= a.transaction_types %>"><%= a.icon %> <%= a.name %>（<%= helpers.fmtAmount(a.balance_cents) %>）</option><% }); %></template>
+<form method="post" action="<%= action %>" id="txn-form" data-timezone="<%= Intl.DateTimeFormat().resolvedOptions().timeZone %>">
+  <template id="transaction-account-options"><option value="">请选择账户…</option><% form.accounts.forEach(function(a){ %><option value="<%= a.id %>" data-types="<%= a.transaction_types %>"><%= a.icon %> <%= a.name %> · <%= a.type_label %>（<%= helpers.fmtAmount(a.balance_cents) %>）</option><% }); %></template>
   <input type="hidden" name="_csrf" value="<%= csrf %>">
   <input type="hidden" name="type" id="f-type" value="<%= cur %>">
   <input type="hidden" name="back" value="<%= back %>">
@@ -66,10 +66,15 @@
           </div>
         </div>
 
-        <div class="row wrap" style="gap:12px">
+        <div class="row wrap transaction-clock-row" style="gap:12px">
           <div class="field" style="flex:1;min-width:150px">
-            <label>日期</label>
+            <label>交易日期</label>
             <input type="date" name="txn_date" value="<%= (t.txn_date || '').slice(0,10) %>" required>
+          </div>
+          <div class="field" style="flex:1;min-width:150px">
+            <label for="f-txn-time">交易时刻 <span class="muted tiny">（可选）</span></label>
+            <input type="time" id="f-txn-time" name="txn_time" step="1" value="<%= t.txn_time || '' %>">
+            <div class="row mt8"><button type="button" class="btn btn-sm hidden" data-txn-now>此刻</button><button type="button" class="btn btn-sm hidden" data-txn-time-clear>清除时刻</button></div>
           </div>
           <div class="field" style="flex:1;min-width:150px">
             <label>成员</label>
@@ -85,7 +90,7 @@
             <select name="account_id" id="f-account">
               <option value="">请选择账户…</option>
               <% form.accounts.filter(function(a){return a.transaction_types.split(',').includes(cur);}).forEach(function(a){ %>
-                <option value="<%= a.id %>" <%= Number(t.account_id) === Number(a.id) ? 'selected' : '' %>><%= a.icon %> <%= a.name %>（<%= helpers.fmtAmount(a.balance_cents) %>）</option>
+                <option value="<%= a.id %>" <%= Number(t.account_id) === Number(a.id) ? 'selected' : '' %>><%= a.icon %> <%= a.name %> · <%= a.type_label %>（<%= helpers.fmtAmount(a.balance_cents) %>）</option>
               <% }); %>
             </select>
           </div>
@@ -94,7 +99,7 @@
             <select name="to_account_id">
               <option value="">请选择账户…</option>
               <% form.accounts.filter(function(a){return a.transaction_types.split(',').includes(cur);}).forEach(function(a){ %>
-                <option value="<%= a.id %>" <%= Number(t.to_account_id) === Number(a.id) ? 'selected' : '' %>><%= a.icon %> <%= a.name %></option>
+                <option value="<%= a.id %>" <%= Number(t.to_account_id) === Number(a.id) ? 'selected' : '' %>><%= a.icon %> <%= a.name %> · <%= a.type_label %></option>
               <% }); %>
             </select>
           </div>
@@ -221,7 +226,7 @@
       <% if(mode==='edit'){ %><div class="card entry-record-meta">
         <% if (mode === 'edit') { %>
         <div class="mt12">
-          <div class="kv"><span class="k">创建时间</span><span class="v mono"><%= helpers.fmtDateTime(t.created_at) %></span></div>
+          <div class="kv"><span class="k">录入时间</span><span class="v mono"><%= helpers.fmtDateTime(t.created_at) %></span></div>
           <div class="kv"><span class="k">最后修改</span><span class="v mono"><%= helpers.fmtDateTime(t.updated_at) %></span></div>
           <div class="kv"><span class="k">来源</span><span class="v"><%= t.source %></span></div>
         </div>

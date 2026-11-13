@@ -47,6 +47,7 @@
   <a class="m-tab <%= activeNav === 'more' ? 'active' : '' %>" href="/more"><svg class="icon"><use href="#i-library"></use></svg><span>更多</span></a>
 </nav>
 <script src="/static/js/app.js?v=<%= assetV.js %>" defer></script>
+<script src="/static/js/category-icons.js?v=<%= typeof assetV !== 'undefined' ? assetV.categoryIcons : '' %>" defer></script>
 <script src="/static/js/m.js?v=<%= assetV.m %>" defer></script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 'use strict';
-const db=require('../../db'),c=require('./common');
+const db=require('../../db'),c=require('./common'),clock=require('../transaction-time');
 const METHODS=['equal_payment','equal_principal','interest_only','manual'];
 function plan(body,principal){
   principal=c.cents(principal);const term=Number(body.term_n),rate=Number(body.annual_rate||0),method=body.method||'equal_payment',start=c.date(body.start_date),day=Number(body.due_day);
@@ -22,10 +22,12 @@ function installments(lid,id){return db.all(`SELECT i.*,COALESCE(SUM(CASE WHEN p
   FROM finance_installments i LEFT JOIN finance_allocations a ON a.target_kind='loan' AND a.target_id=i.id AND a.ledger_id=i.ledger_id
   LEFT JOIN finance_payments p ON p.id=a.payment_id AND p.ledger_id=i.ledger_id
   WHERE i.ledger_id=? AND i.contract_id=? AND i.deleted_at IS NULL GROUP BY i.id ORDER BY i.due_date,i.revision,i.seq`,lid,Number(id)).map(i=>({...i,remaining_principal:i.principal_cents-i.paid_principal,remaining_interest:i.interest_cents-i.paid_interest,remaining_fee:i.fee_cents-i.paid_fee}));}
-function detail(lid,id,includeDeleted=false){const loan=c.row('finance_contracts',lid,id,includeDeleted),account=c.account(lid,loan.account_id,{type:'loan'});return {...loan,account,remaining_principal_cents:Math.max(0,-Number(account.balance_cents)),installments:installments(lid,id),payments:db.all("SELECT * FROM finance_payments WHERE ledger_id=? AND target_kind='loan' AND target_id=? ORDER BY id DESC",lid,Number(id))};}
+function detail(lid,id,includeDeleted=false){const loan=c.row('finance_contracts',lid,id,includeDeleted),account=c.account(lid,loan.account_id,{type:'loan'});return {...loan,account,remaining_principal_cents:Math.max(0,-Number(account.balance_cents)),installments:installments(lid,id),disbursement:loan.disbursement_txn_id?require('../txn').getTransaction(loan.disbursement_txn_id,lid):null,payments:db.all("SELECT * FROM finance_payments WHERE ledger_id=? AND target_kind='loan' AND target_id=? ORDER BY id DESC",lid,Number(id))};}
 function list(lid,deleted=false){return db.all('SELECT f.*,a.balance_cents FROM finance_contracts f JOIN accounts a ON a.id=f.account_id AND a.ledger_id=f.ledger_id WHERE f.ledger_id=? AND f.deleted_at IS '+(deleted?'NOT ':'')+'NULL ORDER BY f.id DESC',lid);}
 function insertPlan(lid,id,rows,revision){for(const p of rows)db.run('INSERT INTO finance_installments(ledger_id,contract_id,seq,due_date,principal_cents,interest_cents,fee_cents,revision)VALUES(?,?,?,?,?,?,?,?)',lid,id,p.seq,p.due_date,p.principal_cents,p.interest_cents,p.fee_cents,revision);}
 function create(lid,uid,body){return db.tx(()=>{
+  if(body.time!==undefined||body.txn_time!==undefined){body={...body,time:clock.normalizeTime(body.time!==undefined?body.time:body.txn_time)};delete body.txn_time;}
+  if(body.time!==undefined&&body.time!==null&&body.opening_mode!=='disbursement')throw Error('只有新放款实际到账才填写交易时刻，登记期初负债无需时刻');
   const key=String(body.operation_key||'').trim().slice(0,100),signature=JSON.stringify(Object.keys(body).filter(k=>k!=='_csrf').sort().map(k=>[k,body[k]]));
   if(key){const old=db.get('SELECT * FROM finance_create_operations WHERE ledger_id=? AND operation_key=?',lid,key);if(old){if(old.signature!==signature)throw Error('同一操作标识的贷款参数不同');return detail(lid,old.contract_id,true);}}
   const name=String(body.name||'').trim().slice(0,60);if(!name)throw Error('请填写贷款名称');const remaining=c.cents(body.remaining_principal_cents??body.original_principal_cents),original=c.cents(body.original_principal_cents??remaining);if(original<remaining)throw Error('原始本金不能小于剩余本金');
@@ -36,7 +38,7 @@ function create(lid,uid,body){return db.tx(()=>{
   insertPlan(lid,id,schedule,1);
   if(body.opening_mode==='disbursement'){
     if(body.account_id)throw Error('已有账户请使用余额接管模式，不能重复放款');
-    const funding=c.account(lid,body.funding_account_id,{currency,funding:true});const tid=require('../txn').createTransaction(lid,uid,{type:'transfer',amount_cents:remaining,account_id:account.id,to_account_id:funding.id,currency,txn_date:c.date(body.start_date),note:'贷款放款 · '+name,source:'loan'},{channel:'finance'});db.run('UPDATE finance_contracts SET disbursement_txn_id=? WHERE id=?',tid,id);
+    const funding=c.account(lid,body.funding_account_id,{currency,funding:true});const tid=require('../txn').createTransaction(lid,uid,{type:'transfer',amount_cents:remaining,account_id:account.id,to_account_id:funding.id,currency,txn_date:c.date(body.start_date),txn_time:clock.normalizeTime(body.time),note:'贷款放款 · '+name,source:'loan'},{channel:'finance'});db.run('UPDATE finance_contracts SET disbursement_txn_id=? WHERE id=?',tid,id);
   }
   if(key)db.run('INSERT INTO finance_create_operations VALUES(?,?,?,?)',lid,key,id,signature);
   return detail(lid,id);

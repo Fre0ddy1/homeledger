@@ -34,6 +34,7 @@ const SUITES = [
   'verify-simple-repayment.js',
   'verify-navigation.js',
   'verify-transactions.js',
+  'verify-transaction-time.js',
   'verify-txn-detail.js',
   'verify-importers.js',
   'verify-ai-ask.js',

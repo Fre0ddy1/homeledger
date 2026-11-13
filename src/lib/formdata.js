@@ -1,6 +1,6 @@
 'use strict';
 /** 表单/页面公共数据加载 */
-const { all, get } = require('../db');
+const { all, get, ACCOUNT_TYPE_MAP } = require('../db');
 
 function categoryTree(ledgerId, kind = 'expense') {
   const rows = require('./categories').list(ledgerId, kind);
@@ -16,7 +16,7 @@ function flatCategories(ledgerId, kind = null) {
 }
 
 function accounts(ledgerId) {
-  return all('SELECT * FROM accounts WHERE ledger_id = ? AND is_archived = 0 ORDER BY sort_order, id', ledgerId);
+  return all('SELECT * FROM accounts WHERE ledger_id = ? AND is_archived = 0 ORDER BY sort_order, id', ledgerId).map(a=>({...a,type_label:ACCOUNT_TYPE_MAP[a.type]?.label||'其他'}));
 }
 function archivedAccounts(ledgerId) {
   return all('SELECT * FROM accounts WHERE ledger_id = ? AND is_archived = 1 ORDER BY sort_order, id', ledgerId);

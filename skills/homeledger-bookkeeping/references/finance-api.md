@@ -10,9 +10,19 @@
 - 贷款创建、实际还款、费用补记使用唯一`operation_key`（建议UUID），持久保存到操作完成；网络超时复用原key和完全相同参数重试。更正付款使用新key。同key参数不同会被拒绝。请求成功后以返回ID查询核验，不能把改key当重试。
 - `confirm`、`confirm_sources`、`release_credit`、`confirm_revision`代表不同的具体确认范围。只在用户已经授权该范围时传true；不因技能或HTTP错误自行扩大授权。部分成功时逐项汇报，不重复整批入库。
 
+## 实际交易时刻与录入时间
+
+更正时省略日期保留原发生日；明确传`date/txn_date`为空串或null会被拒绝，不能清除日期或偷偷改成今天。
+
+- 真实借出/借入、收还款、贷款/信用卡付款和已发生费用接收`date`（兼容`txn_date`）及可选`time`（兼容`txn_time`，`time`优先），格式`HH:mm`或`HH:mm:ss`，规范化为`HH:mm:ss`后保存并参与操作签名。重试保持原operation_key和请求字段；不为重试生成新时刻。
+- 未提供时刻为`null`，不取调用/调度执行时刻；只有用户或原账单明确钟点才填写。`created_at`始终是系统录入时间。普通交易更新和付款`amend`省略时刻保留，显式`null`/空串清除，但已有来源保护仍生效。发生日期/时刻按`GET /ping`的`timezone`解释，相对日期先读`today/server_time`。
+- 有已有来源时，付款采用资金账户扣款行的发生日期；未传时刻继承该来源。来源时刻已知时，显式冲突（包括清空）会拒绝；需要更正应通过受支持的来源更正流程，不用核销时刻覆盖来源事实。来源时刻未知时可补本次付款/新分项的实际时刻，原始来源及快照不修改，各来源原时刻独立保留。
+- 来源预览返回`txn_date/txn_time/source_times`。付款详情/实际付款回执含`txn_date/txn_time/created_at`，分项transactions含各自时刻及两端`account_type/account_type_label`、`to_account_type/to_account_type_label`；付款头也有两端类型。恢复会核验来源日期与时刻没有变化，不能先改源流水再盲目恢复旧核销。
+- 期初借钱登记`create_txn:false`和贷款`snapshot`没有本次资金事实，不传非空时刻。计划到期日、信用卡posted_date和实际发生时刻语义不同；定期/订阅只有计划日期时不猜时刻，不能把执行时间当消费时间。
+
 ## 普通记账账户资格
 
-GET /accounts 每个账户新增 transaction_types 数组，列出普通记账可用类型；空数组不表示账户失效，只表示应在对应台账操作。普通收支（含订阅、定期消费）排除 loan/receivable/payable，保留 credit 消费和退款；普通 transfer 两端另外排除 credit，投资和其他自有资产账户仍可划转。借钱本金用实际资金账户，不能选择应收/应付账户代替现金流。
+GET /accounts 每个账户含 type/type_label（如credit/信用卡、debit/储蓄卡）及 transaction_types 数组，列出普通记账可用类型；空数组不表示账户失效，只表示应在对应台账操作。普通收支（含订阅、定期消费）排除 loan/receivable/payable，保留 credit 消费和退款；普通 transfer 两端另外排除 credit，投资和其他自有资产账户仍可划转。借钱本金用实际资金账户，不能选择应收/应付账户代替现金流。
 
 POST /transactions 及编辑、订阅、定期规则会在服务端检查，不符合时返回400。source 或 channel 请求字段不能获得金融服务权限。实际还款用 POST /finance/repayments；银行导入的已发生放款/还款可保留为待关联来源，再由金融服务确认核销，不新记第二次资金流。
 
@@ -30,11 +40,11 @@ POST /transactions 及编辑、订阅、定期规则会在服务端检查，不�
 
 `GET /debts`返回有效条目及应收/应还；`?show=deleted`查询已归档。`GET /debts/:id`含稳定ID、余额、历史关联流水，已归档也可查。
 
-`POST /debts`：`counterparty,direction(receivable/payable),amount_cents,currency,account_id,date,due_date,note,create_txn,operation_key`。`create_txn:true`表示新发生借出/借入，生成本金流水；false只登记期初余额，不生成现金流。创建同名对象仍是独立借款。`POST /debts/:id`修改姓名、备注、到期日及`remind_enabled`，不改本金。
+`POST /debts`：`counterparty,direction(receivable/payable),amount_cents,currency,account_id,date,time,due_date,note,create_txn,operation_key`。`create_txn:true`表示新发生借出/借入，生成本金流水；false只登记期初余额，不生成现金流。创建同名对象仍是独立借款。`POST /debts/:id`修改姓名、备注、到期日及`remind_enabled`，不改本金。
 
-`POST /debts/:id/settle`：`account_id,amount_cents,date,operation_key`；金额省略表示全余额。生成实际收还并核销，拒绝超额。普通`POST /transactions`可传明确`debt_id`；未知的收还款保持待关联，不能凭商家名自动选择对象。
+`POST /debts/:id/settle`：`account_id,amount_cents,date,time,operation_key`；金额省略表示全余额。生成实际收还并核销，拒绝超额；回执新增`txn_date/txn_time/created_at`，重试返回原记录的时间。普通`POST /transactions`可传明确`debt_id`；未知的收还款保持待关联，不能凭商家名自动选择对象。
 
-`POST /debts/:id/link`：`transaction_id,opening_included`。仅补关联、不再记现金流。`opening_included:true`仅在用户确认该原流水已包含在登记期初余额时使用，避免重复改变台账本金。
+`POST /debts/:id/link`：`transaction_id,opening_included`。仅补关联、不再记现金流，也不修改原流水的发生日期/时刻或录入时间。`opening_included:true`仅在用户确认该原流水已包含在登记期初余额时使用，避免重复改变台账本金。
 
 `POST /debts/:id/delete`归档；`POST /debts/:id/restore`恢复，历史流水保留。
 
@@ -48,7 +58,7 @@ POST /transactions 及编辑、订阅、定期规则会在服务端检查，不�
 {"name":"车贷","kind":"car","institution":"示例银行","original_principal_cents":12000000,"remaining_principal_cents":12000000,"term_n":36,"annual_rate":3.6,"method":"equal_principal","start_date":"2026-11-01","due_day":20,"opening_mode":"snapshot","operation_key":"<持久化UUID>"}
 ```
 
-`kind`为loan/car/mortgage；`method`为equal_payment/equal_principal/interest_only/manual；名义年利率用百分数。月末自动钳制，尾期分币归整。manual传`schedule:[{due_date,principal_cents,interest_cents,fee_cents}]`，本金和必须等于剩余本金。snapshot新建期初负债；可传已有`account_id`接管同币种loan账户，要求账面负债完全一致；disbursement新建贷款并传`funding_account_id`记录放款到账。不会改写已有账户余额来凑数。
+`kind`为loan/car/mortgage；`method`为equal_payment/equal_principal/interest_only/manual；名义年利率用百分数。月末自动钳制，尾期分币归整。manual传`schedule:[{due_date,principal_cents,interest_cents,fee_cents}]`，本金和必须等于剩余本金。snapshot新建期初负债；可传已有`account_id`接管同币种loan账户，要求账面负债完全一致；disbursement新建贷款并传`funding_account_id`记录放款到账。不会改写已有账户余额来凑数。disbursement可传`time/txn_time`记录实际到账时刻，发生日期仍为`start_date`，详情的`disbursement`可核验真实流水；snapshot传非空时刻会拒绝。
 
 `POST /finance/loans/:id`修改name/institution/remind_enabled；`/:id/delete`归档；`/:id/restore`恢复。
 
@@ -56,11 +66,11 @@ POST /transactions 及编辑、订阅、定期规则会在服务端检查，不�
 
 ## 实际付款、已有来源及核销
 
-`POST /finance/loans/:id/payments`：`account_id,principal_cents,interest_cents,fee_cents,date,operation_key`。账户为现金/储蓄/支付资金账户。服务计算总额；若同时传amount_cents，必须与分项和一致。可选`installment_id`；按银行实扣校正该期费用时传`adjust_installment:true`。也可传`allocations:[{installment_id,principal_cents,interest_cents,fee_cents}]`明确多期分配，分项合计必须等于付款；缺省按到期顺序分配。计划不足时先核对并调整，不能虚构金额。
+`POST /finance/loans/:id/payments`：`account_id,principal_cents,interest_cents,fee_cents,date,time,operation_key`。账户为现金/储蓄/支付资金账户。服务计算总额；若同时传amount_cents，必须与分项和一致。可选`installment_id`；按银行实扣校正该期费用时传`adjust_installment:true`。也可传`allocations:[{installment_id,principal_cents,interest_cents,fee_cents}]`明确多期分配，分项合计必须等于付款；缺省按到期顺序分配。计划不足时先核对并调整，不能虚构金额。
 
-`POST /finance/cards/:id/payments`：`account_id,amount_cents,date,operation_key`。产生一笔资金账户到信用卡的transfer，不重复记支出。可选`allocations:[{statement_id,amount_cents}]`，支持一笔多期、一期多笔。默认核销已出账且无待核对差异的账单，剩余保留为未分配预还款；溢缴款按真实账户余额显示。
+`POST /finance/cards/:id/payments`：`account_id,amount_cents,date,time,operation_key`。产生一笔资金账户到信用卡的transfer，不重复记支出。可选`allocations:[{statement_id,amount_cents}]`，支持一笔多期、一期多笔。默认核销已出账且无待核对差异的账单，剩余保留为未分配预还款；溢缴款按真实账户余额显示。
 
-**付款已经导入/记过时**：先调用`POST /finance/loans/:id/sources/preview`或`/finance/cards/:id/sources/preview`，传与付款相同的金额和账户及`existing_transaction_ids:[id]`（或单个existing_transaction_id）。正确等额transfer只关联；一条资金扣款expense/fee/未关联repay_pay，可再带一条目标账户等额income/refund/未关联repay_receive。返回来源ID、原/整理后资金扣款及整理后费用，用户确认替换后在实际payments请求传相同来源及`confirm_sources:true`。来源替换会保留原记录、生成规范分项，不再叠加一份扣款；不确定来源时停止该写入并说明缺少的对应关系，不猜测或自动匹配。
+**付款已经导入/记过时**：先调用`POST /finance/loans/:id/sources/preview`或`/finance/cards/:id/sources/preview`，传与付款相同的金额和账户及`existing_transaction_ids:[id]`（或单个existing_transaction_id）。正确等额transfer只关联；一条资金扣款expense/fee/未关联repay_pay，可再带一条目标账户等额income/refund/未关联repay_receive。返回来源ID、发生日期/时刻与原始`source_times`、原/整理后资金扣款及整理后费用，用户确认替换后在实际payments请求传相同来源及`confirm_sources:true`。来源替换会保留原记录、生成规范分项，不再叠加一份扣款；不确定来源时停止该写入并说明缺少的对应关系，不猜测或自动匹配。
 
 `GET /finance/payments/:id`返回分项transactions、原始sources、allocations、撤销与更正状态。`POST /finance/payments/:id/amend`使用新operation_key及更正字段，原子撤销旧组并建立新组；旧组replaced_by指向更正记录。`/:id/reverse`要求`confirm:true`整体撤销；新建资金流水撤销，原有正确transfer只解除核销、资金流水保留。`/:id/restore`检查来源、账单/期次状态和余额后整体恢复，冲突会拒绝。信用卡`/:id/allocate`传完整allocations替换核销，不移动资金。
 
@@ -76,9 +86,9 @@ POST /transactions 及编辑、订阅、定期规则会在服务端检查，不�
 
 `POST /finance/transactions/:id/posting`：posted_date，可选refund_of_id（仅同卡refund关联同卡原expense）。`POST /finance/transactions/:id/installment`：term_n(1–120)、first_closing、interest_cents、fee_cents；后两项仅为预计总费用，不提前产生支出。`POST /finance/plans/:id/cancel`取消计划；已确认账单来源先撤销账单确认再整理。活动分期原消费资金字段受控，须先取消分期。
 
-`POST /finance/statements/:id/charges`：实际interest_cents、fee_cents、date、operation_key，可选interest_category_id/fee_category_id。产生真实卡片利息/费用流水；账单已确认时要用户确认`confirm_revision:true`并保留/明确传confirmed_cents银行总额，保存新版本。不能把预计费用当实际费用重复入账。
+`POST /finance/statements/:id/charges`：实际interest_cents、fee_cents、date、可选time、operation_key，可选interest_category_id/fee_category_id。产生真实卡片利息/费用流水；账单已确认时要用户确认`confirm_revision:true`并保留/明确传confirmed_cents银行总额，保存新版本。回执含`transaction_ids/txn_date/txn_time`；账单items及付款allocations也可读取真实时刻。不能把预计费用当实际费用重复入账。
 
-`GET /transactions/:id`的transaction包含debt_id、finance_payments、credit_statements、credit_plan、posted_date/refund_of_id/recurring_run_id。关联付款请在付款接口整体操作，不绕过受控分项。金融账户类型、币种、期初余额与账期受引用保护，不能通过账户编辑/删除/调整余额破坏台账。
+`GET /transactions/:id`的transaction包含txn_date/txn_time/created_at、两端账户类型、debt_id、finance_payments、credit_statements、credit_plan、posted_date/refund_of_id/recurring_run_id。关联付款请在付款接口整体操作，不绕过受控分项。金融账户类型、币种、期初余额与账期受引用保护，不能通过账户编辑/删除/调整余额破坏台账。
 
 ## 定期记账边界与幂等
 

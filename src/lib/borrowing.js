@@ -1,11 +1,14 @@
 'use strict';
-const {all,get,run,tx,nowStr,todayStr}=require('../db');
+const {all,get,run,tx,nowStr,todayStr,ACCOUNT_TYPE_MAP}=require('../db');
+const clock=require('./transaction-time');
+const requestedTime=body=>clock.normalizeTime(body.time!==undefined?body.time:body.txn_time);
+const requestedDate=body=>body.date??body.txn_date;
 const TYPES=['lend','borrow','repay_receive','repay_pay'];
 const direction=type=>['lend','repay_receive'].includes(type)?'receivable':'payable';
 function detail(lid,id,deleted=false){
   const d=get('SELECT * FROM debts WHERE ledger_id=? AND id=?'+(deleted?'':' AND deleted_at IS NULL'),lid,Number(id));
   if(!d)throw Error('借钱条目不存在或不属于当前账本');
-  d.transactions=all('SELECT * FROM transactions WHERE ledger_id=? AND debt_id=? ORDER BY txn_date,id',lid,d.id);
+  d.transactions=all('SELECT t.*,a.name AS account_name,a.type AS account_type FROM transactions t LEFT JOIN accounts a ON a.id=t.account_id AND a.ledger_id=t.ledger_id WHERE t.ledger_id=? AND t.debt_id=? ORDER BY t.txn_date,t.txn_time IS NULL,t.txn_time,t.id',lid,d.id).map(t=>({...t,txn_time_label:clock.formatTime(t.txn_time),account_type_label:ACCOUNT_TYPE_MAP[t.account_type]?.label||null}));
   return d;
 }
 function activate(d){
@@ -23,12 +26,13 @@ function create(lid,uid,body){return tx(()=>{
   if(!name||!Number.isSafeInteger(amount)||amount<=0)throw Error('请填写对方姓名和有效金额');
   const currency=require('./finance/common').baseCurrency(lid,body.currency),dir=['receivable','借出'].includes(body.direction)?'receivable':'payable',post=body.create_txn===true;
   if(post||body.account_id)validateAccount(lid,body.account_id,currency);
-  if(body.date)require('./finance/common').date(body.date);if(body.due_date)require('./finance/common').date(body.due_date);
-  const key=String(body.operation_key||'').slice(0,100),signature=JSON.stringify(['create',name,dir,amount,Number(body.account_id)||null,currency,post,body.date||null,body.due_date||null,body.note||null]);
+  const date=clock.normalizeDate(requestedDate(body),todayStr()),time=requestedTime(body);if(body.due_date)require('./finance/common').date(body.due_date);
+  if(!post&&time!==null)throw Error('期初登记没有本次资金流水，不填写交易时刻');
+  const key=String(body.operation_key||'').slice(0,100),signature=JSON.stringify(['create',name,dir,amount,Number(body.account_id)||null,currency,post,requestedDate(body)?date:null,time,body.due_date||null,body.note||null]);
   if(key){const old=get('SELECT * FROM borrowing_operations WHERE ledger_id=? AND operation_key=?',lid,key);if(old){if(old.signature!==signature)throw Error('重复请求参数不一致');return {...detail(lid,old.debt_id,true),txn_id:old.transaction_id||null,txn_created:!!old.transaction_id,synced_to_debts:!!old.transaction_id};}}
   const id=run(`INSERT INTO debts(ledger_id,direction,counterparty,principal_cents,balance_cents,currency,account_id,due_date,status,note,created_at,opening_cents,initial_principal_cents,managed)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)`,lid,dir,name,post?0:amount,post?0:amount,currency,body.account_id||null,body.due_date||null,'open',String(body.note||'').slice(0,200),nowStr(),post?0:amount,post?0:amount).lastInsertRowid;
-  const tid=post?require('./txn').createTransaction(lid,uid,{type:dir==='receivable'?'lend':'borrow',amount_cents:amount,account_id:body.account_id,currency,txn_date:body.date||todayStr(),merchant:name,note:body.note,debt_id:id}):0;
+  const tid=post?require('./txn').createTransaction(lid,uid,{type:dir==='receivable'?'lend':'borrow',amount_cents:amount,account_id:body.account_id,currency,txn_date:date,txn_time:time,merchant:name,note:body.note,debt_id:id}):0;
   if(key)run('INSERT INTO borrowing_operations VALUES(?,?,?,?,?)',lid,key,id,tid,signature);
   return {...detail(lid,id),txn_id:tid||null,txn_created:post,synced_to_debts:post};
 });}
@@ -63,17 +67,21 @@ function recalculate(lid){
   }
 
 }
+function settlementResult(d,tid){
+  const t=get('SELECT txn_date,txn_time,created_at FROM transactions WHERE ledger_id=? AND id=?',d.ledger_id,tid);
+  return {id:tid,txn_id:tid,transaction_id:tid,debt_id:d.id,balance_cents:d.balance_cents,remaining_cents:d.balance_cents,closed:d.status==='closed',txn_date:t?.txn_date||null,txn_time:t?.txn_time||null,created_at:t?.created_at||null};
+}
 function settle(lid,uid,id,body){return tx(()=>{
-  const key=String(body.operation_key||'').slice(0,100),signature=JSON.stringify(['settle',Number(id),body.amount_cents??null,body.account_id?Number(body.account_id):null,body.date||null,body.note||null]);
-  if(key){const old=get('SELECT * FROM borrowing_operations WHERE ledger_id=? AND operation_key=?',lid,key);if(old){if(old.signature!==signature)throw Error('重复请求参数不一致');const d=detail(lid,id,true);return {id:old.transaction_id,txn_id:old.transaction_id,transaction_id:old.transaction_id,debt_id:old.debt_id,balance_cents:d.balance_cents,remaining_cents:d.balance_cents,closed:d.status==='closed'};}}
+  const date=clock.normalizeDate(requestedDate(body),todayStr()),time=requestedTime(body);
+  const key=String(body.operation_key||'').slice(0,100),signature=JSON.stringify(['settle',Number(id),body.amount_cents??null,body.account_id?Number(body.account_id):null,requestedDate(body)?date:null,time,body.note||null]);
+  if(key){const old=get('SELECT * FROM borrowing_operations WHERE ledger_id=? AND operation_key=?',lid,key);if(old){if(old.signature!==signature)throw Error('重复请求参数不一致');return settlementResult(detail(lid,old.debt_id,true),old.transaction_id);}}
   const d=detail(lid,id),amount=Number(body.amount_cents??d.balance_cents);
   if(!Number.isSafeInteger(amount)||amount<=0)throw Error('收还款金额必须大于0');
   const account=validateAccount(lid,body.account_id||d.account_id,d.currency);
-  if(body.date)require('./finance/common').date(body.date);
   if(amount>Number(d.balance_cents))throw Error('核销金额超过借钱余额');activate(d);
-  const tid=require('./txn').createTransaction(lid,uid,{type:d.direction==='receivable'?'repay_receive':'repay_pay',amount_cents:amount,account_id:account.id,currency:d.currency,merchant:d.counterparty,note:body.note||'借钱核销 · '+d.counterparty,txn_date:body.date||todayStr(),debt_id:d.id});
+  const tid=require('./txn').createTransaction(lid,uid,{type:d.direction==='receivable'?'repay_receive':'repay_pay',amount_cents:amount,account_id:account.id,currency:d.currency,merchant:d.counterparty,note:body.note||'借钱核销 · '+d.counterparty,txn_date:date,txn_time:time,debt_id:d.id});
   if(key)run('INSERT INTO borrowing_operations VALUES(?,?,?,?,?)',lid,key,d.id,tid,signature);
-  const after=detail(lid,id);return {id:tid,txn_id:tid,transaction_id:tid,debt_id:d.id,balance_cents:after.balance_cents,remaining_cents:after.balance_cents,closed:after.status==='closed'};
+  return settlementResult(detail(lid,id),tid);
 });}
 function link(lid,id,tid,options={}){return tx(()=>{
   const d=detail(lid,id),t=get('SELECT * FROM transactions WHERE ledger_id=? AND id=? AND deleted_at IS NULL',lid,Number(tid));

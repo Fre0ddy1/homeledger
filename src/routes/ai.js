@@ -75,6 +75,7 @@ router.post('/api/ai/scan', auth.requireLogin, auth.requireLedgerWrite, async (r
       ...it,
       category_path: categories.find((c) => Number(c.id) === Number(it.category_id))?.path || (it.category_name || '未分类'),
       account_name_resolved: accounts.find((a) => Number(a.id) === Number(it.account_id))?.name || '',
+      account_type_label: accounts.find((a) => Number(a.id) === Number(it.account_id))?.type_label || null,
       kind: it.type === 'income' ? 'income' : 'expense',
     })));
 
@@ -128,6 +129,7 @@ router.post('/api/ai/confirm', auth.requireLogin, auth.requireLedgerWrite, (req,
         to_account_id:it.to_account_id||null,debt_id:it.debt_id||null,
         category_id: it.category_id || null,
         txn_date: it.txn_date || todayStr(),
+        txn_time: it.txn_time,
         note: it.note || '',
         merchant: it.merchant || '',
         tags: it.tags || '',
@@ -225,6 +227,7 @@ router.post('/api/ai/text', auth.requireLogin, async (req, res) => {
         category_path: categories.find((c) => Number(c.id) === Number(it.category_id))?.path || (it.category_name || '未分类'),
         // 草稿卡要显示「推荐了哪个账户」；习惯推荐的账户在此按 id 解析出名字
         account_name_resolved: accounts.find((a) => Number(a.id) === Number(it.account_id))?.name || '',
+      account_type_label: accounts.find((a) => Number(a.id) === Number(it.account_id))?.type_label || null,
       }))),
       family: ai.familyMembers(ledgerId),
     });
@@ -288,6 +291,7 @@ router.post('/api/ai/chat', auth.requireLogin, async (req, res) => {
         account_fallback: !it.account_id && accountId != null,
         category_path: categories.find((c) => Number(c.id) === Number(it.category_id))?.path || (it.category_name || '未分类'),
         account_name_resolved: accountList.find((a) => Number(a.id) === Number(accountId))?.name || '',
+        account_type_label: accountList.find((a) => Number(a.id) === Number(accountId))?.type_label || null,
       };
     });
 
@@ -305,6 +309,7 @@ router.post('/api/ai/chat', auth.requireLogin, async (req, res) => {
         to_account_id:it.to_account_id||null,debt_id:it.debt_id||null,
           category_id: it.category_id || null,
           txn_date: it.txn_date || todayStr(),
+        txn_time: it.txn_time,
           note: it.note || '',
           merchant: it.merchant || '',
           tags: it.tags || '',

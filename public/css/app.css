@@ -1504,7 +1504,7 @@ body.kb-open .m-tabbar { display: none; }
 .m-txn .ico { font-size: 17px; flex: 0 0 auto; }
 .m-txn .m { flex: 1; min-width: 0; }
 .m-txn .m b { display: block; font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.m-txn .m .tiny { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-txn .m .tiny { display: block; overflow: visible; overflow-wrap: anywhere; white-space: normal; }
 .m-txn .amt { font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 13.5px; }
 .m-txn .amt.income { color: var(--income); }
 .m-txn .amt.expense { color: var(--expense); }
@@ -1633,7 +1633,7 @@ textarea { background: var(--card-2); border-radius: 12px; }
 .dashboard-recent .txn-act { display: none; }
 .dashboard-recent .txn-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dashboard-recent .txn-title > * { margin-right: 5px; }
-.dashboard-recent .txn-sub { flex-wrap: nowrap; overflow: hidden; white-space: nowrap; }
+.dashboard-recent .txn-sub { flex-wrap: wrap; overflow: visible; white-space: normal; overflow-wrap:anywhere; }
 .dashboard-recent .txn-amt { font-size: 14px; }
 
 
@@ -1790,7 +1790,7 @@ textarea { background: var(--card-2); border-radius: 12px; }
 .transactions-primary .txn:not(:has(> .txn-act)) { grid-template-columns: 0 36px minmax(0, 1fr) minmax(90px, auto) 0; }
 .transactions-primary .txn-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .transactions-primary .txn-title > * { margin-right: 5px; }
-.transactions-primary .txn-sub { overflow: hidden; white-space: nowrap; flex-wrap: nowrap; }
+.transactions-primary .txn-sub { overflow: visible; white-space: normal; flex-wrap: wrap; overflow-wrap:anywhere; }
 .txn.is-selected { background: var(--primary-soft); outline: 1px solid var(--primary); outline-offset: -1px; }
 .inspector-empty { text-align: center; padding: 24px 0; }
 .inspector-detail .txn-detail { max-width: none; padding: 0; border: 0; box-shadow: none; background: transparent; max-height: none; overflow: visible; }

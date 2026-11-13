@@ -5,8 +5,27 @@ function input(raw){const b=common.fields(raw);if(raw.confirmed_amount!==undefin
 function routerFactory(api=false,h={}){
  const r=express.Router(),ctx=req=>api?{lid:req.openAuth.ledgerId,uid:req.openAuth.userId}:{lid:Number(req.res.locals.ledger.id),uid:req.session.userId},write=api?h.requireWrite:auth.requireLedgerWrite;
  if(!api)r.use(auth.requireLogin);
- function get(path,load,view,title){r.get(path,(req,res)=>{try{const {lid,uid}=ctx(req),data=load(lid,req);if(api)return h.ok(res,data);res.render(view,{...data,title,activeNav:'finance',form:fd.txFormData(lid,uid),sources:db.all("SELECT * FROM transactions WHERE ledger_id=? AND deleted_at IS NULL AND status='cleared' AND type IN ('transfer','expense','fee','repay_pay','income','refund','repay_receive') ORDER BY id DESC LIMIT 200",lid),today:db.todayStr(),operationKey:require('node:crypto').randomUUID()});}catch(e){if(api)return h.bad(res,404,e.message);res.status(404).render('error',{title:'无法打开',message:e.message});}});}
- function post(path,name,fn,destination){r.post(path,write,(req,res)=>{try{const {lid,uid}=ctx(req),data=fn(lid,uid,input(req.body),req);auth.audit(req,'finance.'+name,{ledgerId:lid,entity:'finance',entityId:Number(req.params.id)||data?.id||data?.account?.id});if(api)return h.ok(res,data);if(name==='loan.preview')return res.render('finance-replan',{title:'确认后续计划',activeNav:'finance',loan:loans.detail(lid,req.params.id),preview:data,params:input(req.body)});if(name==='source.preview')return res.render('finance-source-preview',{title:'确认关联已有付款',activeNav:'finance',preview:data,params:input(req.body),target:req.params.kind+'/'+req.params.id});res.flash('success','已保存，资金与核销已同步');res.redirect(destination?destination(data,req):'/finance');}catch(e){if(api)return h.bad(res,400,e.message);res.flash('error',e.message);res.redirect('/finance');}});}
+ function failedForm(name,req){
+  const id=Number(req.params.id);
+  if(name==='loan.create')return {action:'/finance/loans',returnTo:'/finance'};
+  if(!Number.isSafeInteger(id)||id<1)return null;
+  const base=name==='loan.pay'?'/finance/loans/'+id:name==='card.pay'?'/finance/cards/'+id:name==='payment.amend'?'/finance/payments/'+id:name==='statement.charges'?'/finance/statements/'+id:name==='source.preview'&&['loans','cards'].includes(req.params.kind)?'/finance/'+req.params.kind+'/'+id:null;
+  return base?{action:base+(name==='payment.amend'?'/amend':name==='statement.charges'?'/charges':'/payments'),returnTo:base}:null;
+ }
+ function consumeTimeDraft(req,lid){
+  const draft=req.session.financeTimeDraft,path=(req.baseUrl+req.path).replace(/\/$/,'');
+  if(!draft||draft.ledgerId!==lid||draft.returnTo!==path)return null;
+  delete req.session.financeTimeDraft;return draft;
+ }
+ function rememberTimeDraft(name,req,lid){
+  const form=failedForm(name,req);if(!form)return null;
+  const raw={date:req.body.date??req.body.txn_date,time:req.body.time!==undefined?req.body.time:req.body.txn_time,start_date:req.body.start_date,operation_key:req.body.operation_key,...(name==='loan.create'?{opening_mode:req.body.opening_mode==='disbursement'?'disbursement':'snapshot'}:{})},values={};
+  for(const [key,value]of Object.entries(raw))if(value!==undefined)values[key]=String(value??'').slice(0,key==='operation_key'?100:32);
+  req.session.financeTimeDraft={...form,ledgerId:lid,values};return form.returnTo;
+ }
+
+ function get(path,load,view,title){r.get(path,(req,res)=>{try{const {lid,uid}=ctx(req),data=load(lid,req);if(api)return h.ok(res,data);res.render(view,{...data,timeDraft:consumeTimeDraft(req,lid),title,activeNav:'finance',form:fd.txFormData(lid,uid),sources:db.all("SELECT * FROM transactions WHERE ledger_id=? AND deleted_at IS NULL AND status='cleared' AND type IN ('transfer','expense','fee','repay_pay','income','refund','repay_receive') ORDER BY id DESC LIMIT 200",lid),today:db.todayStr(),operationKey:require('node:crypto').randomUUID()});}catch(e){if(api)return h.bad(res,404,e.message);res.status(404).render('error',{title:'无法打开',message:e.message});}});}
+ function post(path,name,fn,destination){r.post(path,write,(req,res)=>{try{const {lid,uid}=ctx(req),body=input(req.body);if(!api&&name!=='payment.amend'&&body.time==='')delete body.time;const data=fn(lid,uid,body,req);const previous=req.session?.financeTimeDraft,form=failedForm(name,req);if(!api&&previous?.ledgerId===lid&&previous.action===form?.action)delete req.session.financeTimeDraft;auth.audit(req,'finance.'+name,{ledgerId:lid,entity:'finance',entityId:Number(req.params.id)||data?.id||data?.account?.id});if(api)return h.ok(res,data);if(name==='loan.preview')return res.render('finance-replan',{title:'确认后续计划',activeNav:'finance',loan:loans.detail(lid,req.params.id),preview:data,params:input(req.body)});if(name==='source.preview')return res.render('finance-source-preview',{title:'确认关联已有付款',activeNav:'finance',preview:data,params:input(req.body),target:req.params.kind+'/'+req.params.id});res.flash('success','已保存，资金与核销已同步');res.redirect(destination?destination(data,req):'/finance');}catch(e){if(api)return h.bad(res,400,e.message);const returnTo=rememberTimeDraft(name,req,ctx(req).lid);res.flash('error',e.message);res.redirect(returnTo||'/finance');}});}
  get('/',lid=>({loans:loans.list(lid),archivedLoans:loans.list(lid,true),cards:cards.list(lid)}),'finance','贷款与信用卡');
  if(api)get('/repayment-options',lid=>payments.repaymentOptions(lid),'finance','还款对象');else r.get('/repayment-options',(req,res)=>res.redirect('/transactions/new?type=repayment'));
  get('/loans',lid=>({loans:loans.list(lid),archivedLoans:loans.list(lid,true),cards:cards.list(lid)}),'finance','贷款与信用卡');
