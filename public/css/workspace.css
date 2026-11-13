@@ -445,4 +445,4 @@ body:has(.entry-actionbar) .ai-fab { bottom:112px; }
 /* Date and optional clock stay compact while sharing a row on phones. */
 #txn-form .transaction-clock-row .field:has(> input[type="date"],> .hl-date,> input[type="time"]) { flex:1 1 calc(50% - 6px) !important; width:calc(50% - 6px); max-width:200px; min-width:min(100%,140px) !important; }
 
-#txn-form .transaction-clock-row { align-items:flex-start; }
+.transaction-clock-row { align-items:flex-start; }
