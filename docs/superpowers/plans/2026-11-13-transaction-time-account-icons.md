@@ -47,7 +47,7 @@ Produces: 付款接受time/txn_time，与所有分项流水一致；签名规范
 Files: src/lib/importers.js、导入导出相关routes/views、test/verify-importers.js。
 
 Consumes: normalizeTime；transactions已有可空txn_time。
-Produces: rec.txn_time、独立CSV时间列及完整日期时间解析，JSON/Excel现有导出保全；预览呈现，时刻参与可靠去重。
+Produces: rec.txn_time、独立CSV时间列及完整日期时间解析，JSON现有导出保全；预览呈现，时刻参与可靠去重。
 
 - [x] 新增支付宝/微信完整日期时间、独立日期/时间CSV回导、同日同金额不同时间及缺时刻用例。
 - [x] 既有normalizeRow/导入SQL/导出列精确接入，完整交易时间与独立时间列不混抓；无时刻保持NULL，非法值按行错误。
@@ -72,9 +72,13 @@ Files: src/lib/ai.js、src/routes/ai.js、src/routes/openapi.js AI段、public/j
 - [x] 规则extractTime只提取明确钟点；模型结构txn_time可空、normalize拒绝捏造餐时；草稿编辑、确认、聊天、开放AI入库传递。
 - [x] 添加“昨天18:35消费”与“昨天午饭”对照用例，API/人工/AI/导入最终事实一致；API部分编辑不清空时刻。
 - [x] 同步两份技能：date/time参数、ping时区、未知留空、准确回执、金融时间及返回账户类型，校验副本逐字一致。
-- [ ] Windows22/24全量、静态、浏览器明暗五断点/编辑/无JS和实际截图；各子任务修复后独立审查整体资金与交互。
-- [ ] 更新同一归档；功能分支→PR→Linux22/24CI→授权合并main；文件树核验，纯文档尾记独立补审。
+- [x] Windows22/24全量、静态、浏览器明暗五断点/编辑/无JS和实际截图；各子任务修复后独立审查整体资金与交互。
+- [x] 更新同一归档；功能分支→PR→Linux22/24CI→授权合并main；文件树核验，纯文档尾记独立补审。
 
 ## 自检
 
 三项设计分别映射任务1/2/3/5（时间）、任务1（账户）、任务4（Emoji）；未省略来源保护、相对时间、字段清除、计划日期不臆造、导出回导及未知排序。标准子技能本机未安装，按本计划文件边界执行并保留独立审查门禁；用户已明确要求实施，无需重复询问执行方式。
+
+## 完成证据
+
+所有任务已实施并验收；PR #9已合并main。最终产品树7577e91220d5133e68c4bf9016d5f0f6396b580c，Windows22/24各29套1520断言，最新Linux双版本与补丁后360视图及全部交互通过。完整过程与实际格式边界见同日12-01持续validation归档。
