@@ -1,8 +1,9 @@
 'use strict';
 /** 记账服务层：交易查询、写入、统计聚合 */
-const { all, get, run, tx, nowStr, todayStr, TXN_TYPE_MAP, recalcBalances } = require('../db');
+const { all, get, run, tx, nowStr, todayStr, TXN_TYPE_MAP, ACCOUNT_TYPE_MAP, recalcBalances } = require('../db');
 const { monthOf, pad, lastMonths, toBase } = require('./util');
 const attach = require('./attachments');
+const time = require('./transaction-time');
 
 /** 计入「收入」统计的类型 */
 const INCOME_TYPES = ['income', 'interest', 'refund', 'reimburse'];
@@ -15,7 +16,7 @@ SELECT t.*,
   c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
   pc.name AS category_parent,
   a.name AS account_name, a.icon AS account_icon, a.type AS account_type,
-  ta.name AS to_account_name, ta.icon AS to_account_icon,
+  ta.name AS to_account_name, ta.icon AS to_account_icon, ta.type AS to_account_type,
   u.display_name AS member_name, u.avatar_color AS member_color,
   (SELECT GROUP_CONCAT(tg.name, ' ') FROM transaction_tags tt JOIN tags tg ON tg.id = tt.tag_id WHERE tt.transaction_id = t.id) AS tag_names
 FROM transactions t
@@ -28,6 +29,9 @@ LEFT JOIN users u ON u.id = t.user_id
 
 function decorate(t) {
   if (!t) return t;
+  t.account_type_label = t.account_id ? (ACCOUNT_TYPE_MAP[t.account_type]?.label || '其他') : null;
+  t.to_account_type_label = t.to_account_id ? (ACCOUNT_TYPE_MAP[t.to_account_type]?.label || '其他') : null;
+  t.txn_time_label = time.formatTime(t.txn_time);
   t.type_label = TXN_TYPE_MAP[t.type]?.label || t.type;
   t.type_icon = TXN_TYPE_MAP[t.type]?.icon || '•';
   t.type_color = TXN_TYPE_MAP[t.type]?.color || '#8c8c8c';
@@ -102,8 +106,8 @@ function listTransactions(ledgerId, f = {}) {
   const total = Number(get(`SELECT COUNT(*) AS c FROM transactions t LEFT JOIN categories c ON c.id = t.category_id LEFT JOIN accounts a ON a.id = t.account_id LEFT JOIN categories pc ON pc.id = c.parent_id WHERE ${sql}`, ...params)?.c || 0);
 
   const sortMap = {
-    date_desc: 't.txn_date DESC, t.id DESC',
-    date_asc: 't.txn_date ASC, t.id ASC',
+    date_desc: 't.txn_date DESC, t.txn_time IS NULL ASC, t.txn_time DESC, t.id DESC',
+    date_asc: 't.txn_date ASC, t.txn_time IS NULL ASC, t.txn_time ASC, t.id ASC',
     amount_desc: 't.amount_base_cents DESC',
     amount_asc: 't.amount_base_cents ASC',
   };
@@ -191,14 +195,15 @@ function createTransactionUnchecked(ledgerId, userId, d, options) {
   if ((type === 'invest_buy' || type === 'invest_sell') && accountId === toAccountId) throw new Error('投资交易的双方账户不能相同');
 
   require('./account-policy').validate(ledgerId,type,accountId,toAccountId,options.channel);
-  const txnDate = /^\d{4}-\d{2}-\d{2}$/.test(String(d.txn_date || '')) ? d.txn_date : todayStr();
+  const txnDate = time.normalizeDate(d.txn_date, todayStr());
+  const txnTime = time.normalizeTime(d.txn_time);
   const info = run(
     `INSERT INTO transactions
      (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id, to_account_id, category_id,
-      user_id, txn_date, note, merchant, status, is_reimbursable, group_id, source, ai_json, owner_label, no_rhythm, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      user_id, txn_date, txn_time, note, merchant, status, is_reimbursable, group_id, source, ai_json, owner_label, no_rhythm, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ledgerId, type, amount, currency, rate, toBase(amount, rate), accountId, toAccountId,
-    PRINCIPAL_TYPES.includes(type)?null:(d.category_snapshot?require('./categories').find(ledgerId,d.category_id)?.id||null:pickCategory(ledgerId, d.category_id)), userId, txnDate,
+    PRINCIPAL_TYPES.includes(type)?null:(d.category_snapshot?require('./categories').find(ledgerId,d.category_id)?.id||null:pickCategory(ledgerId, d.category_id)), userId, txnDate, txnTime,
     d.note ? String(d.note).slice(0, 300) : null,
     d.merchant ? String(d.merchant).slice(0, 60) : null,
     d.status === 'pending' ? 'pending' : 'cleared',
@@ -250,12 +255,13 @@ function updateTransactionUnchecked(id, ledgerId, userId, d) {
   require('./account-policy').validate(ledgerId,type,accountId,toAccountId);
   run(
     `UPDATE transactions SET type=?, amount_cents=?, currency=?, rate=?, amount_base_cents=?, account_id=?,
-       to_account_id=?, category_id=?, txn_date=?, note=?, merchant=?, status=?, is_reimbursable=?,
+       to_account_id=?, category_id=?, txn_date=?, txn_time=?, note=?, merchant=?, status=?, is_reimbursable=?,
        owner_label=?, no_rhythm=?, updated_at=? WHERE id=?`,
     type, amount, d.currency || old.currency, rate, toBase(amount, rate),
     accountId, toAccountId,
     PRINCIPAL_TYPES.includes(type)?null:categoryId,
-    /^\d{4}-\d{2}-\d{2}$/.test(String(d.txn_date || '')) ? d.txn_date : old.txn_date,
+    time.normalizeDate(d.txn_date, old.txn_date),
+    time.normalizeTime(d.txn_time, old.txn_time),
     d.note ? String(d.note).slice(0, 300) : null,
     d.merchant ? String(d.merchant).slice(0, 60) : null,
     d.status === 'pending' ? 'pending' : 'cleared',
@@ -316,7 +322,7 @@ function bulkDelete(ids, ledgerId) {
 }
 
 /** 报销：把若干笔标记为已报销，并生成一笔报销入账 */
-function markReimbursed(ids, ledgerId, userId, accountId) {
+function markReimbursed(ids, ledgerId, userId, accountId, occurrence={}) {
   if (!ids || !ids.length) throw new Error('没有可报销的记录');
   const rows = all(
     `SELECT * FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL
@@ -333,7 +339,8 @@ function markReimbursed(ids, ledgerId, userId, accountId) {
       amount_cents: total,
       account_id: accountId,
       category_id: null,
-      txn_date: todayStr(),
+      txn_date: time.normalizeDate(occurrence.date ?? occurrence.txn_date,todayStr()),
+      txn_time: time.normalizeTime(Object.prototype.hasOwnProperty.call(occurrence,'time')?occurrence.time:occurrence.txn_time),
       note: `报销 ${rows.length} 笔，合计 ${(total / 100).toFixed(2)}`,
       source: 'manual',
     });

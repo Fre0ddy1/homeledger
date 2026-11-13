@@ -227,7 +227,8 @@
           it.account_name_resolved
             ? it.account_name_resolved + (it.account_recommended ? '（按习惯）' : it.account_fallback ? '（账本默认）' : '')
             : '',
-          it.txn_date,
+          it.account_type_label || '',
+          [it.txn_date,it.txn_time].filter(Boolean).join(' '),
         ].filter(Boolean).map(esc).join(' · ');
         h += '<div class="ai-record">'
           + `<span class="ico">${income ? '💰' : '💸'}</span>`

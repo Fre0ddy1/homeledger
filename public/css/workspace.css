@@ -386,6 +386,15 @@ body:has(.entry-actionbar) .ai-fab { bottom:112px; }
 .category-icon-more { margin-top:12px; }
 .category-icon-more summary { cursor:pointer; color:var(--text-2); font-size:13px; }
 .category-icon-more .category-icon-grid { margin-top:12px; }
+.category-icon-tools { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; margin-top:16px; }
+.category-icon-tools > div { min-width:0; }
+.category-icon-tools label { display:block; margin-bottom:6px; }
+.category-icon-tools input, .category-icon-tools select { width:100%; min-width:0; }
+.category-icon-status { margin:12px 0; }
+.category-icon-group + .category-icon-group { margin-top:18px; }
+.category-icon-group-title { font-size:13px; font-weight:600; color:var(--text-2); margin:0; }
+.category-icon-empty { padding:12px 0; }
+
 .category-editor-modal .category-edit-form > button { min-height: 44px; }
 .category-editor-modal .category-edit-form .field { margin-bottom: 0; }
 .category-editor-modal .category-delete { margin: 14px 0 0; color: var(--expense); }
@@ -432,3 +441,8 @@ body:has(.entry-actionbar) .ai-fab { bottom:112px; }
   .category-workspace { display: block; }
   .page-body .sticky-side { position: static; overflow: visible; max-height: none; }
 }
+
+/* Date and optional clock stay compact while sharing a row on phones. */
+#txn-form .transaction-clock-row .field:has(> input[type="date"],> .hl-date,> input[type="time"]) { flex:1 1 calc(50% - 6px) !important; width:calc(50% - 6px); max-width:200px; min-width:min(100%,140px) !important; }
+
+.transaction-clock-row { align-items:flex-start; }

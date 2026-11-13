@@ -8,6 +8,7 @@
 const { all, get, run, getSetting, setSetting, todayStr, nowStr } = require('../db');
 const { parseAmountToCents, uid, pad } = require('./util');
 const dict = require('./dict');
+const transactionTime = require('./transaction-time');
 
 /* -------------------------------- 配置读取 -------------------------------- */
 
@@ -287,7 +288,8 @@ function parseTextByRules(text, { today = todayStr() } = {}) {
     .filter(Boolean);
   const out = [];
   for (const line of lines) {
-    const amount = extractAmount(line);
+    const amountText=line.replace(/(?:凌晨|早上|上午|中午|下午|傍晚|晚上|晚间)?\s*\d{1,2}[：:]\d{2}(?:[：:]\d{2})?/g,' ').replace(/(?:凌晨|早上|上午|中午|下午|傍晚|晚上|晚间)?\s*[零〇一二两三四五六七八九十\d]{1,3}[点时](?:[零〇一二两三四五六七八九十\d]{1,3}分?|半)?(?:[零〇一二两三四五六七八九十\d]{1,3}秒)?/g,' ').replace(/\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?/g,' ');
+    const amount = extractAmount(amountText);
     if (!amount) continue;
     const cls = classifyByKeywords(line);
     const kind = /收入|工资|报销|退款|收|入账/.test(line) && !cls ? 'income' : (cls?.kind || 'expense');
@@ -296,6 +298,7 @@ function parseTextByRules(text, { today = todayStr() } = {}) {
       amount_cents: amount,
       currency: 'CNY',
       txn_date: parseDateWords(line, today),
+      txn_time: transactionTime.extractTime(line),
       merchant: cleanMerchant(line),
       note: line.slice(0, 120),
       category_name: cls?.category || null,
@@ -545,7 +548,7 @@ const SYSTEM_PROMPT = `你是一个专业的记账助手，负责把「账单截
    只有同一张小票/同一张账单内同时出现「商品合计」和「实付金额/应收合计/支付合计」等多个金额时，
    才取实付总额，不用商品合计或折前小计；优惠、满减、抹零、购物袋、税费等已含在实付总额里，不单独记账。
    金额一律为数字（元），不要带货币符号；支出/付款为正常正数。
-4. 日期格式 YYYY-MM-DD；若截图只有月日则补齐为今年；无法确定则用今天。
+4. 日期格式 YYYY-MM-DD；若截图只有月日则补齐为今年；无法确定则用今天。txn_time为HH:mm:ss或null，只提取原文/截图明确时刻；只有午饭、下午等不能猜12:00或15:00，不得用当前时刻补齐。
 5. type 只能取：expense（支出）、income（收入）、transfer（转账）。
 6. category_name 必须从给定的分类列表中选择最贴近的「完整路径」，若都不合适则选「其他支出/其他」这类兜底项。
 7. 只有账单原文里明确写出了付款方式（如「支付宝」「微信」「现金」「银行卡」等字样），acct 才填对应账户名；
@@ -558,7 +561,7 @@ const SYSTEM_PROMPT = `你是一个专业的记账助手，负责把「账单截
    多种支付方式合并支付的整单例外：note 必须写明全部支付方式及各自金额（例：「储值卡200＋微信339」）。
 10. confidence 为 0~1 的小数，表示你对这笔提取的把握。
 输出格式：
-{"items":[{"type":"expense","amount":35.00,"txn_date":"2026-09-15","merchant":"肯德基","note":"午餐","category_name":"餐饮/午餐","acct":"支付宝","for_member":"","currency":"CNY","confidence":0.95}]}`;
+{"items":[{"type":"expense","amount":35.00,"txn_date":"2026-09-15","txn_time":null,"merchant":"肯德基","note":"午餐","category_name":"餐饮/午餐","acct":"支付宝","for_member":"","currency":"CNY","confidence":0.95}]}`;
 
 function buildUserPrompt({ text, ctx, today }) {
   return [
@@ -857,7 +860,7 @@ function recordDraftFeedback(ledgerId, items) {
 }
 
 /** 规范化单条草稿；sourceText 给出时（纯文字识别），模型给的账户需在原文中有依据，否则交给习惯推荐 */
-function normalizeItem(raw, ledgerId, { sourceText = '', noteLines = null } = {}) {
+function normalizeItem(raw, ledgerId, { sourceText = '', noteLines = null, ruleText = null } = {}) {
   const intent=require('./financial-intent').classify([raw.note,raw.merchant].join(' '));
   const type = intent==='finance_payment'?'transfer':intent||(['expense','income','transfer','lend','borrow','repay_receive','repay_pay'].includes(raw.type)?raw.type:'expense');
   const principal=['transfer','lend','borrow','repay_receive','repay_pay'].includes(type);
@@ -933,6 +936,20 @@ function normalizeItem(raw, ledgerId, { sourceText = '', noteLines = null } = {}
       if (residual && residual !== merchant) noteOut = residual.slice(0, 120);
     }
   }
+  let txnTime=null;
+  try {txnTime=transactionTime.normalizeTime(raw.txn_time);} catch { /* Invalid model clock remains unknown. */ }
+  if (sourceText) {
+    if (ruleText!==null) {const times=transactionTime.extractTimes(ruleText);txnTime=txnTime&&times.includes(txnTime)?txnTime:null;}
+    else {
+      const lines=noteLines||String(sourceText).split(/\n|;|；|，|,|。/).map(line=>line.trim()).filter(Boolean);
+      const yuan=String(Math.abs(amountCents)/100).replace('.', '\\.');
+      const amountMatch=new RegExp('(^|[^0-9.])'+yuan+'(?=$|[^0-9.])');
+      const hits=lines.filter(line=>amountMatch.test(line));
+      const evidence=hits.length===1?hits[0]:(lines.length===1?lines[0]:'');
+      const times=transactionTime.extractTimes(evidence);
+      txnTime=txnTime&&times.includes(txnTime)?txnTime:null;
+    }
+  }
   return {
     draft_id: uid(10),
     requires_finance_review:intent==='finance_payment',
@@ -941,6 +958,7 @@ function normalizeItem(raw, ledgerId, { sourceText = '', noteLines = null } = {}
     amount_cents: Math.abs(amountCents || 0),
     currency: raw.currency || 'CNY',
     txn_date: /^\d{4}-\d{2}-\d{2}$/.test(String(raw.txn_date || '')) ? raw.txn_date : todayStr(),
+    txn_time: txnTime,
     merchant,
     note: noteOut,
     category_id: categoryId,
@@ -1045,7 +1063,7 @@ async function analyzeBill({ images = [], text = '', ledgerId }) {
 
   // 2) 规则兜底
   if (text) {
-    const items = parseTextByRules(text, { today }).map((it) => normalizeItem(it, ledgerId, { sourceText: text }));
+    const items = parseTextByRules(text, { today }).map((it) => normalizeItem(it, ledgerId, { sourceText: text, ruleText:it.note }));
     if (items.length) return { engine: 'rule', model: null, items, warnings };
   }
   return { engine: 'rule', model: null, items: [], warnings };

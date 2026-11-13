@@ -7,8 +7,12 @@ const loan=loans.create(lid,uid,{name:'车贷',kind:'car',remaining_principal_ce
 check('贷款仅记录一份账户负债',db.get('SELECT balance_cents FROM accounts WHERE id=?',loan.account_id).balance_cents===-1200000);
 check('预计计划本金分币合计一致',loan.installments.reduce((s,x)=>s+x.principal_cents,0)===1200000);
 check('月末/二月计划日钳制',loan.installments.some(x=>x.due_date==='2027-02-28'));
-const body={principal_cents:100000,interest_cents:12000,fee_cents:0,account_id:cash,operation_key:'loan-1',date:'2026-11-30'};
+const body={principal_cents:100000,interest_cents:12000,fee_cents:0,account_id:cash,operation_key:'loan-1',date:'2026-11-30',time:'18:35'};
 const p=payments.payLoan(lid,uid,loan.id,body);
+check('付款与所有资金分项保存实际时刻',p.txn_time==='18:35:00'&&p.transactions.every(t=>t.txn_time==='18:35:00')&&p.created_at);
+check('分钟和秒格式等价重试仍幂等',payments.payLoan(lid,uid,loan.id,{...body,time:'18:35:00'}).id===p.id);
+check('同操作改变交易时刻拒绝',rejects(()=>payments.payLoan(lid,uid,loan.id,{...body,time:'18:36'})));
+check('付款API模型返回来源与目标账户类型',p.account_type==='cash'&&p.to_account_type==='loan'&&p.transactions[0].account_type_label==='现金'&&p.transactions[0].to_account_type_label==='贷款/负债');
 check('实际还款只把利息计支出',txn.summary(lid,'2000-01-01','2099-12-31').expense===12000);
 check('还本减少负债',db.get('SELECT balance_cents FROM accounts WHERE id=?',loan.account_id).balance_cents===-1100000);
 check('重复请求不再次扣款',payments.payLoan(lid,uid,loan.id,body).id===p.id&&db.get('SELECT balance_cents FROM accounts WHERE id=?',cash).balance_cents===-112000);
@@ -22,17 +26,21 @@ for(const method of ['equal_payment','interest_only']){
  check(method+'本金尾差正确',rows.reduce((s,x)=>s+x.principal_cents,0)===100003&&rows[0].due_date==='2026-02-28');
 }
 function tiny(name){return loans.create(lid,uid,{name,remaining_principal_cents:10000,term_n:1,annual_rate:0,method:'equal_principal',start_date:'2026-11-01',due_day:30});}
-const imported=tiny('来源替换测试'),debit=txn.createTransaction(lid,uid,{type:'expense',amount_cents:10000,account_id:cash,txn_date:'2026-11-20'}),credit=txn.createTransaction(lid,uid,{type:'income',amount_cents:10000,account_id:imported.account_id,txn_date:'2026-11-20'},{channel:'import'});
+const imported=tiny('来源替换测试'),debit=txn.createTransaction(lid,uid,{type:'expense',amount_cents:10000,account_id:cash,txn_date:'2026-11-20',txn_time:'08:00:01'}),credit=txn.createTransaction(lid,uid,{type:'income',amount_cents:10000,account_id:imported.account_id,txn_date:'2026-11-20',txn_time:'08:00:02'},{channel:'import'});
 const sourceBody={principal_cents:10000,account_id:cash,date:'2026-11-20',operation_key:'source-1',existing_transaction_ids:[debit,credit],confirm_sources:true};
+check('已知来源不接受冲突时刻',rejects(()=>payments.payLoan(lid,uid,imported.id,{...sourceBody,time:'09:00'})));
+const sourcePreview=payments.sourcePreview(lid,'loan',imported.id,sourceBody);
+check('来源预览分别返回付款及原始各行实际时刻',sourcePreview.txn_time==='08:00:01'&&sourcePreview.source_times.find(t=>t.id===credit).txn_time==='08:00:02');
 const linked=payments.payLoan(lid,uid,imported.id,sourceBody);
+check('来源替换沿用扣款时刻且保留各原始时刻',linked.txn_time==='08:00:01'&&linked.transactions.filter(t=>t.role!=='original').every(t=>t.txn_time==='08:00:01')&&linked.sources.find(t=>t.id===credit).txn_time==='08:00:02');
 check('临近结清的双来源替换不重复计算本金',db.get('SELECT balance_cents FROM accounts WHERE id=?',imported.account_id).balance_cents===0&&linked.sources.length===2);
 check('原支出来源被替换而非再次记支出',db.get('SELECT deleted_at FROM transactions WHERE id=?',debit).deleted_at!==null);
 payments.reverse(lid,linked.id);const relinked=payments.payLoan(lid,uid,imported.id,{...sourceBody,operation_key:'source-2'});
 check('撤销释放活跃来源并保留历史追溯',relinked.id!==linked.id&&payments.detail(lid,linked.id).sources.length===2);
 check('不能恢复已被另一付款核销的旧付款',rejects(()=>payments.restore(lid,linked.id)));
-const existingLoan=tiny('已记转账'),transfer=txn.createTransaction(lid,uid,{type:'transfer',amount_cents:10000,account_id:cash,to_account_id:existingLoan.account_id,txn_date:'2026-11-20'},{channel:'import'});
+const existingLoan=tiny('已记转账'),transfer=txn.createTransaction(lid,uid,{type:'transfer',amount_cents:10000,account_id:cash,to_account_id:existingLoan.account_id,txn_date:'2026-11-20',txn_time:'14:10:22'},{channel:'import'});
 const existingBody={principal_cents:10000,account_id:cash,date:'2026-11-20',existing_transaction_id:transfer,operation_key:'existing-transfer'};
-const linkOnly=payments.payLoan(lid,uid,existingLoan.id,existingBody);check('全额已记转账只关联不重扣',linkOnly.transactions.length===1&&linkOnly.transactions[0].id===transfer&&db.get('SELECT balance_cents FROM accounts WHERE id=?',existingLoan.account_id).balance_cents===0);
+const linkOnly=payments.payLoan(lid,uid,existingLoan.id,{...existingBody,date:'2026-11-21'});check('关联已有转账采用来源实际日期和时刻',linkOnly.txn_date==='2026-11-20'&&linkOnly.txn_time==='14:10:22'&&linkOnly.transactions[0].txn_time==='14:10:22');check('全额已记转账只关联不重扣',linkOnly.transactions.length===1&&linkOnly.transactions[0].id===transfer&&db.get('SELECT balance_cents FROM accounts WHERE id=?',existingLoan.account_id).balance_cents===0);
 payments.reverse(lid,linkOnly.id);payments.restore(lid,linkOnly.id);check('已有转账关联可撤销恢复',db.get('SELECT deleted_at FROM transactions WHERE id=?',transfer).deleted_at===null);
 const amendLoan=tiny('更正测试'),first=payments.payLoan(lid,uid,amendLoan.id,{principal_cents:5000,account_id:cash,operation_key:'amend-first'});
 const amendment={principal_cents:4000,account_id:cash,operation_key:'amend-next'};const corrected=payments.amend(lid,uid,first.id,amendment);
@@ -67,12 +75,15 @@ cards.unconfirmStatement(lid,bill.id,{confirm:true});cards.correctPosting(lid,la
 check('银行入账日可校正并归到二月月末',cards.statementForTransaction(lid,late)[0].closing_date==='2020-02-29');
 const refund=txn.createTransaction(lid,uid,{type:'refund',amount_cents:2000,account_id:card,txn_date:'2020-02-02'});cards.correctPosting(lid,refund,{posted_date:'2020-02-02',refund_of_id:swipe});
 check('退款关联原消费并冲减所属账单',db.get('SELECT refund_of_id FROM transactions WHERE id=?',refund).refund_of_id===swipe&&cards.statements(lid,card).find(x=>x.closing_date==='2020-02-29').computed_cents===3000);
-const install=txn.createTransaction(lid,uid,{type:'expense',amount_cents:100003,account_id:card,txn_date:'2020-02-05'});cards.installment(lid,install,{term_n:3,first_closing:'2020-02-29',interest_cents:300});
+const install=txn.createTransaction(lid,uid,{type:'expense',amount_cents:100003,account_id:card,txn_date:'2020-02-05',txn_time:'11:05'});cards.installment(lid,install,{term_n:3,first_closing:'2020-02-29',interest_cents:300});
 const related=cards.statementForTransaction(lid,install);check('消费分期本金合计及尾差正确',related.length===3&&related.reduce((s,x)=>s+x.allocated_amount_cents,0)===100003);
+check('未来分期账单项不伪造实际时刻',cards.statementDetail(lid,related[1].id).items.filter(i=>i.item_key.startsWith('plan:')).every(i=>i.txn_time===null));
 check('分期不重复生成消费或提前记录计划利息',txn.summary(lid,'2000-01-01','2099-12-31').expense-baseline===205003);
-const feb=cards.statements(lid,card).find(x=>x.closing_date==='2020-02-29'),charges=cards.recordCharges(lid,feb.id,{interest_cents:100,operation_key:'actual-interest'},uid);
+const feb=cards.statements(lid,card).find(x=>x.closing_date==='2020-02-29'),charges=cards.recordCharges(lid,feb.id,{interest_cents:100,operation_key:'actual-interest',time:'09:30:11'},uid);
 check('实际分期费用确认后才计支出',txn.summary(lid,'2000-01-01','2099-12-31').expense-baseline===205103&&charges.transaction_ids.length===1);
-check('实际费用请求幂等',cards.recordCharges(lid,feb.id,{interest_cents:100,operation_key:'actual-interest'},uid).transaction_ids[0]===charges.transaction_ids[0]);
+check('信用卡实际费用保留交易时刻',charges.txn_time==='09:30:11'&&db.get('SELECT txn_time FROM transactions WHERE id=?',charges.transaction_ids[0]).txn_time==='09:30:11');
+check('实际费用变更时刻的同操作拒绝',rejects(()=>cards.recordCharges(lid,feb.id,{interest_cents:100,operation_key:'actual-interest',time:'09:31'},uid)));
+check('实际费用请求幂等',cards.recordCharges(lid,feb.id,{interest_cents:100,operation_key:'actual-interest',time:'09:30:11'},uid).transaction_ids[0]===charges.transaction_ids[0]);
 payments.allocate(lid,cardPay2.id,{allocations:[{statement_id:bill.id,amount_cents:10000},{statement_id:feb.id,amount_cents:10000}]});
 check('一笔还款可分配多期且不产生新转账',payments.detail(lid,cardPay2.id).allocations.length===2&&payments.detail(lid,cardPay2.id).transactions.length===1);
 payments.reverse(lid,cardPay1.id);payments.restore(lid,cardPay1.id);check('信用卡还款可整体撤销恢复',payments.detail(lid,cardPay1.id).deleted_at===null);
@@ -101,4 +112,31 @@ check('未确认但已核销账单拒绝减额超限',rejects(()=>txn.updateTran
 payments.allocate(lid,draftPaid.id,{allocations:[]});txn.createTransaction(lid,uid,{type:'refund',amount_cents:5000,account_id:draftCard,txn_date:'2020-01-02'});check('释放分配后退款保留真实资金与预还款',cards.statementDetail(lid,draftBill.id).computed_cents===5000&&cards.detail(lid,draftCard).unallocated_cents===10000);
 for(const target of [null,cash]){const broken=importer.importRecords({ledgerId:lid,userId:uid,records:[{...record,type:'transfer',merchant:'无效转账'+target,to_account_hint:target?db.get('SELECT name FROM accounts WHERE id=?',cash).name:null}],autoCreateAccount:false,defaultAccountId:cash,source:'generic',fileName:'transfer.csv'});check('导入单边转账拒绝并回滚',broken.failed===1&&!db.get('SELECT id FROM transactions WHERE ledger_id=? AND merchant=?',lid,'无效转账'+target));}
 const importedAdjustment=importer.importRecords({ledgerId:lid,userId:uid,records:[{...record,type:'adjust',merchant:'金融账户调整绕过'}],autoCreateAccount:false,defaultAccountId:loan.account_id,source:'generic',fileName:'adjust.csv'});check('导入调整不能绕过金融账户本金保护',importedAdjustment.failed===1&&!db.get('SELECT id FROM transactions WHERE ledger_id=? AND merchant=?',lid,'金融账户调整绕过'));
+
+const timeLoan=tiny('时刻更正'),timeBody={principal_cents:5000,account_id:cash,operation_key:'time-first',date:'2026-11-12',txn_time:'17:24:39'};
+const timeFirst=payments.payLoan(lid,uid,timeLoan.id,timeBody),recordedAt=timeFirst.created_at;
+payments.reverse(lid,timeFirst.id);payments.restore(lid,timeFirst.id);
+check('付款撤销恢复保留实际与录入时间',payments.detail(lid,timeFirst.id).txn_time==='17:24:39'&&payments.detail(lid,timeFirst.id).created_at===recordedAt&&payments.detail(lid,timeFirst.id).transactions[0].txn_time==='17:24:39');
+for(const [index,invalid]of [{date:''},{date:null},{txn_date:''},{txn_date:null}].entries())check('更正显式空日期拒绝 '+index,rejects(()=>payments.amend(lid,uid,timeFirst.id,{...invalid,operation_key:'time-empty-date-'+index})));
+check('无效日期更正保留原付款日期时刻',payments.detail(lid,timeFirst.id).txn_date===timeFirst.txn_date&&payments.detail(lid,timeFirst.id).txn_time===timeFirst.txn_time&&!payments.detail(lid,timeFirst.id).replaced_by);
+const timeAmend=payments.amend(lid,uid,timeFirst.id,{principal_cents:4000,operation_key:'time-amend'});
+check('更正未传时刻保留原值',timeAmend.txn_time==='17:24:39'&&timeAmend.transactions[0].txn_time==='17:24:39');
+const timeClear=payments.amend(lid,uid,timeAmend.id,{principal_cents:3000,operation_key:'time-clear',time:null});
+check('显式空值清除付款及分项时刻',timeClear.txn_time===null&&timeClear.transactions[0].txn_time===null);
+check('付款拒绝无效时刻且不留下操作',rejects(()=>payments.payLoan(lid,uid,timeLoan.id,{principal_cents:1000,account_id:cash,operation_key:'time-invalid',time:'24:00'}))&&!db.get("SELECT id FROM finance_payments WHERE ledger_id=? AND operation_key='time-invalid'",lid));
+const cardTimed=payments.payCard(lid,uid,card,{amount_cents:1000,account_id:cash,operation_key:'card-timed',time:'07:08'});
+check('信用卡还款时刻贯通付款和转账',cardTimed.txn_time==='07:08:00'&&cardTimed.transactions[0].txn_time==='07:08:00');
+const noTime=payments.payCard(lid,uid,card,{amount_cents:1000,account_id:cash,operation_key:'card-unknown'});
+check('未知付款时刻不使用录入时刻',noTime.txn_time===null&&noTime.transactions[0].txn_time===null);
+const driftLoan=tiny('来源时刻保护'),drift=txn.createTransaction(lid,uid,{type:'transfer',amount_cents:1000,account_id:cash,to_account_id:driftLoan.account_id,txn_date:'2026-11-10',txn_time:'12:01'},{channel:'import'});
+const driftPay=payments.payLoan(lid,uid,driftLoan.id,{principal_cents:1000,account_id:cash,existing_transaction_id:drift,operation_key:'time-source-drift'});
+payments.reverse(lid,driftPay.id);db.run('UPDATE transactions SET txn_time=? WHERE id=?','12:02:00',drift);
+check('来源时刻改变后拒绝恢复旧核销',rejects(()=>payments.restore(lid,driftPay.id)));
+
+const disbursementBody={name:'实际放款时刻',original_principal_cents:1000,remaining_principal_cents:1000,term_n:1,annual_rate:0,method:'equal_principal',start_date:'2026-11-01',due_day:30,opening_mode:'disbursement',funding_account_id:cash,time:'10:30',operation_key:'disbursement-time'};
+const disbursed=loans.create(lid,uid,disbursementBody);
+check('新放款流水保存实际时刻',disbursed.disbursement.txn_date==='2026-11-01'&&disbursed.disbursement.txn_time==='10:30:00');
+check('放款时刻格式规范化后重试幂等',loans.create(lid,uid,{...disbursementBody,time:'10:30:00'}).id===disbursed.id);
+check('同操作变更放款时刻拒绝',rejects(()=>loans.create(lid,uid,{...disbursementBody,time:'10:31'})));
+check('期初负债不冒充实际到账时刻',rejects(()=>loans.create(lid,uid,{...disbursementBody,name:'期初无时刻',opening_mode:'snapshot',operation_key:'snapshot-has-time'})));
 console.log(`\n${pass} 通过 / ${fail} 失败`);process.exitCode=fail?1:0;

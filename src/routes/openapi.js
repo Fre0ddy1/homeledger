@@ -13,7 +13,7 @@
  */
 const crypto = require('node:crypto');
 const express = require('express');
-const { all, get, run, nowStr, todayStr, TXN_TYPES, TXN_TYPE_MAP, setSetting } = require('../db');
+const { all, get, run, nowStr, todayStr, TXN_TYPES, TXN_TYPE_MAP, ACCOUNT_TYPE_MAP, setSetting } = require('../db');
 const auth = require('../lib/auth');
 const ai = require('../lib/ai');
 const txn = require('../lib/txn');
@@ -186,6 +186,7 @@ function parseAmount(body) {
   return Math.abs(Math.round(yuan * 100));
 }
 
+const txnTime = require('../lib/transaction-time');
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ok = (res, data) => res.json({ ok: true, ...data });
 const bad = (res, status, error) => res.status(status).json({ ok: false, error });
@@ -195,6 +196,8 @@ const cents = (v) => u.parseAmountToCents(v);
 
 /** 交易请求体 → createTransaction/updateTransaction 的 d（支持账户/分类按名称解析） */
 function readTxnBody(ledgerId, body, { createdAccounts = [], existingCategoryId = null } = {}) {
+  const occurrenceDate=txnTime.normalizeDate(body.date ?? body.txn_date, todayStr());
+  const occurrenceTime=txnTime.normalizeTime(Object.prototype.hasOwnProperty.call(body,'time') ? body.time : body.txn_time);
   const type = TYPE_ALIASES[String(body.type || 'expense').trim()] || 'expense';
   let amountCents;
   if (body.amount_cents != null) amountCents = Math.round(Number(body.amount_cents) || 0);
@@ -226,7 +229,8 @@ function readTxnBody(ledgerId, body, { createdAccounts = [], existingCategoryId 
     to_account_id: toAccountId,
     category_id: category ? Number(category.id) : null,
     debt_id: body.debt_id === undefined ? undefined : (body.debt_id || null),
-    txn_date: DATE_RE.test(String(body.date || body.txn_date || '')) ? String(body.date || body.txn_date) : todayStr(),
+    txn_date: occurrenceDate,
+    txn_time: occurrenceTime,
     note: body.note || '',
     merchant: body.merchant || '',
     tags: body.tags || '',
@@ -252,6 +256,8 @@ router.get('/ping', (req, res) => {
     role: req.openAuth.role,
     site_admin: req.openAuth.isSiteAdmin,
     today: todayStr(),
+    server_time: require('../db').nowStr(),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   });
 });
 
@@ -263,13 +269,14 @@ router.get('/transactions/recent', (req, res) => {
   const { ledgerId } = req.openAuth;
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
   const rows = all(
-    `SELECT t.id, t.type, t.amount_cents, t.currency, t.txn_date, t.merchant, t.note, t.source, t.created_at, t.owner_label, t.no_rhythm,
-            c.name AS category_name, a.name AS account_name
+    `SELECT t.id, t.type, t.amount_cents, t.currency, t.txn_date, t.txn_time, t.merchant, t.note, t.source, t.created_at, t.owner_label, t.no_rhythm,
+            c.name AS category_name, a.name AS account_name, a.type AS account_type, ta.name AS to_account_name, ta.type AS to_account_type
      FROM transactions t
      LEFT JOIN categories c ON c.id = t.category_id
      LEFT JOIN accounts a ON a.id = t.account_id
+     LEFT JOIN accounts ta ON ta.id=t.to_account_id
      WHERE t.ledger_id = ? AND t.deleted_at IS NULL
-     ORDER BY t.txn_date DESC, t.id DESC LIMIT ?`,
+     ORDER BY t.txn_date DESC, t.txn_time IS NULL ASC, t.txn_time DESC, t.id DESC LIMIT ?`,
     ledgerId, limit
   );
   const imgMap = att.listByTxnIds(rows.map((r) => r.id));
@@ -277,6 +284,8 @@ router.get('/transactions/recent', (req, res) => {
     count: rows.length,
     transactions: rows.map((r) => ({
       ...r,
+      account_type_label: r.account_type ? ACCOUNT_TYPE_MAP[r.account_type]?.label || '其他' : null,
+      to_account_type_label: r.to_account_type ? ACCOUNT_TYPE_MAP[r.to_account_type]?.label || '其他' : null,
       // 与 GET /transactions 序列化同型：no_rhythm 统一为布尔，不给对接方两种类型
       no_rhythm: !!Number(r.no_rhythm),
       images: (imgMap.get(Number(r.id)) || []).map((i) => ({ id: i.id, path: `/uploads/${i.rel_path}`, size: i.size })),
@@ -313,9 +322,11 @@ router.get('/transactions', (req, res) => {
     transactions: result.rows.map((t) => ({
       id: t.id, type: t.type, type_label: t.type_label,
       amount_cents: t.amount_cents, amount_base_cents: t.amount_base_cents, currency: t.currency,
-      txn_date: t.txn_date, merchant: t.merchant, note: t.note,
+      txn_date: t.txn_date, txn_time: t.txn_time, created_at: t.created_at, merchant: t.merchant, note: t.note,
       category: t.category_path, category_id: t.category_id,
       account: t.account_name, to_account: t.to_account_name,
+      account_type: t.account_type, account_type_label: t.account_type_label,
+      to_account_type: t.to_account_type, to_account_type_label: t.to_account_type_label,
       member: t.member_name, tags: t.tag_names, status: t.status,
       owner_label: t.owner_label || null,
       no_rhythm: !!Number(t.no_rhythm),
@@ -375,7 +386,7 @@ router.get('/accounts', (req, res) => {
   ok(res, {
     net: overview.net, assets: overview.assets, liabilities: overview.liabilities,
     accounts: overview.accounts.map((a) => ({
-      id: a.id, name: a.name, type: a.type, icon: a.icon, currency: a.currency,
+      id: a.id, name: a.name, type: a.type, type_label: ACCOUNT_TYPE_MAP[a.type]?.label || '其他', icon: a.icon, currency: a.currency,
       transaction_types:require('../lib/account-policy').decorate([a])[0].transaction_types.split(',').filter(Boolean),
       balance_cents: Number(a.balance_cents), initial_cents: Number(a.initial_cents),
       credit_limit: a.credit_limit ? Number(a.credit_limit) : null,
@@ -476,7 +487,7 @@ router.post('/transactions', requireWrite, (req, res) => {
       ledgerId, entity: 'transaction', entityId: txnId,
       detail: `开放API·${req.openAuth.tokenName} 记 ${d.type} ¥${(Math.abs(d.amount_cents || 0) / 100).toFixed(2)}`,
     });
-    ok(res, { id: txnId, category_id: d.category_id, account_id: d.account_id, accounts_created: createdAccounts });
+    ok(res, { id: txnId, category_id: d.category_id, account_id: d.account_id, accounts_created: createdAccounts, transaction: txn.getTransaction(txnId,ledgerId) });
   } catch (e) {
     bad(res, 400, e.message);
   }
@@ -525,7 +536,7 @@ router.post('/transactions/bulk-reimburse', requireWrite, (req, res) => {
     ? validAccountId(ledgerId, Number(req.body.account_id))
     : Number(get('SELECT id FROM accounts WHERE ledger_id = ? AND is_archived = 0 ORDER BY sort_order, id LIMIT 1', ledgerId)?.id) || null;
   try {
-    const r = txn.markReimbursed(ids, ledgerId, userId, accountId);
+    const r = txn.markReimbursed(ids, ledgerId, userId, accountId,req.body||{});
     auth.audit(req, 'api.txn.bulkReimburse', { ledgerId, detail: `开放API·${req.openAuth.tokenName} 报销 ${r.count} 笔` });
     ok(res, { txn_id: r.txnId, count: r.count, total_cents: r.total });
   } catch (e) {
@@ -544,7 +555,9 @@ router.post('/transactions/:id', requireWrite, (req, res) => {
     const createdAccounts = [];
     // 显式给出的字段优先；未给出的沿用原值；按名称给账户/分类时才做名称解析
     // 金额沿用原值时不取绝对值：adjust 交易是带符号的（调减为负），abs 会把调减翻成调增
-    const rawDate = body.date ?? body.txn_date;
+    const hasDate=Object.prototype.hasOwnProperty.call(body,'date')||Object.prototype.hasOwnProperty.call(body,'txn_date');
+    const rawDate=Object.prototype.hasOwnProperty.call(body,'date')?body.date:body.txn_date;
+    if(hasDate&&(rawDate===null||String(rawDate).trim()===''))throw Error('交易日期不能为空');
     const merged = {
       type: body.type ?? old.type,
       amount: body.amount_cents != null ? undefined : (body.amount ?? (Number(old.amount_cents) / 100)),
@@ -557,7 +570,8 @@ router.post('/transactions/:id', requireWrite, (req, res) => {
       category_id: body.category_id ?? (body.category != null ? undefined : old.category_id),
       category: body.category,
       debt_id: body.debt_id ?? old.debt_id,
-      date: rawDate != null ? (DATE_RE.test(String(rawDate)) ? rawDate : old.txn_date) : old.txn_date,
+      date: rawDate !== undefined ? rawDate : old.txn_date,
+      time: Object.prototype.hasOwnProperty.call(body,'time') ? body.time : (Object.prototype.hasOwnProperty.call(body,'txn_time') ? body.txn_time : old.txn_time),
       note: body.note ?? old.note ?? '',
       merchant: body.merchant ?? old.merchant ?? '',
       tags: body.tags ?? old.tag_names ?? '',
@@ -570,7 +584,7 @@ router.post('/transactions/:id', requireWrite, (req, res) => {
     };
     const txnId = txn.updateTransaction(id, ledgerId, userId, readTxnBody(ledgerId, merged, { createdAccounts, existingCategoryId: old.category_id }));
     auth.audit(req, 'api.txn.update', { ledgerId, entity: 'transaction', entityId: txnId, detail: `开放API·${req.openAuth.tokenName} 修改` });
-    ok(res, { id: txnId, accounts_created: createdAccounts });
+    ok(res, { id: txnId, accounts_created: createdAccounts, transaction: txn.getTransaction(txnId,ledgerId) });
   } catch (e) {
     bad(res, 400, e.message);
   }
@@ -671,6 +685,7 @@ router.post('/ai/bill', requireWrite, async (req, res) => {
           account_id: accountId,
           category_id: it.category_id || null,
           txn_date: it.txn_date || todayStr(),
+          txn_time: it.txn_time,
           note: it.note || '',
           merchant: it.merchant || '',
           tags: it.tags || '',
@@ -814,7 +829,8 @@ router.post('/accounts/:id/adjust', requireWrite, (req, res) => {
   try {
     const id = txn.createTransaction(ledgerId, userId, {
       type: 'adjust', amount_cents: delta, account_id: acc.id,
-      txn_date: DATE_RE.test(String(body.date || body.adjust_date || '')) ? (body.date || body.adjust_date) : todayStr(),
+      txn_date: txnTime.normalizeDate(body.date ?? body.txn_date ?? body.adjust_date, todayStr()),
+      txn_time: txnTime.normalizeTime(Object.prototype.hasOwnProperty.call(body,'time') ? body.time : body.txn_time),
       note: `余额调整：${u.fmtAmount(acc.balance_cents)} → ${u.fmtAmount(actual)}${body.note ? ' · ' + body.note : ''}`,
       source: 'manual',
     });
@@ -986,19 +1002,20 @@ router.post('/goals/:id/deposit', requireWrite, (req, res) => {
   const accountId = validAccountId(ledgerId, body.account_id) || g.account_id;
   const { tx } = require('../db');
   let txnId = null;
-  tx(() => {
+  try { tx(() => {
     run('UPDATE goals SET saved_cents = ?, status = ? WHERE id = ?', saved, status, g.id);
     if (body.create_txn) {
       txnId = txn.createTransaction(ledgerId, userId, {
         type: delta > 0 ? 'expense' : 'income',
         amount_cents: Math.abs(delta),
         account_id: accountId,
-        txn_date: todayStr(),
+        txn_date: txnTime.normalizeDate(body.date ?? body.txn_date, todayStr()),
+        txn_time: txnTime.normalizeTime(Object.prototype.hasOwnProperty.call(body,'time') ? body.time : body.txn_time),
         note: `储蓄目标「${g.name}」${delta > 0 ? '存入' : '取出'}`,
         source: 'manual',
       });
     }
-  });
+  }); } catch(e) { return bad(res,400,e.message); }
   if (status === 'done') {
     for (const uid of auth.ledgerWriterIds(ledgerId)) {
       auth.notify(uid, { kind: 'success', ledgerId, title: `🎉 储蓄目标达成：${g.name}`, link: '/goals' });

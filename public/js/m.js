@@ -366,6 +366,9 @@
     dateIn.className = 'm-draft-acc';
     dateIn.value = it.txn_date || '';
     card.appendChild(fieldRow('日期', dateIn));
+    const timeIn=document.createElement('input');
+    timeIn.type='time';timeIn.step='1';timeIn.setAttribute('aria-label','交易时刻（可选）');timeIn.className='m-draft-acc';timeIn.value=it.txn_time||'';
+    card.appendChild(fieldRow('交易时刻（可选）',timeIn));
 
     // 分类（可改下拉）：候选按收支类型过滤；推荐分类不在清单时补原生选项
     const cats = (() => { try { return JSON.parse((document.getElementById('mCats') || {}).textContent || '[]'); } catch { return []; } })();
@@ -400,7 +403,7 @@
       for (const a of options) {
         const o = document.createElement('option');
         o.value = a.id;
-        o.textContent = (a.icon ? a.icon + ' ' : '') + a.name;
+        o.textContent = (a.icon ? a.icon + ' ' : '') + a.name+(a.type_label?' · '+a.type_label:'');
         if (it.account_id && Number(a.id) === Number(it.account_id)) o.selected = true;
         accountSel.appendChild(o);
       }
@@ -421,12 +424,12 @@
       // 账本没有可用账户：静态行如实显示（确认时服务端必填校验会拦）
       const accLine = document.createElement('div');
       accLine.className = 'm-draft-sub';
-      accLine.textContent = '账户：' + (it.account_name_resolved || '未指定');
+      accLine.textContent = '账户：' + (it.account_name_resolved || '未指定')+(it.account_type_label?' · '+it.account_type_label:'');
       card.appendChild(accLine);
     }
 
     let toAccountSel=null;
-    if(it.type==='transfer') {toAccountSel=document.createElement('select');toAccountSel.className='m-draft-acc';for(const a of accs){const o=document.createElement('option');o.value=a.id;o.textContent=a.name;toAccountSel.appendChild(o);}card.appendChild(fieldRow('转入账户',toAccountSel));}
+    if(it.type==='transfer') {toAccountSel=document.createElement('select');toAccountSel.className='m-draft-acc';for(const a of accs){const o=document.createElement('option');o.value=a.id;o.textContent=a.name+(a.type_label?' · '+a.type_label:'');toAccountSel.appendChild(o);}card.appendChild(fieldRow('转入账户',toAccountSel));}
     if(it.requires_finance_review){const hint=document.createElement('a');hint.href='/finance';hint.textContent='涉及金融还款，请前往贷款与信用卡核对 →';card.appendChild(hint);}
     // 商户（可改）：默认标题的来源，现在可以改
     const merchIn = document.createElement('input');
@@ -513,6 +516,7 @@
         item.rec_snapshot = { category_id: it.category_id, account_id: it.account_id, owner_label: it.owner_label || null, type: it.type };
         item.amount_cents = Math.round(Math.max(0, parseFloat(amountIn.value || '0') || 0) * 100);
         if (dateIn.value) item.txn_date = dateIn.value;
+        item.txn_time=timeIn.value||null;
         if (catSel && catSel.value) item.category_id = Number(catSel.value);
         if(toAccountSel)item.to_account_id=Number(toAccountSel.value);
         if (accountSel) item.account_id = Number(accountSel.value);

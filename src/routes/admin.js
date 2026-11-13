@@ -531,7 +531,7 @@ router.post('/api/import/preview', auth.requireLogin, auth.requireLedgerWrite, a
     if (parsed.error) return res.status(400).json({ ok: false, error: parsed.error });
 
     // P8 导入兜底分类：词表/习惯（零 token）先行，仍未定的唯一商户批量给模型（失败静默，行为同现状）
-    const enriched = await ai.enrichImportCategories(ledgerId, parsed.records);
+    const enriched = await ai.enrichImportCategories(ledgerId, parsed.records.filter(r=>!r.import_error));
 
     const token = u.uid(24);
     previewCache.set(token, {
@@ -569,6 +569,7 @@ router.post('/api/import/preview', auth.requireLogin, auth.requireLedgerWrite, a
 
     const stat = { income: 0, expense: 0, transfer: 0, minDate: null, maxDate: null };
     for (const r of parsed.records) {
+      if(r.import_error)continue;
       if (r.type === 'income') stat.income += r.amount_cents;
       else if (r.type === 'transfer') stat.transfer += r.amount_cents;
       else stat.expense += r.amount_cents;
@@ -591,6 +592,7 @@ router.post('/api/import/preview', auth.requireLogin, auth.requireLedgerWrite, a
       header: parsed.header,
       count: parsed.records.length,
       skipped: parsed.skipped || 0,
+      invalidCount: parsed.records.concat(parsed.neutralRecords||[]).filter(r=>r.import_error).length,
       neutralCount: (parsed.neutralRecords || []).length,
       neutralSample,
       sample, stat,

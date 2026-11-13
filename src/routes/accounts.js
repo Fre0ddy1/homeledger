@@ -204,6 +204,7 @@ router.get('/categories', auth.requireLogin, (req, res) => {
   const categorySearch=sorting?'':String(req.query.q||'').trim().slice(0,40);
   const categoryBack='/categories?kind='+categoryKind+(selectedGroup?'&group='+selectedGroup.id:'')+(sorting?'&sort=1':'');
   res.render('categories', {
+    categoryIconCatalog:require('../lib/category-icons'),
     title: '分类管理', activeNav: 'categories',
     expenseTree: decoratedExpense,
     incomeTree: decoratedIncome,

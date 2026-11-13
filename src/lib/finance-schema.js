@@ -29,6 +29,7 @@ function ensure(db,column){
     CREATE INDEX IF NOT EXISTS idx_finance_alloc_target ON finance_allocations(ledger_id,target_kind,target_id);
     CREATE INDEX IF NOT EXISTS idx_statement_card ON credit_statements(ledger_id,account_id);
   `);
+  column('finance_payments','txn_time','TEXT');
   column('finance_payments','sources_json',"TEXT NOT NULL DEFAULT '[]'");
   column('finance_payments','external_mode','TEXT');
   column('finance_payments','allocation_mode',"TEXT NOT NULL DEFAULT 'manual'");

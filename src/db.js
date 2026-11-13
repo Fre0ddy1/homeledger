@@ -478,6 +478,7 @@ function ensureColumn(table, column, ddl) {
 }
 
 const migrated = [];
+if (ensureColumn('transactions', 'txn_time', 'TEXT')) migrated.push('transactions.txn_time');
 if (ensureColumn('categories', 'deleted_at', 'TEXT')) migrated.push('categories.deleted_at');
 if (ensureColumn('transactions', 'subscription_id', 'INTEGER')) migrated.push('transactions.subscription_id');
 if (ensureColumn('users', 'avatar_path', 'TEXT')) migrated.push('users.avatar_path');
@@ -766,6 +767,7 @@ function init() {
     ledger_id INTEGER NOT NULL, source_id INTEGER NOT NULL, category_id INTEGER NOT NULL,
     PRIMARY KEY(ledger_id,source_id), UNIQUE(ledger_id,category_id))`);
   ensureColumn('categories', 'deleted_at', 'TEXT');
+  ensureColumn('transactions', 'txn_time', 'TEXT');
   seedSystemCategories();
   seedSettings();
   seedExchangeRates();

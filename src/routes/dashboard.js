@@ -64,7 +64,7 @@ router.get('/', auth.requireLogin, (req, res, next) => {
       month, monthLabel: u.monthLabel(month),
       ...summaryPair,basis,cur, budgets: budgetsWithForecast, recent,
       // 草稿缺账户时捕获区要能选账户（规则引擎草稿常无账户，不能让确认卡死）
-      mAccounts: require('../lib/account-policy').decorate(fd.accounts(ledgerId)).map((a) => ({ id: a.id, name: a.name, icon: a.icon,transaction_types:a.transaction_types })),
+      mAccounts: require('../lib/account-policy').decorate(fd.accounts(ledgerId)).map((a) => ({ id: a.id, name: a.name, icon: a.icon,type_label:a.type_label,transaction_types:a.transaction_types })),
       // 草稿卡分类下拉候选（P11 批次）
       mCats: fd.flatCategories(ledgerId).map((c) => ({ id: c.id, path: c.path, kind: c.kind })),
     });
@@ -99,7 +99,7 @@ router.get('/', auth.requireLogin, (req, res, next) => {
     incomeCats: incomeCats,
     overview,
     budgets,
-    recent,
+    recent, recentGroups:txn.groupByDate(recent),
     todayList,
     debts,
     goals,

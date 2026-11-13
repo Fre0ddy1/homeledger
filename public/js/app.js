@@ -572,6 +572,7 @@
           '<div class="draft-grid">' +
             '<div class="field"><label>金额</label><input type="text" inputmode="decimal" class="d-amount" value="' + (it.amount_cents / 100).toFixed(2) + '"></div>' +
             '<div class="field"><label>日期</label><input type="date" class="d-date" value="' + esc(it.txn_date) + '"></div>' +
+            '<div class="field"><label>交易时刻（可选）</label><input type="time" step="1" class="d-time" aria-label="交易时刻（可选）" value="' + esc(it.txn_time || '') + '"></div>' +
             '<div class="field d-type-wrap"><label>类型</label><select class="d-type">' +
               ['expense','income','transfer','lend','borrow','repay_receive','repay_pay'].map((t) => '<option value="' + t + '"' + (t === it.type ? ' selected' : '') + '>' + ({expense:'支出',income:'收入',transfer:'转账',lend:'借出',borrow:'借入',repay_receive:'收回借款',repay_pay:'偿还借款'}[t]) + '</option>').join('') +
             '</select></div>' +
@@ -613,10 +614,10 @@
           .filter((c) => c.kind === kind)
           .map((c) => '<option value="' + c.id + '"' + (Number(c.id) === Number(it.category_id) ? ' selected' : '') + '>' + esc(c.path) + '</option>').join('');
         accSel.innerHTML = '<option value="">未指定</option>' + cfg.accounts
-          .map((a) => '<option value="' + a.id + '"' + (Number(a.id) === Number(it.account_id) ? ' selected' : '') + '>' + esc(a.icon + ' ' + a.name) + '</option>').join('');
-        const toSel=$('.d-to-account',card);toSel.innerHTML='<option value="">请选择转入账户</option>'+cfg.accounts.map(a=>'<option value="'+Number(a.id)+'">'+esc(a.name)+'</option>').join('');
+          .map((a) => '<option value="' + a.id + '"' + (Number(a.id) === Number(it.account_id) ? ' selected' : '') + '>' + esc(a.icon + ' ' + a.name+(a.type_label?' · '+a.type_label:'')) + '</option>').join('');
+        const toSel=$('.d-to-account',card);toSel.innerHTML='<option value="">请选择转入账户</option>'+cfg.accounts.map(a=>'<option value="'+Number(a.id)+'">'+esc(a.name+(a.type_label?' · '+a.type_label:''))+'</option>').join('');
         function typeFields(){const type=$('.d-type',card).value;
-          [accSel,toSel].forEach(sel=>{const selected=sel.value;sel.innerHTML='<option value="">请选择账户</option>'+cfg.accounts.filter(a=>(a.transaction_types||'').split(',').includes(type)).map(a=>'<option value="'+Number(a.id)+'">'+esc(a.icon+' '+a.name)+'</option>').join('');sel.value=Array.from(sel.options).some(o=>o.value===selected)?selected:'';sel._hlRefresh?.();});
+          [accSel,toSel].forEach(sel=>{const selected=sel.value;sel.innerHTML='<option value="">请选择账户</option>'+cfg.accounts.filter(a=>(a.transaction_types||'').split(',').includes(type)).map(a=>'<option value="'+Number(a.id)+'">'+esc(a.icon+' '+a.name+(a.type_label?' · '+a.type_label:''))+'</option>').join('');sel.value=Array.from(sel.options).some(o=>o.value===selected)?selected:'';sel._hlRefresh?.();});
           catSel.closest('.field').classList.toggle('hidden',!['expense','income','fee'].includes(type));toSel.closest('.field').classList.toggle('hidden',type!=='transfer');if(type!=='expense'&&type!=='income')catSel.value='';}
         typeFields();
         // 切换类型时联动分类
@@ -655,6 +656,7 @@
             type,
             amount_cents: amountCents,
             txn_date: $('.d-date', card).value,
+            txn_time: $('.d-time', card).value || null,
             category_id: $('.d-category', card).value || null,
             account_id: $('.d-account', card).value || null,to_account_id:$('.d-to-account',card).value||null,requires_finance_review:d.requires_finance_review||false,
             merchant: $('.d-merchant', card).value.trim(),
@@ -713,6 +715,7 @@
           const url = '/transactions/new?type=' + encodeURIComponent(single.type) +
             '&amount=' + encodeURIComponent((single.amount_cents / 100).toFixed(2)) +
             '&date=' + encodeURIComponent(single.txn_date) +
+            (single.txn_time ? '&time=' + encodeURIComponent(single.txn_time) : '') +
             (single.category_id ? '&category_id=' + encodeURIComponent(single.category_id) : '') +
             (single.account_id ? '&account_id=' + encodeURIComponent(single.account_id) : '') +
             '&note=' + encodeURIComponent(single.note || single.merchant || '') + '&from_ai=1';
@@ -778,6 +781,7 @@
         '<button class="btn btn-primary" id="imp-commit">确认导入 ' + res.count + ' 条</button></div>';
       html += '</div>';
 
+      if(res.invalidCount)html+='<div class="notice warn">'+Number(res.invalidCount)+' 条日期或时刻无效，确认导入时会逐行拒绝，请先核对。</div>';
       if (res.neutralCount) {
         html += '<div class="card">';
         html += '<div class="card-head"><h2>「不计收支」记录</h2><span class="chip">' + res.neutralCount + ' 条</span></div>';
@@ -786,9 +790,9 @@
         html += '<div class="row mb12"><label class="check"><input type="checkbox" id="imp-include-neutral"> 一并导入这 ' + res.neutralCount + ' 条「不计收支」记录（记作账户间转账）</label></div>';
         html += '<div class="scroll-x"><table class="table responsive"><thead><tr><th>日期</th><th class="num">金额</th><th>说明</th><th>账户</th></tr></thead><tbody>';
         res.neutralSample.forEach((r) => {
-          html += '<tr><td class="nowrap">' + esc(r.txn_date) + '</td>' +
+          html += '<tr><td class="nowrap">' + esc(r.txn_date) + ' ' + esc(r.txn_time || '（未提供时刻）') + '</td>' +
             '<td class="num amount neutral">' + money(r.amount_cents) + '</td>' +
-            '<td>' + esc(r.merchant || r.note || '—') + '</td>' +
+            '<td>' + esc(r.merchant || r.note || '—') + (r.import_error?'<div class="flash error">'+esc(r.import_error)+'</div>':'') + '</td>' +
             '<td class="small muted">' + esc(r.guess_account || '—') + '</td></tr>';
         });
         html += '</tbody></table></div>';
@@ -802,10 +806,10 @@
       html += '<div class="card-head"><h2>将导入的明细</h2></div>';
       html += '<div class="scroll-x"><table class="table responsive"><thead><tr><th>日期</th><th>类型</th><th class="num">金额</th><th>商家/说明</th><th>建议分类</th><th>账户</th></tr></thead><tbody>';
       res.sample.slice(0, 60).forEach((r) => {
-        html += '<tr><td class="nowrap">' + esc(r.txn_date) + '</td>' +
+        html += '<tr><td class="nowrap">' + esc(r.txn_date) + ' ' + esc(r.txn_time || '（未提供时刻）') + '</td>' +
           '<td><span class="chip ' + (r.type === 'income' ? 'income' : r.type === 'transfer' ? '' : 'expense') + '">' + esc(r.type_label) + '</span></td>' +
           '<td class="num amount ' + (r.type === 'income' ? 'income' : 'expense') + '">' + money(r.amount_cents) + '</td>' +
-          '<td>' + esc(r.merchant || r.note || '—') + '</td>' +
+          '<td>' + esc(r.merchant || r.note || '—') + (r.import_error?'<div class="flash error">'+esc(r.import_error)+'</div>':'') + '</td>' +
           '<td class="small muted">' + esc(r.guess_category || '—') + '</td>' +
           '<td class="small muted">' + esc(r.guess_account || '—') + '</td></tr>';
       });
@@ -1042,14 +1046,15 @@
         const t = data.txn;
         const rows = [];
         const kv = (k, v) => rows.push('<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>');
-        kv('日期', esc(t.txn_date) + ' · ' + esc(t.type_label));
+        kv('交易时间', esc(t.txn_date) + ' ' + esc(t.txn_time_label || '（未提供时刻）'));
+        kv('交易类型', esc(t.type_label));
         if (t.has_category) kv('分类', esc(t.category_path || '—'));
         if(t.debt_id)kv('借钱台账','<a href="/debts/'+Number(t.debt_id)+'">查看借钱条目 #'+Number(t.debt_id)+'</a>');
         (t.finance_payments||[]).forEach(p=>kv('关联付款','<a href="/finance/payments/'+Number(p.id)+'">付款 #'+Number(p.id)+(p.deleted_at?'（已撤销）':'')+'</a>'));
         (t.credit_statements||[]).forEach(s=>kv('信用卡账单','<a href="/finance/statements/'+Number(s.id)+'">'+esc(s.closing_date)+'</a>'));
         kv('账户', (t.type === 'transfer' || t.type === 'invest_buy' || t.type === 'invest_sell')
-          ? esc((t.account_name || '—') + ' → ' + (t.to_account_name || '—'))
-          : esc(t.account_name || '未指定账户'));
+          ? esc((t.account_name || '—') + (t.account_type_label?' · '+t.account_type_label:'') + ' → ' + (t.to_account_name || '—') + (t.to_account_type_label?' · '+t.to_account_type_label:''))
+          : esc((t.account_name || '未指定账户')+(t.account_type_label?' · '+t.account_type_label:'')));
         if (t.member_name) kv('成员', esc(t.member_name));
         if (t.merchant) kv('商家', esc(t.merchant));
         if (t.note) kv('备注', esc(t.note));
@@ -1058,7 +1063,7 @@
         if (t.is_reimbursable) kv('报销', t.reimbursed_at ? '已报销（' + esc(t.reimbursed_at) + '）' : '待报销');
         kv('状态', t.status === 'pending' ? '待确认' : '已确认');
         kv('来源', TXN_SOURCE_LABEL[t.source] || esc(t.source || '—'));
-        kv('创建时间', esc(String(t.created_at || '').replace('T', ' ').slice(0, 16)));
+        kv('录入时间', esc(String(t.created_at || '').replace('T', ' ').slice(0, 16)));
 
         const signCls = t.type === 'adjust' ? 'neutral' : (t.is_income ? 'income' : (t.is_expense ? 'expense' : 'neutral'));
         const sign = t.type === 'adjust' ? '' : (t.is_income ? '+' : (t.is_expense ? '−' : ''));
@@ -1591,6 +1596,23 @@
       if(due)due.textContent='本期还款 '+option.dataset.due;
     }));
   }
+  function initTransactionClocks() {
+    $$('input[type="time"]').forEach(input=>{input.setAttribute('aria-label',input.getAttribute('aria-label')||'交易时刻（可选）');});
+    $$('[data-txn-now],[data-txn-time-clear]').forEach(button=>{
+      button.classList.remove('hidden');
+      button.addEventListener('click',()=>{
+        const form=button.closest('form');if(!form)return;
+        const clock=form.querySelector('input[name=txn_time],input[name=time]'),date=form.querySelector('input[name=txn_date],input[name=date],input[name=start_date]');if(!clock)return;
+        if(button.hasAttribute('data-txn-time-clear')){clock.value='';}else{
+          if(!date)return;
+          const parts=Object.fromEntries(new Intl.DateTimeFormat('sv-SE',{timeZone:form.dataset.timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).map(p=>[p.type,p.value]));
+          date.value=parts.year+'-'+parts.month+'-'+parts.day;date._hlRefresh?.();date.dispatchEvent(new Event('change',{bubbles:true}));
+          clock.value=parts.hour+':'+parts.minute+':'+parts.second;
+        }
+        clock.dispatchEvent(new Event('change',{bubbles:true}));
+      });
+    });
+  }
   function initEntryWorkspace() {
     const workspace=$('.entry-workspace');
     if(!workspace)return;
@@ -1600,11 +1622,11 @@
     function activePayment(){return $('[data-repayment-target]:not(.hidden) .finance-form',repayment);}
     function copyFields(from,to){
       if(!from||!to)return;
-      for(const [source,target] of [['account_id','account_id'],['txn_date','date'],['amount','amount']]){
+      for(const [source,target] of [['account_id','account_id'],['txn_date','date'],['txn_time','time'],['amount','amount']]){
         if(source==='amount'&&$('#f-currency')?.value!==workspace.dataset.baseCurrency)continue;
         const value=from.querySelector('[name="'+source+'"]')?.value;
         const field=to.querySelector('[name="'+target+'"]');
-        if(value&&field&&(!field.options||Array.from(field.options).some(o=>o.value===value))){field.value=value;field._hlRefresh?.();field.dispatchEvent(new Event('change',{bubbles:true}));}
+        if((value||source==='txn_time')&&field&&(!field.options||Array.from(field.options).some(o=>o.value===value))){field.value=value;field._hlRefresh?.();field.dispatchEvent(new Event('change',{bubbles:true}));}
       }
     }
     $$('[data-entry-type]',workspace).forEach(link=>link.addEventListener('click',event=>{
@@ -1626,9 +1648,9 @@
       $$('[data-repayment-target]',repayment).forEach(panel=>panel.classList.toggle('hidden',panel.dataset.repaymentTarget!==target.value));
       const next=activePayment();
       if(previous&&next&&!initialized.has(target.value)){
-        for(const name of ['account_id','date']){
+        for(const name of ['account_id','date','time']){
           const value=previous.querySelector('[name='+name+']')?.value,field=next.querySelector('[name='+name+']');
-          if(value&&field&&(!field.options||Array.from(field.options).some(option=>option.value===value))){field.value=value;field._hlRefresh?.();field.dispatchEvent(new Event('change',{bubbles:true}));}
+          if((value||name==='time')&&field&&(!field.options||Array.from(field.options).some(option=>option.value===value))){field.value=value;field._hlRefresh?.();field.dispatchEvent(new Event('change',{bubbles:true}));}
         }
       }
       initialized.add(target.value);
@@ -1775,6 +1797,7 @@
     initAiWarnFlash();
     initTxnForm();
     initEntryWorkspace();
+    initTransactionClocks();
     initEntryActions();
     initFormValidation();
     initLoanPeriods();

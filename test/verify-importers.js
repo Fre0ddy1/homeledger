@@ -105,6 +105,7 @@ check('「收入」归类为 income', wInc && wInc.type === 'income' && wInc.amo
   wInc && `${wInc.type}/${wInc.amount_cents}`);
 check('交易时间取日期部分、单号保留', wExp && wExp.txn_date === '2026-09-01' && wExp.order_no === '1000001',
   wExp && `${wExp.txn_date}/${wExp.order_no}`);
+check('微信交易时刻与日期分别保留', wExp?.txn_time === '12:30:00' && wInc?.txn_time === '09:00:00');
 check('支付方式作为账户提示', wExp && wExp.account_hint === '零钱' && w.neutralRecords[0].account_hint === '招商银行卡(0000)',
   wExp && String(wExp.account_hint));
 check('不计收支行统一归入 transfer 类型', w.neutralRecords.every((r) => r.type === 'transfer' && r.neutral === true));
@@ -136,6 +137,20 @@ check('退款成功状态行跳过', a.skipped === 1, String(a.skipped));
 const aExp = a.records.find((r) => r.merchant === '滴滴出行');
 check('全角括号「金额（元）」列能取到金额', aExp && aExp.amount_cents === 2350, aExp && String(aExp.amount_cents));
 check('「收入」行归类为 income', a.records.some((r) => r.merchant === '某网店' && r.type === 'income' && r.amount_cents === 4500));
+
+check('支付宝采用付款时刻而非交易创建时刻', aExp?.txn_date === '2026-09-01' && aExp?.txn_time === '12:00:01');
+const splitClock = importer.parseBill(Buffer.from('日期,时间,类型,金额,商家\n2026-09-05,08:15,支出,8.00,早餐\n2026-09-05,,支出,8.00,午餐\n2026-09-05,25:10,支出,8.00,坏时刻\n2026-02-30,09:00,支出,8.00,坏日期'));
+check('日期和独立时间列精确区分，分钟补齐秒', splitClock.records[0]?.txn_date === '2026-09-05' && splitClock.records[0]?.txn_time === '08:15:00');
+check('只有交易日期时保留未知时刻', splitClock.records[1]?.txn_time === null);
+check('非法时刻与日期保留为逐行错误，不静默回落今天', !!splitClock.records[2]?.import_error && !!splitClock.records[3]?.import_error);
+const mixedClock = importer.parseBill(Buffer.from('交易时间,时间,类型,金额,商家\n2026-09-05 12:00:00,08:15,支出,8.00,独立时刻优先'));
+check('独立时间列优先，不能误抓完整交易时间列', mixedClock.records[0]?.txn_time === '08:15:00');
+const combinedClock=importer.parseBill(Buffer.from('交易日期,交易时间,类型,金额,商家\n2026-09-05,2026-09-05 12:30:20,支出,8.00,组合日期时刻'));
+check('日期列和完整交易时间并存时保留真实时刻',combinedClock.records[0]?.txn_date==='2026-09-05'&&combinedClock.records[0]?.txn_time==='12:30:20');
+const conflictingClock=importer.parseBill(Buffer.from('交易日期,交易时间,类型,金额,商家\n2026-09-05,2026-09-06 12:30:20,支出,8.00,日期冲突'));
+check('日期与完整交易时间冲突时按行报错，不拼接错误时刻',!!conflictingClock.records[0]?.import_error);
+const creationClock=importer.parseBill(Buffer.from('交易创建时间,付款时间,类型,金额,商家\n2026-09-05 12:30:20,,支出,8.00,仅订单创建时间'));
+check('仅订单创建时间不充当实际付款时刻',creationClock.records[0]?.txn_date==='2026-09-05'&&creationClock.records[0]?.txn_time===null);
 
 /* ================= A3. 导出 → 回导循环保真（v1.4.1 修复区） ================= */
 
@@ -184,6 +199,7 @@ for (const c of CASES) {
   );
 }
 
+db.run('UPDATE transactions SET txn_time=? WHERE ledger_id=? AND merchant=?','18:35:20',srcLedger,'循源-支出');
 const listed = txn.listTransactions(srcLedger, { sort: 'date_asc', page: 1, pageSize: 200 });
 const csv = importer.toCsv(importer.EXPORT_HEADER, importer.exportRows(srcLedger, listed.rows));
 check('导出 14 行且表头含 type_key 机读列', listed.rows.length === 14 && csv.includes('type_key'), `${listed.rows.length} 行`);
@@ -198,6 +214,7 @@ check('type_key 机读列让 14 种类型回导全部 1:1 还原（不再是正�
 check('双边类型的「转入账户」列回导为对方账户提示',
   ['循源-转账', '循源-买入', '循源-卖出'].every((m) => byMerchant(m)?.to_account_hint),
   byMerchant('循源-转账')?.to_account_hint);
+check('CSV有独立时间列且回导保留秒，未知时刻仍为空', importer.EXPORT_HEADER.includes('时间') && byMerchant('循源-支出')?.txn_time === '18:35:20' && byMerchant('循源-收入')?.txn_time === null);
 check('余额调整的负数金额保留（方向不翻转）', byMerchant('循源-调减')?.amount_cents === -5000,
   String(byMerchant('循源-调减')?.amount_cents));
 
@@ -223,6 +240,7 @@ check('落库后类型 1:1（14/14）', CASES.every((c) => dstOf(c.m)?.type === 
   CASES.filter((c) => dstOf(c.m)?.type !== c.type).map((c) => c.m).join('，'));
 check('落库后金额/日期 1:1（含负数调整）',
   CASES.every((c) => Number(dstOf(c.m)?.amount_cents) === c.cents && dstOf(c.m)?.txn_date === c.date));
+check('CSV回导入库后交易时刻保留',dstOf('循源-支出')?.txn_time === '18:35:20' && dstOf('循源-收入')?.txn_time === null);
 check('落库后账户与对方账户 1:1',
   CASES.every((c) => accNameOf(dstOf(c.m)?.account_id) === c.accName && accNameOf(dstOf(c.m)?.to_account_id) === c.toName));
 const dstRows = db.all(
@@ -239,6 +257,16 @@ const again = importer.importRecords({
 });
 check('重复回导全部去重（不再重复入账）', again.imported === 0 && again.skipped === 14,
   `imported=${again.imported} skipped=${again.skipped}`);
+
+const clockRecords = ['08:15:00','09:15:00'].map(txn_time=>({...round.records[0],merchant:'时刻判重商家',txn_date:'2026-11-12',txn_time}));
+const clockFirst=importer.importRecords({ledgerId:dstLedger,userId:uid,records:clockRecords,source:'generic',fileName:'clock.csv'});
+const clockAgain=importer.importRecords({ledgerId:dstLedger,userId:uid,records:clockRecords,source:'generic',fileName:'clock-again.csv'});
+check('同日同商家同金额的两个已知时刻能分别入账',clockFirst.imported===2&&clockFirst.failed===0);
+check('重复导入已知时刻仍去重',clockAgain.imported===0&&clockAgain.skipped===2);
+const unknownClock=importer.importRecords({ledgerId:dstLedger,userId:uid,records:[{...clockRecords[0],txn_time:null}],source:'generic',fileName:'clock-unknown.csv'});
+check('未知时刻采用保守判重，不编造时刻绕过去重',unknownClock.imported===0&&unknownClock.skipped===1);
+const badClock=importer.importRecords({ledgerId:dstLedger,userId:uid,records:splitClock.records.slice(2),source:'generic',fileName:'clock-invalid.csv',defaultAccountId:dstOf('循源-支出').account_id});
+check('非法日期/时刻按行失败且没有污染流水',badClock.failed===2&&badClock.imported===0&&badClock.errors.length===2);
 
 check('无表头的文件给出可读错误', (() => { const p = importer.parseBill(Buffer.from('随便一行\n另一行', 'utf8')); return !!p.error; })());
 
@@ -332,15 +360,17 @@ const formCsrf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[
   }
 
   /* 导出：/export/csv 全量分页拼接 + BOM + 机读列 */
-  // P7 修订：把一笔种子标为一次性大额，导出→回导后该标记应循环保真（18 列新列）
-  raw.prepare('UPDATE transactions SET no_rhythm=1 WHERE ledger_id=? AND merchant=?').run(homeId, CASES[0].m);
+  // P7 修订：把一笔种子标为一次性大额，导出→回导后该标记应循环保真（新增时间列仍保留此标记）
+  raw.prepare('UPDATE transactions SET no_rhythm=1,txn_time=? WHERE ledger_id=? AND merchant=?').run('18:35:20',homeId, CASES[0].m);
   r = await req('GET', '/export/csv');
   check('导出 CSV 200 且带 UTF-8 BOM', r.status === 200 && r.text.startsWith('\uFEFF'), `HTTP ${r.status}`);
   const exportCsv = r.text.replace(/^\uFEFF/, '');
   const csvLines = exportCsv.trim().split(/\r?\n/);
-  check('导出表头 18 列且含 type_key/归属人/一次性大额（P11+P7 修订）', csvLines[0].split(',').length === 18 && csvLines[0].includes('type_key') && csvLines[0].includes('归属人') && csvLines[0].includes('一次性大额'), csvLines[0].slice(0, 80));
+  check('导出表头 19 列且含时间/type_key/归属人/一次性大额', csvLines[0].split(',').length === 19 && csvLines[0].split(',').includes('时间') && csvLines[0].includes('type_key') && csvLines[0].includes('归属人') && csvLines[0].includes('一次性大额'), csvLines[0].slice(0, 80));
   check('导出行数与种子一致', csvLines.length - 1 === CASES.length, `${csvLines.length - 1} 行`);
   const exportB64 = Buffer.from(exportCsv, 'utf8').toString('base64');
+  const jsonExport=await req('GET','/export/json');
+  check('JSON完整导出包含交易时刻且未知保持null',jsonExport.body?.transactions?.find(t=>t.merchant===CASES[0].m)?.txn_time==='18:35:20' && jsonExport.body?.transactions?.find(t=>t.merchant===CASES[1].m)?.txn_time===null);
 
   /* 建目标账本（POST /ledgers 自动切换会话）并整链路回导。
      with_default_accounts=0 得到裸账本：默认账户预设会经宽松匹配复用（微信零钱→微信钱包），
@@ -355,6 +385,7 @@ const formCsrf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[
   r = await req('POST', '/api/import/preview', { json: { dataUrl: 'data:text/csv;base64,' + exportB64, fileName: 'export.csv' } });
   check('预览成功且行数正确（账单含「支付宝」账户名，来源标签允许任一引擎）',
     r.body?.ok === true && r.body.count === CASES.length, JSON.stringify({ source: r.body?.source, count: r.body?.count }));
+  check('预览样本提供已知交易时刻及未知空值',r.body?.sample?.find(t=>t.merchant===CASES[0].m)?.txn_time==='18:35:20' && r.body?.sample?.find(t=>t.merchant===CASES[1].m)?.txn_time===null);
   const transferSample = r.body?.sample?.find((s) => s.merchant === '循源-转账');
   check('预览样本按 type_key 标出「转账」而非误判支出', transferSample?.type === 'transfer' && transferSample?.type_label === '转账',
     JSON.stringify({ type: transferSample?.type, label: transferSample?.type_label }));
@@ -374,9 +405,10 @@ const formCsrf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[
       || dst.acc !== c.accName || dst.to_acc !== c.toName) mismatch.push(c.m);
   }
   check('回导落库逐笔保真（类型/金额/日期/账户/对方账户）', mismatch.length === 0, mismatch.join('，') || '14/14 一致');
+  check('HTTP CSV回导保留交易时刻',raw.prepare('SELECT txn_time FROM transactions WHERE ledger_id=? AND merchant=?').get(targetId,CASES[0].m)?.txn_time==='18:35:20');
   const lumpyRound = raw.prepare('SELECT no_rhythm FROM transactions WHERE ledger_id=? AND merchant=?').get(targetId, CASES[0].m);
   const lumpyUntouched = raw.prepare('SELECT COUNT(*) AS c FROM transactions WHERE ledger_id=? AND no_rhythm=1 AND merchant!=?').get(targetId, CASES[0].m);
-  check('回导保真：一次性大额标记循环保真且不误标他人（P7 修订 18 列）',
+  check('回导保真：一次性大额标记循环保真且不误标他人（P7 修订）',
     lumpyRound && Number(lumpyRound.no_rhythm) === 1 && Number(lumpyUntouched.c) === 0,
     JSON.stringify({ marked: lumpyRound && Number(lumpyRound.no_rhythm), extra: lumpyUntouched.c }));
 
@@ -393,6 +425,12 @@ const formCsrf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[
   check('非 dataUrl 预览被拒 400', r.status === 400, `HTTP ${r.status}`);
   r = await req('POST', '/api/import/preview', { json: { dataUrl: 'data:text/csv;base64,' + Buffer.from('没有表头的文件', 'utf8').toString('base64') } });
   check('无表头文件预览 400 且报错可读', r.status === 400 && /表头/.test(r.body?.error || ''), r.body?.error);
+
+  const invalidClockCsv='日期,时间,类型,金额,商家\n2026-09-05,25:10,支出,8.00,坏时刻\n2026-02-30,09:00,支出,8.00,坏日期';
+  r=await req('POST','/api/import/preview',{json:{dataUrl:'data:text/csv;base64,'+Buffer.from(invalidClockCsv).toString('base64'),fileName:'invalid-clock.csv'}});
+  check('坏日期与时刻可预览逐行错误且不计入可导入收支',r.body?.invalidCount===2&&r.body?.sample?.every(t=>t.import_error)&&r.body?.stat?.income===0&&r.body?.stat?.expense===0);
+  r=await req('POST','/api/import/commit',{json:{token:r.body?.token}});
+  check('坏日期与时刻提交逐行失败，不影响其他导入',r.body?.ok===true&&r.body?.failed===2&&r.body?.imported===0);
 
   /* 微信账单 HTTP 导入：中性记录默认不导、includeNeutral 导为转账 */
   await req('POST', '/ledgers/switch', { form: { _csrf: csrf, ledger_id: String(homeId) } });
