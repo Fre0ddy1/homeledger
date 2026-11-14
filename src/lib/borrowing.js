@@ -8,7 +8,7 @@ const direction=type=>['lend','repay_receive'].includes(type)?'receivable':'paya
 function detail(lid,id,deleted=false){
   const d=get('SELECT * FROM debts WHERE ledger_id=? AND id=?'+(deleted?'':' AND deleted_at IS NULL'),lid,Number(id));
   if(!d)throw Error('借钱条目不存在或不属于当前账本');
-  d.transactions=all('SELECT t.*,a.name AS account_name,a.type AS account_type FROM transactions t LEFT JOIN accounts a ON a.id=t.account_id AND a.ledger_id=t.ledger_id WHERE t.ledger_id=? AND t.debt_id=? ORDER BY t.txn_date,t.txn_time IS NULL,t.txn_time,t.id',lid,d.id).map(t=>({...t,txn_time_label:clock.formatTime(t.txn_time),account_type_label:ACCOUNT_TYPE_MAP[t.account_type]?.label||null}));
+  d.transactions=all('SELECT t.*,a.name AS account_name,a.type AS account_type FROM transactions t LEFT JOIN accounts a ON a.id=t.account_id AND a.ledger_id=t.ledger_id WHERE t.ledger_id=? AND t.debt_id=? ORDER BY t.txn_date,COALESCE(t.txn_time,substr(t.created_at,12,8)),t.created_at,t.id',lid,d.id).map(t=>({...t,txn_time_label:clock.formatTime(t.txn_time),account_type_label:ACCOUNT_TYPE_MAP[t.account_type]?.label||null}));
   return d;
 }
 function activate(d){

@@ -56,10 +56,11 @@ check('期初登记不允许冒充实际时刻',rejects(()=>b.create(lid,uid,{co
 const noClock=b.settle(lid,uid,c.id,{amount_cents:100,account_id:cash,operation_key:'unknown-time'});
 check('借钱未提供时刻保持未知',noClock.txn_time===null&&db.get('SELECT txn_time FROM transactions WHERE id=?',noClock.transaction_id).txn_time===null);
 const timeline=b.create(lid,uid,{counterparty:'时刻排序',amount_cents:1000,create_txn:false});
-b.settle(lid,uid,timeline.id,{amount_cents:100,account_id:cash,date:'2026-11-12'});
+const unknownTimeline=b.settle(lid,uid,timeline.id,{amount_cents:100,account_id:cash,date:'2026-11-12'});
+db.run('UPDATE transactions SET created_at=? WHERE id=?','2026-11-14 13:00:00',unknownTimeline.transaction_id);
 b.settle(lid,uid,timeline.id,{amount_cents:100,account_id:cash,date:'2026-11-12',time:'18:00'});
 b.settle(lid,uid,timeline.id,{amount_cents:100,account_id:cash,date:'2026-11-12',txn_time:'09:00:05'});
-check('借钱详情同日按发生时刻排列未知置后',b.detail(lid,timeline.id).transactions.map(t=>t.txn_time).join('|')==='09:00:05|18:00:00|');
+check('借钱详情未知按固定录入钟点排序且保留未知',b.detail(lid,timeline.id).transactions.map(t=>t.txn_time).join('|')==='09:00:05||18:00:00'&&db.get('SELECT txn_time FROM transactions WHERE id=?',unknownTimeline.transaction_id).txn_time===null);
 const timedCreate={counterparty:'时刻创建幂等',direction:'receivable',amount_cents:1000,account_id:cash,create_txn:true,date:'2026-11-12',txn_time:'11:22',operation_key:'create-time'};
 const createdWithTime=b.create(lid,uid,timedCreate);
 check('借钱创建时刻别名规范化且幂等',b.create(lid,uid,{...timedCreate,txn_time:'11:22:00'}).id===createdWithTime.id&&createdWithTime.transactions[0].txn_time==='11:22:00');

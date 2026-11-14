@@ -231,6 +231,7 @@ app.get('/healthz', (req, res) => res.json({ ok: true, app: 'homeledger', time: 
 app.use('/', require('./src/routes/auth'));
 app.use('/', require('./src/routes/dashboard'));
 app.use('/transactions', require('./src/routes/transactions'));
+app.use('/advances', require('./src/routes/advances'));
 app.use('/', require('./src/routes/accounts'));
 app.use('/debts', require('./src/routes/borrowing').routerFactory());
 app.use('/finance', require('./src/routes/finance').routerFactory());

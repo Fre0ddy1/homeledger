@@ -29,7 +29,10 @@ router.get('/accounts', auth.requireLogin, (req, res) => {
   const flowMap = new Map(flows.map((f) => [Number(f.account_id), f]));
   const financeLinks=new Map(all('SELECT id,account_id FROM finance_contracts WHERE ledger_id=?',ledgerId).map(f=>[Number(f.account_id),'/finance/loans/'+f.id]));
   for(const p of all('SELECT account_id FROM credit_profiles WHERE ledger_id=?',ledgerId))financeLinks.set(Number(p.account_id),'/finance/cards/'+p.account_id);
+  const managedAdvances=new Set(all('SELECT account_id FROM advance_accounts WHERE ledger_id=?',ledgerId).map(a=>Number(a.account_id)));
+  for(const id of managedAdvances)financeLinks.set(id,'/advances');
   const accounts = overview.accounts.map((a) => ({
+    managed_advance:managedAdvances.has(Number(a.id)),
     ...a,
     finance_url:financeLinks.get(Number(a.id))||null,
     flow: flowMap.get(Number(a.id)) || { out: 0, inflow: 0 },
@@ -80,7 +83,7 @@ router.post('/accounts/:id', auth.requireLogin, auth.requireLedgerWrite, (req, r
   const acc = get('SELECT * FROM accounts WHERE id = ? AND ledger_id = ?', id, ledgerId);
   if (!acc) { res.flash('error', '账户不存在'); return res.redirect('/accounts'); }
   const initial = req.body.initial_balance !== undefined ? u.parseAmountToCents(req.body.initial_balance) : Number(acc.initial_cents);
-  try { require('../lib/finance/account-guard').update(ledgerId,acc,req.body); } catch(e) { res.flash('error',e.message); return res.redirect('/accounts'); }
+  try { require('../lib/finance/account-guard').update(ledgerId,acc,{...req.body,include_in_net:req.body.include_in_net?1:0}); } catch(e) { res.flash('error',e.message); return res.redirect('/accounts'); }
   run(
     `UPDATE accounts SET name=?, type=?, icon=?, currency=?, initial_cents=?, credit_limit=?, bill_day=?, due_day=?,
       institution=?, note=?, include_in_net=?, sort_order=? WHERE id=?`,

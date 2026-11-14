@@ -1,0 +1,5 @@
+<div class="row between wrap mb16"><p class="muted">帮人代买的部分保留为待收款，回收不计收入。自用部分才计入消费。</p><a class="btn btn-primary" href="/transactions/new">记一笔代垫</a></div>
+<section class="card"><h2>代垫记录</h2>
+<% if(!items.length){ %><div class="empty">暂无代垫。在「记一笔 → 支出」展开「部分代垫」，填写对方与代垫金额即可。</div><% } %>
+<% items.forEach(item=>{ %><div class="finance-item"><div><b><%= item.person %></b><p class="small muted"><%= item.txn_date %> · 付款 <%= helpers.fmtAmount(item.amount_cents) %> <%= item.currency %> · 自用 <%= helpers.fmtAmount(item.personal_cents) %><%= item.deleted_at?' · 已撤销':'' %></p></div><div><b class="amount"><%= item.deleted_at?'已撤销':'待收 '+helpers.fmtAmount(item.remaining_cents) %></b><a class="btn btn-sm" href="/advances/<%= item.id %>">详情与回收</a></div></div><% }); %>
+</section>

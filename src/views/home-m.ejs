@@ -58,10 +58,10 @@
     <% } else { %>
     <div class="m-recent">
       <% recent.slice(0, 5).forEach(function(t){ %>
-      <a class="m-txn" href="/transactions/<%= t.id %>/edit">
+      <a class="m-txn" href="<%= t.advance?'/advances/'+t.advance.id:t.advance_collection?'/advances/'+t.advance_collection.advance_id:'/transactions/'+t.id+'/edit' %>">
         <span class="ico"><%= t.category_icon || t.type_icon %></span>
-        <span class="m"><b><%= t.merchant || t.note || t.type_label %></b><span class="tiny muted"><%= t.txn_date.slice(5) %><%= t.txn_time_label ? ' '+t.txn_time_label : '' %> · <%= t.category_path %> · <%= t.account_name || '未指定账户' %><%= t.account_type_label ? ' · '+t.account_type_label : '' %><% if(t.to_account_id){ %> → <%= t.to_account_name || '—' %><%= t.to_account_type_label ? ' · '+t.to_account_type_label : '' %><% } %></span></span>
-        <span class="amt <%= t.is_income ? 'income' : t.is_expense ? 'expense' : '' %>"><%= t.is_income ? '+' : t.is_expense ? '−' : '' %><%= helpers.fmtAmount(t.amount_base_cents) %></span>
+        <span class="m"><b><%= t.merchant || t.note || t.type_label %></b><span class="tiny muted"><%= t.txn_date.slice(5) %><%= t.txn_time_label ? ' '+t.txn_time_label : '' %> · <%= t.category_path %> · <%= t.account_name || '未指定账户' %><%= t.account_type_label ? ' · '+t.account_type_label : '' %><% if(t.to_account_id){ %> → <%= t.to_account_name || '—' %><%= t.to_account_type_label ? ' · '+t.to_account_type_label : '' %><% } %></span><% if(t.advance){ %><span class="tiny muted">自用 <%= helpers.fmtAmount(t.advance.personal_cents) %> · 代垫 <%= helpers.fmtAmount(t.advance.advance_cents) %></span><% } %></span>
+        <span class="amt <%= t.is_income ? 'income' : t.is_expense ? 'expense' : '' %>"><%= t.is_income ? '+' : t.is_expense ? '−' : '' %><%= helpers.fmtAmount(t.advance?.total_cents??t.amount_base_cents) %></span>
       </a>
       <% }); %>
     </div>

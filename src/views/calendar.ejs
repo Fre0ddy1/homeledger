@@ -66,6 +66,7 @@
             <div class="txn-main">
               <div class="txn-title"><span><%= t.category_name || t.type_label %></span></div>
               <div class="txn-sub"><span><%= t.account_name || '' %></span><% if (t.merchant) { %><span>· <%= t.merchant %></span><% } %></div>
+              <% if(t.advance){ %><div class="txn-sub"><span>自用消费 <%= helpers.fmtAmount(t.advance.personal_cents) %></span><span>实际付款 <%= helpers.fmtAmount(t.advance.total_cents) %></span><span>代垫 <%= helpers.fmtAmount(t.advance.advance_cents) %></span><a class="btn btn-sm" href="/advances/<%= t.advance.id %>">管理代垫</a></div><% } %>
             </div>
             <div class="txn-amt amount <%= t.is_income ? 'income' : (t.is_expense ? 'expense' : 'neutral') %>">
               <%= (t.is_income ? '+' : t.is_expense ? '-' : '') %><%= helpers.fmtAmount(t.amount_cents) %>

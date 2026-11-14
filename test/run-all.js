@@ -29,6 +29,8 @@ const SUITES = [
   'verify-borrowing.js',
   'verify-finance.js',
   'verify-finance-api.js',
+  'verify-advances.js',
+  'verify-advances-api.js',
   'verify-cashflow.js',
   'verify-account-policy.js',
   'verify-simple-repayment.js',

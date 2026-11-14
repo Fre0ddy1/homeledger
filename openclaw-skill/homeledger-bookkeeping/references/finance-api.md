@@ -120,3 +120,25 @@ POST /transactions 及编辑、订阅、定期规则会在服务端检查，不�
 GET /cashflow 新增 analysis：outflow_count/inflow_count、avg_outflow、avg_daily_outflow（金额为整数分，空笔均/未来日均为null）、elapsed_days/effective_to、max_day、compare_from/compare_to、current_comparable/previous、change_pct、chart_unit/chart。日均只计算区间内截至今天的自然日，前期为零时change_pct=null，不解释为0%增长。完整月份比较上月；进行中的月份比较上月同进度；自定义区间比较紧邻等长前期。界面消费参考独立，不与资金流相加。
 
 GET /cashflow 和 GET /reports/trend 支持可选 month=YYYY-MM，作为趋势截止月份；省略仍截至本月，非法月份返回400。cashflow分析日期须为真实日期且from<=to。GET /reports/trend 的消费口径也支持相同月份锚点。展示时说明区间与截止月份；本金和还款资格不变。
+
+
+## 部分代垫与回收
+
+所有金额为整数分，目前仅账本本位币、同币种；每组一个对方，可多次回收。先读取账户和消费分类。不要先创建普通 expense 再创建新代垫，否则会重复扣款；已有支出必须使用来源转换。
+
+- `GET /advances`：有效代垫列表，`include_deleted=1` 包含撤销；返回 `advances` 数组。
+- `GET /advances/:id`：付款头、transactions分项、collections回款，`amount_cents/personal_cents/advance_cents/received_cents/remaining_cents` 分别为总付、自用、代垫、已收、待收。
+- `POST /advances`：`{operation_key,amount_cents,personal_cents,person,account_id,category_id?,currency?,txn_date?,txn_time?,note?,merchant?,tags?}`。例如总付10000、自用4000，服务算代垫6000；自用可0，必须小于总额。收支分类只用于自用。付款账户允许现金、储蓄卡、支付账户、预付及信用卡。
+- 已有普通支出转换：在上述请求中加 `source_transaction_id` 与 `confirm_source:true`，金额/账户/币种须与来源相同，日期/已知时刻不得冲突。确认范围是替换原支出为消费与应收，原记录软停用并保留追溯，不再次扣款。已报销、分摊、分期、确认信用卡账单及其他业务来源不能绕过保护。
+- `POST /advances/:id/amend`：完整提交与创建相同的付款字段及新的 operation_key，整体更正并返回新版本；原记录 replaced_by 指向新版本，已有回款须先撤销，已有来源的总额不能变。
+- `POST /advances/:id/collect`：`{operation_key,amount_cents,account_id,txn_date?,txn_time?}`，account_id 为实际收款资金账户，不能信用卡；不超待收，日期不早于付款。返回回款及更新后的 `advance`。
+- `POST /advances/:id/reverse`、`/restore`：整体撤销/恢复；有效回款须先撤销。转换来源的撤销会恢复原整笔支出，恢复代垫时再检查来源未变化。
+- `POST /advance-collections/:id/reverse`、`/restore`：单次回款撤销/恢复，恢复重新检查待收容量和付款有效性。
+
+create/collect 必填稳定 operation_key，同请求重试复用原结果，同key变参拒绝；撤销后同key重试仍返回原撤销记录，不自动复活。读允许账本成员，写要求可写成员，全部写入审计。不要用普通交易接口编辑、删除、恢复代垫分项或回款，不直接改“代垫待收款”账户的余额/类型/币种/净资产归属。
+
+交易列表与recent按付款组只展示一张主单；`amount_cents` 保持该主资金分项的原语义，自用40对应4000，新增 `advance:{id,role,total_cents,personal_cents,advance_cents,person,primary_transaction_id}` 提供完整付款100。消费汇总4000，不能把 `advance.total_cents` 再相加。回款行有 `advance_collection:{advance_id}`。单笔详情同样返回关联；代垫详情 transactions 保留所有真实分项与来源。原始导出是资金分项，不是每行一张付款组。资金流笔数按实际付款组去重，分组明细仍可含多项。
+
+例：11月付款100、自用40、代垫60：11月消费40、资金流出100、应收60；12月收回60：12月消费收入0、资金流入60、应收0。信用卡付款出账100；其后的信用卡还款仍用金融付款接口，不再次计消费。
+
+普通交易列表 `sort=created_desc|created_asc` 按完整录入时间排序；网页按录入日分组同时标实际交易日。`/transactions/recent` 默认最近录入，补记旧账也能找到。`date_desc/date_asc` 仍按发生日期。普通合并视图的金额筛选/排序按显示付款总额，账户筛选为 `component_view:true` 分项视图，保留真实分项金额。

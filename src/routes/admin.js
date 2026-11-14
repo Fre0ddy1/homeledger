@@ -376,6 +376,10 @@ function deleteLedgerCascade(id) {
   const files = all('SELECT rel_path FROM attachments WHERE ledger_id = ?', id);
   const ids = all('SELECT id FROM transactions WHERE ledger_id = ?', id).map((r) => r.id);
   for (const tid of ids) run('DELETE FROM transaction_tags WHERE transaction_id = ?', tid);
+  run('DELETE FROM advance_txns WHERE advance_id IN (SELECT id FROM advances WHERE ledger_id=?)', id);
+  run('DELETE FROM advance_collections WHERE ledger_id=?', id);
+  run('DELETE FROM advances WHERE ledger_id=?', id);
+  run('DELETE FROM advance_accounts WHERE ledger_id=?', id);
   run('DELETE FROM splits WHERE ledger_id = ?', id);
   run('DELETE FROM transactions WHERE ledger_id = ?', id);
   run('DELETE FROM attachments WHERE ledger_id = ?', id);

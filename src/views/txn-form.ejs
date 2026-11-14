@@ -74,6 +74,7 @@
           <div class="field" style="flex:1;min-width:150px">
             <label for="f-txn-time">交易时刻 <span class="muted tiny">（可选）</span></label>
             <input type="time" id="f-txn-time" name="txn_time" step="1" value="<%= t.txn_time || '' %>">
+            <% if(mode==='create'){ %><select name="txn_time_mode" aria-label="时刻记录方式" class="mt8"><% [['auto','保存时自动记录当前时刻'],['explicit','使用填写的时刻'],['unknown','未知时刻，保持留空']].forEach(([value,label])=>{ %><option value="<%= value %>" <%= (t.txn_time_mode||(t.txn_time?'explicit':'unknown'))===value?'selected':'' %>><%= label %></option><% }); %></select><p class="help">自动时刻仅用于今天；补记可填写实际时刻或保持未知。</p><% } %>
             <div class="row mt8"><button type="button" class="btn btn-sm hidden" data-txn-now>此刻</button><button type="button" class="btn btn-sm hidden" data-txn-time-clear>清除时刻</button></div>
           </div>
           <div class="field" style="flex:1;min-width:150px">
@@ -168,10 +169,11 @@
         </details>
       </div>
 
-      <div class="card"><details <%= splitRows?.length?'open':'' %>><summary>AA 分账（选填）</summary>
+      <% if(mode==='create'){ %><div class="card" data-for-type="expense,fee"><details <%= t.advance_amount?'open':'' %>><summary>部分代垫（帮别人付款）</summary><p class="help">上方金额填写实际付款总额，下面填写替对方垫付的部分。自用部分才计消费，回款冲减应收，不计收入。</p><input type="hidden" name="advance_operation_key" value="<%= t.advance_operation_key||'' %>"><div class="finance-fields"><div class="field"><label>替谁垫付</label><input type="text" name="advance_person" maxlength="60" value="<%= t.advance_person||'' %>" placeholder="例如：同事小王"></div><div class="field"><label>其中代垫金额</label><input type="text" inputmode="decimal" name="advance_amount" value="<%= t.advance_amount||'' %>" placeholder="0.00"></div></div><a class="btn btn-sm" href="/advances">查看代垫与回收</a></details></div><% } %>
+      <div class="card"><details <%= splitRows?.length?'open':'' %>><summary>分摊备注（不产生待收款）</summary>
         <div class="card-head">
-          <h2>AA 分账</h2>
-          <span class="muted small">可选，用于朋友聚餐/团队开销</span>
+          <h2>分摊备注</h2>
+          <span class="muted small">仅记录份额，不核销、不调整消费。需回收代买款请用部分代垫。</span>
         </div>
         <div id="split-rows">
           <% (splitRows || []).forEach(function(s){ %>
@@ -240,6 +242,7 @@
     </div>
   </div>
 </form>
+<% if(mode==='edit'&&['expense','fee'].includes(cur)&&!t.finance_payments?.length&&!t.credit_plan&&!t.reimbursed_at){ %><section class="card mt16"><details><summary>从这笔支出分离代垫</summary><p class="help">原记录保留追溯，以自用消费和代垫应收替换，不再次扣款。已有分摊、报销、分期或已确认账单的记录须先解除相关业务。</p><form class="finance-form mt16" method="post" action="/transactions/<%= t.id %>/advance"><input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="operation_key" value="<%= t.advance_operation_key||'' %>"><div class="finance-fields"><div class="field"><label>替谁垫付</label><input type="text" name="advance_person" maxlength="60" required></div><div class="field"><label>其中代垫金额</label><input type="text" name="advance_amount" inputmode="decimal" required></div></div><label class="check"><input type="checkbox" name="confirm_source" value="1" required>确认将原支出拆为消费与应收，保留原记录</label><button class="btn">确认分离代垫</button></form></details></section><% } %>
 <% if(typeof embeddedEntry==='undefined'||!embeddedEntry){ %><%- include('partials/entry-actions',{entryFormId:'txn-form',entryLabel:mode==='edit'?'保存修改':'保存这一笔'}) %><% } %>
 
 <% if (mode === 'edit' && typeof images !== 'undefined' && images.length) { %>

@@ -22,10 +22,20 @@
   <% if(canWrite(ledger.role)){ %><a class="btn btn-primary btn-sm" href="#new-account">＋ 添加账户</a><% } %>
 </div>
 
-<div class="row wrap mb16 account-group-totals"><% ACCOUNT_TYPES.forEach(function(tp){if(groups[tp.key]?.length){ %><span class="chip"><%= tp.icon %> <%= tp.label %> · <%= groups[tp.key].length %> 个 · 合计 <%= helpers.money(groups[tp.key].reduce((sum,a)=>sum+Number(a.balance_cents),0)) %></span><% }}); %></div>
-<div class="account-groups account-cards">
-<% ACCOUNT_TYPES.forEach(function(tp){if(groups[tp.key]?.length){groups[tp.key].forEach(function(a){ %>
-          <div class="card account-entry"><div class="small muted mb12"><%= tp.icon %> <%= tp.label %></div>
+<nav class="row wrap mb16 account-group-totals" aria-label="账户类型"><% ACCOUNT_TYPES.forEach(function(tp){if(groups[tp.key]?.length){ %><a class="btn btn-sm" href="#account-type-<%= tp.key %>"><%= tp.icon %> <%= tp.label %> · <%= groups[tp.key].length %></a><% }}); %></nav>
+<div class="account-groups">
+<% ACCOUNT_TYPES.forEach(function(tp){if(groups[tp.key]?.length){
+  const balances = {};
+  groups[tp.key].forEach(function(a){balances[a.currency] = (balances[a.currency] || 0) + Number(a.balance_cents);});
+%>
+  <section class="account-type-group" id="account-type-<%= tp.key %>" aria-labelledby="account-type-title-<%= tp.key %>">
+    <div class="account-type-head">
+      <h2 id="account-type-title-<%= tp.key %>"><%= tp.icon %> <%= tp.label %> <span class="muted small"><%= groups[tp.key].length %> 个</span></h2>
+      <div class="account-type-balances small muted">余额合计<% Object.keys(balances).forEach(function(currency){ %><span class="amount"><%= helpers.money(balances[currency], currency) %> <%= currency %></span><% }); %></div>
+    </div>
+    <div class="account-cards">
+<% groups[tp.key].forEach(function(a){ %>
+          <div class="card account-entry">
             <div class="account-entry-head">
               <a href="/accounts/<%= a.id %>" style="min-width:0">
                 <div class="bold"><%= a.icon %> <%= a.name %></div>
@@ -41,7 +51,7 @@
                 <div class="tiny muted">近30天 −<%= helpers.fmtAmount(a.flow.out) %> / +<%= helpers.fmtAmount(a.flow.inflow) %></div>
               </div>
             </div>
-            <div class="entry-actions"><a class="btn btn-sm" href="/accounts/<%= a.id %>">明细</a><% if(a.finance_url){ %><a class="btn btn-sm" href="<%= a.finance_url %>"><%= a.type==='credit'?'账单与还款':'贷款管理' %></a><% } %>
+            <div class="entry-actions"><a class="btn btn-sm" href="/accounts/<%= a.id %>">明细</a><% if(a.finance_url){ %><a class="btn btn-sm" href="<%= a.finance_url %>"><%= a.managed_advance?'代垫与回收':a.type==='credit'?'账单与还款':'贷款管理' %></a><% } %>
             <% if(canWrite(ledger.role)){ %><button type="button" class="btn btn-sm acc-edit" data-id="<%= a.id %>">编辑</button><% if(!a.finance_url){ %><button type="button" class="btn btn-sm acc-adjust" data-id="<%= a.id %>" data-balance="<%= (a.balance_cents/100).toFixed(2) %>">余额调整</button>
               <form method="post" action="/accounts/<%= a.id %>/archive"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="btn btn-sm">停用</button></form><form method="post" action="/accounts/<%= a.id %>/delete" data-confirm="确定删除账户「<%= a.name %>」？"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="btn btn-sm btn-danger">删除</button></form><% } %><% } %></div>
             <% if(canWrite(ledger.role)){ %>
@@ -60,7 +70,7 @@
                   <div class="field" style="flex:1;min-width:90px"><label>还款日</label><input type="number" name="due_day" min="1" max="31" value="<%= a.due_day || '' %>" <%= a.finance_url?'readonly':'' %>></div>
                 </div>
                 <div class="row">
-                  <label class="check"><input type="checkbox" name="include_in_net" value="1" <%= a.include_in_net ? 'checked' : '' %>> 计入净资产</label>
+                  <label class="check"><input type="checkbox" name="include_in_net" value="1" <%= a.include_in_net ? 'checked' : '' %> <%= a.managed_advance?'disabled':'' %>> 计入净资产<% if(a.managed_advance){ %><input type="hidden" name="include_in_net" value="1"><% } %></label>
                   <span class="spacer"></span>
                   <button class="btn btn-sm btn-primary" type="submit">保存</button>
                 </div>
@@ -81,7 +91,10 @@
             </div>
             <% } %>
           </div>
-<% }); }}); %>
+<% }); %>
+    </div>
+  </section>
+<% }}); %>
 </div>
 
 <% if (!accounts.length) { %>
@@ -89,7 +102,7 @@
 <% } %>
 
 <% if (archived.length&&canWrite(ledger.role)) { %>
-  <div class="card">
+  <div class="card account-archive">
     <div class="card-head"><h2>已停用账户</h2><span class="muted small">历史记录仍完整保留</span></div>
     <div class="row wrap" style="gap:8px">
       <% archived.forEach(function(a){ %>

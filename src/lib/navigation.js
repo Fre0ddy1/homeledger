@@ -3,6 +3,8 @@ function forView(view,options={},originalUrl='/'){
  const url=new URL(originalUrl,'http://localhost'),q=url.searchParams,back=q.get('back')||options.back;
  const safeBack=typeof back==='string'&&/^\/(?:transactions|accounts\/\d+|calendar|reports|search)(?:\?|$)/.test(back)&&!/[\r\n]/.test(back)?back:null;
  const result=(href,label)=>({href,label});
+ if(view==='advance-detail')return result('/advances','返回代垫与回收');
+ if(view==='advances')return result('/transactions','返回账单明细');
  if(view==='finance-statement')return result('/finance/cards/'+Number(options.statement.account_id),'返回信用卡详情');
  if(view==='finance-payment')return result('/finance/'+(options.payment.target_kind==='loan'?'loans/':'cards/')+Number(options.payment.target_id),'返回'+(options.payment.target_kind==='loan'?'贷款详情':'信用卡详情'));
  if(view==='finance-replan')return result('/finance/loans/'+Number(options.loan.id),'返回贷款详情');
