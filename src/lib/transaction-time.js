@@ -17,6 +17,14 @@ function normalizeTime(value, fallback=null) {
   return m[1]+':'+m[2]+':'+(m[3]||'00');
 }
 function formatTime(value) { return value ? (value.endsWith(':00')?value.slice(0,5):value) : ''; }
+// Only immediate, explicitly opted-in web forms use the save clock. Imports,
+// AI results and existing records keep their original nullable time semantics.
+function manualTime(body, now) {
+  const value=body.txn_time!==undefined?body.txn_time:body.time;
+  if(body.txn_time_mode==='unknown')return null;
+  if(body.txn_time_mode==='auto')return (body.txn_date??body.date)===now.slice(0,10)?now.slice(11,19):null;
+  return normalizeTime(value);
+}
 function clockNumber(value) {
   if (/^\d+$/.test(value)) return Number(value);
   const digits={'零':0,'〇':0,'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9};
@@ -47,4 +55,4 @@ function extractTimes(text) {
   return times;
 }
 function extractTime(text) { return extractTimes(text)[0]||null; }
-module.exports={normalizeDate,normalizeTime,formatTime,extractTime,extractTimes};
+module.exports={normalizeDate,normalizeTime,formatTime,manualTime,extractTime,extractTimes};

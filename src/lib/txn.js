@@ -18,6 +18,11 @@ SELECT t.*,
   a.name AS account_name, a.icon AS account_icon, a.type AS account_type,
   ta.name AS to_account_name, ta.icon AS to_account_icon, ta.type AS to_account_type,
   u.display_name AS member_name, u.avatar_color AS member_color,
+  adv.id AS advance_id, ax.role AS advance_role, adv.deleted_at AS advance_deleted_at,
+  adv.amount_cents AS payment_total_cents, adv.personal_cents AS personal_cents,
+  adv.advance_cents AS advance_cents, adv.person AS advance_person,
+  adv.primary_transaction_id AS advance_primary_transaction_id,
+  (SELECT ac.advance_id FROM advance_collections ac WHERE ac.transaction_id=t.id AND ac.ledger_id=t.ledger_id) AS collection_advance_id,
   (SELECT GROUP_CONCAT(tg.name, ' ') FROM transaction_tags tt JOIN tags tg ON tg.id = tt.tag_id WHERE tt.transaction_id = t.id) AS tag_names
 FROM transactions t
 LEFT JOIN categories c ON c.id = t.category_id
@@ -25,6 +30,8 @@ LEFT JOIN categories pc ON pc.id = c.parent_id
 LEFT JOIN accounts a ON a.id = t.account_id
 LEFT JOIN accounts ta ON ta.id = t.to_account_id
 LEFT JOIN users u ON u.id = t.user_id
+LEFT JOIN advance_txns ax ON ax.transaction_id=t.id AND ax.advance_id=(SELECT MAX(l.advance_id) FROM advance_txns l WHERE l.transaction_id=t.id)
+LEFT JOIN advances adv ON adv.id=ax.advance_id AND adv.ledger_id=t.ledger_id
 `;
 
 function decorate(t) {
@@ -32,6 +39,8 @@ function decorate(t) {
   t.account_type_label = t.account_id ? (ACCOUNT_TYPE_MAP[t.account_type]?.label || '其他') : null;
   t.to_account_type_label = t.to_account_id ? (ACCOUNT_TYPE_MAP[t.to_account_type]?.label || '其他') : null;
   t.txn_time_label = time.formatTime(t.txn_time);
+  if(t.advance_id&&t.advance_role!=='original'&&!t.advance_deleted_at)t.advance={id:t.advance_id,role:t.advance_role,total_cents:t.payment_total_cents,personal_cents:t.personal_cents,advance_cents:t.advance_cents,person:t.advance_person,primary_transaction_id:t.advance_primary_transaction_id};
+  if(t.collection_advance_id)t.advance_collection={advance_id:t.collection_advance_id};
   t.type_label = TXN_TYPE_MAP[t.type]?.label || t.type;
   t.type_icon = TXN_TYPE_MAP[t.type]?.icon || '•';
   t.type_color = TXN_TYPE_MAP[t.type]?.color || '#8c8c8c';
@@ -47,9 +56,13 @@ function decorate(t) {
 
 /* -------------------------------- 查询构建 -------------------------------- */
 
+function listingAmount(f){return f.includeComponents||f.accountId?'t.amount_base_cents':"COALESCE((SELECT ad.amount_cents FROM advances ad WHERE ad.ledger_id=t.ledger_id AND ad.primary_transaction_id=t.id AND ad.deleted_at IS NULL LIMIT 1),t.amount_base_cents)";}
+
 function buildWhere(ledgerId, f = {}) {
   const where = ['t.ledger_id = ?', 't.deleted_at IS NULL'];
   const params = [ledgerId];
+  // One purchase in the ordinary ledger; cashflow and accounting retain every posting.
+  if(!f.includeComponents&&!f.accountId)where.push("NOT EXISTS (SELECT 1 FROM advance_txns ax JOIN advances ad ON ad.id=ax.advance_id WHERE ax.transaction_id=t.id AND ax.role<>'original' AND t.id<>ad.primary_transaction_id)");
 
   if (f.types && f.types.length) {
     where.push(`t.type IN (${f.types.map(() => '?').join(',')})`);
@@ -87,10 +100,10 @@ function buildWhere(ledgerId, f = {}) {
   }
   if (f.from) { where.push('t.txn_date >= ?'); params.push(f.from); }
   if (f.to) { where.push('t.txn_date <= ?'); params.push(f.to); }
-  if (f.minCents) { where.push('t.amount_base_cents >= ?'); params.push(f.minCents); }
-  if (f.maxCents) { where.push('t.amount_base_cents <= ?'); params.push(f.maxCents); }
+  if (f.minCents) { where.push(listingAmount(f)+' >= ?'); params.push(f.minCents); }
+  if (f.maxCents) { where.push(listingAmount(f)+' <= ?'); params.push(f.maxCents); }
   if (f.keyword) {
-    where.push('(t.note LIKE ? OR t.merchant LIKE ? OR c.name LIKE ? OR pc.name LIKE ? OR a.name LIKE ? OR CAST(t.amount_base_cents AS TEXT) LIKE ?)');
+    where.push('(t.note LIKE ? OR t.merchant LIKE ? OR c.name LIKE ? OR pc.name LIKE ? OR a.name LIKE ? OR CAST('+listingAmount(f)+' AS TEXT) LIKE ?)');
     const kw = `%${f.keyword}%`;
     params.push(kw, kw, kw, kw, kw, kw);
   }
@@ -106,16 +119,18 @@ function listTransactions(ledgerId, f = {}) {
   const total = Number(get(`SELECT COUNT(*) AS c FROM transactions t LEFT JOIN categories c ON c.id = t.category_id LEFT JOIN accounts a ON a.id = t.account_id LEFT JOIN categories pc ON pc.id = c.parent_id WHERE ${sql}`, ...params)?.c || 0);
 
   const sortMap = {
-    date_desc: 't.txn_date DESC, t.txn_time IS NULL ASC, t.txn_time DESC, t.id DESC',
-    date_asc: 't.txn_date ASC, t.txn_time IS NULL ASC, t.txn_time ASC, t.id ASC',
-    amount_desc: 't.amount_base_cents DESC',
-    amount_asc: 't.amount_base_cents ASC',
+    date_desc: "t.txn_date DESC, COALESCE(t.txn_time, substr(t.created_at,12,8)) DESC, t.created_at DESC, t.id DESC",
+    date_asc: "t.txn_date ASC, COALESCE(t.txn_time, substr(t.created_at,12,8)) ASC, t.created_at ASC, t.id ASC",
+    created_desc: 't.created_at DESC, t.id DESC',
+    created_asc: 't.created_at ASC, t.id ASC',
+    amount_desc: listingAmount(f)+' DESC, t.id DESC',
+    amount_asc: listingAmount(f)+' ASC, t.id ASC',
   };
   const order = sortMap[f.sort] || sortMap.date_desc;
   const rows = all(
     `${TXN_SELECT} WHERE ${sql} ORDER BY ${order} LIMIT ? OFFSET ?`,
     ...params, pageSize, (page - 1) * pageSize
-  ).map(decorate);
+  ).map(t=>{decorate(t);if(f.includeComponents||f.accountId)t.component_view=true;return t;});
 
   const sum = get(
     `SELECT
@@ -131,12 +146,14 @@ function listTransactions(ledgerId, f = {}) {
   };
 }
 
-function groupByDate(rows) {
+function groupByDate(rows, sort = 'date_desc') {
   const groups = [];
+  const byCreated = sort === 'created_desc' || sort === 'created_asc';
   let cur = null;
   for (const r of rows) {
-    if (!cur || cur.date !== r.txn_date) {
-      cur = { date: r.txn_date, items: [], income: 0, expense: 0 };
+    const date = byCreated ? String(r.created_at).slice(0, 10) : r.txn_date;
+    if (!cur || cur.date !== date) {
+      cur = { date, basis: byCreated ? 'created' : 'transaction', items: [], income: 0, expense: 0 };
       groups.push(cur);
     }
     cur.items.push(r);
@@ -221,7 +238,9 @@ function createTransactionUnchecked(ledgerId, userId, d, options) {
   if (d.splits && d.splits.length) saveSplits(ledgerId, id, d.group_id, d.splits);
   recalcBalances(ledgerId);
   syncDebts(ledgerId);
-  require('./finance/cards').afterTransactions(ledgerId,[id]);
+  // A trusted finance operation may write several postings atomically and
+  // validate the complete card charge once, after the final posting exists.
+  if(!(options.channel==='finance'&&options.deferCardRefresh===true))require('./finance/cards').afterTransactions(ledgerId,[id]);
   return id;
 }
 
@@ -334,6 +353,7 @@ function markReimbursed(ids, ledgerId, userId, accountId, occurrence={}) {
   const total = rows.reduce((a, b) => a + Number(b.amount_base_cents), 0);
   if (!rows.length || !total) throw new Error('没有可报销的记录');
   return tx(() => {
+    for (const r of rows) require('./advances').guardTransaction(ledgerId,r.id);
     const txnId = createTransaction(ledgerId, userId, {
       type: 'reimburse',
       amount_cents: total,

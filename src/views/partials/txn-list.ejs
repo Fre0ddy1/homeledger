@@ -14,7 +14,7 @@
     <div class="txn-day">
       <div class="txn-day-head">
         <% if (showCheckbox) { %><input type="checkbox" class="bulk-all-day" style="margin-right:2px" title="全选本日"><% } %>
-        <span class="bold" style="color:var(--text-2)"><%= helpers.relDate(g.date) %></span>
+        <span class="bold" style="color:var(--text-2)"><%= g.basis==='created'?'录入于 ':'' %><%= helpers.relDate(g.date) %></span>
         <span class="muted tiny"><%= helpers.weekdayOf(g.date) %></span>
         <span class="day-sum">
           <% if (g.income) { %><span class="amount income">+<%= helpers.fmtAmount(g.income) %></span><% } %>
@@ -41,6 +41,7 @@
               <% if (t.note) { %><span class="note"><%= t.note %></span><% } %>
             </div>
             <div class="txn-sub">
+              <% if(g.basis==='created'){ %><span>交易日期 <time datetime="<%= t.txn_date %>"><%= t.txn_date %></time></span><span>·</span><% } %>
               <% if(t.txn_time_label){ %><time datetime="<%= t.txn_date %>T<%= t.txn_time %>"><%= t.txn_time_label %></time><span>·</span><% } %>
               <% if (t.type === 'transfer' || t.type === 'invest_buy' || t.type === 'invest_sell') { %>
                 <span><%= t.account_name || '—' %><% if(t.account_type_label){ %> · <%= t.account_type_label %><% } %></span><span>→</span><span><%= t.to_account_name || '—' %><% if(t.to_account_type_label){ %> · <%= t.to_account_type_label %><% } %></span>
@@ -54,6 +55,7 @@
               <% if (t.is_reimbursable) { %>
                 <span class="chip <%= t.reimbursed_at ? 'income' : 'warn' %>"><%= t.reimbursed_at ? '已报销' : '待报销' %></span>
               <% } %>
+              <% if(t.advance){ %><a class="btn btn-sm" href="/advances/<%= t.advance.id %>">自用 <%= helpers.fmtAmount(t.advance.personal_cents) %> · 代垫 <%= helpers.fmtAmount(t.advance.advance_cents) %></a><% } %>
               <% if (t.status === 'pending') { %><span class="chip">待确认</span><% } %>
               <% if (t.attachment_count) { %><span class="chip" title="已关联账单截图">📎 <%= t.attachment_count %></span><% } %>
               <% if (t.source === 'ai_screenshot' || t.source === 'ai_text') { %><span class="chip primary">AI</span><% } %>
@@ -66,21 +68,24 @@
               入账类（income/refund/reimburse/interest/repay_receive/borrow）→ + 绿色；
               流出类（expense/fee/lend/repay_pay）→ - 红色；
               搬移类（transfer/invest_*/adjust）→ 无符号中性，adjust 自带正负号 %>
+          <% var displayAmount=t.advance&&t.delta===undefined&&!t.component_view&&t.id===t.advance.primary_transaction_id?t.advance.total_cents:t.amount_cents; %>
           <div class="txn-amt amount <%= t.type === 'adjust' ? 'neutral' : (t.is_income ? 'income' : (t.is_expense ? 'expense' : 'neutral')) %>">
             <% if (t.type === 'adjust') { %>
               <%= helpers.fmtAmount(t.amount_cents) %>
             <% } else if (t.is_income) { %>
-              +<%= helpers.fmtAmount(t.amount_cents) %>
+              +<%= helpers.fmtAmount(displayAmount) %>
             <% } else if (t.is_expense) { %>
-              -<%= helpers.fmtAmount(t.amount_cents) %>
+              -<%= helpers.fmtAmount(displayAmount) %>
             <% } else { %>
-              <%= helpers.fmtAmount(t.amount_cents) %>
+              <%= helpers.fmtAmount(displayAmount) %>
             <% } %>
             <% if (t.currency !== 'CNY') { %><div class="tiny muted"><%= t.currency %></div><% } %>
           </div>
           <% if (ledger && canWrite(ledger.role)) { %><div class="txn-act">
+            <% if(t.advance||t.advance_collection){ %><a class="btn btn-sm" href="/advances/<%= t.advance?.id||t.advance_collection.advance_id %>">管理代垫</a><% }else{ %>
             <a class="btn btn-sm btn-ghost" href="/transactions/<%= t.id %>/edit?back=<%= encodeURIComponent(typeof currentUrl!=='undefined'?currentUrl:'/transactions') %>" title="编辑" aria-label="编辑"><svg class="icon sm"><use href="#i-pencil"></use></svg></a>
             <button class="btn btn-sm btn-ghost" type="button" data-del-txn="<%= t.id %>" title="删除" aria-label="删除"><svg class="icon sm"><use href="#i-trash-2"></use></svg></button>
+            <% } %>
           </div><% } %>
         </div>
       <% }); %>

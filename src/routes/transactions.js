@@ -32,6 +32,7 @@ function readForm(body) {
     debt_id: body.debt_id || null,
     txn_date: body.txn_date || todayStr(),
     txn_time: body.txn_time,
+    txn_time_mode: body.txn_time_mode,
     note: body.note || '',
     merchant: body.merchant || '',
     owner_label: body.owner_label || null,
@@ -88,7 +89,7 @@ router.get('/', auth.requireLogin, (req, res) => {
   const form = fd.txFormData(ledgerId, req.session.userId);
   res.render('transactions', {
     title: '账单明细', activeNav: 'transactions',
-    f, result, groups: txn.groupByDate(result.rows), form,
+    f, result, groups: txn.groupByDate(result.rows,f.sort), form,
     family: require('../lib/ai').familyMembers(ledgerId),
     totalPages: result.pages,
   });
@@ -105,9 +106,11 @@ router.get('/new', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
   const form = fd.txFormData(ledgerId, req.session.userId);
   const prefill = {
     type,
+    advance_operation_key:require('node:crypto').randomUUID(),
     amount: req.query.amount || '',
     txn_date: req.query.date || todayStr(),
     txn_time: req.query.time || '',
+    txn_time_mode: req.query.time ? 'explicit' : (req.query.from_ai || req.query.time === '' ? 'unknown' : 'auto'),
     category_id: req.query.category_id || '',
     account_id: req.query.account_id || (form.accounts[0] ? form.accounts[0].id : ''),
     to_account_id: '',
@@ -135,7 +138,13 @@ router.post('/', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
   const data = readForm(req.body);
   const wantsJson = req.body._json === '1' || (req.headers.accept || '').includes('application/json');
   try {
-    const id = txn.createTransaction(ledgerId, req.session.userId, data);
+    data.txn_time=require('../lib/transaction-time').manualTime(data,require('../db').nowStr());
+    const previousAdvance=req.body.advance_operation_key?get('SELECT txn_time FROM advances WHERE ledger_id=? AND operation_key=?',ledgerId,String(req.body.advance_operation_key)):null;
+    if(previousAdvance&&data.txn_time_mode==='auto')data.txn_time=previousAdvance.txn_time;
+    const advanceAmount=u.parseAmountToCents(req.body.advance_amount);
+    if((req.body.advance_person||req.body.advance_amount)&&!['expense','fee'].includes(data.type))throw Error('部分代垫仅用于支出');
+    const advance=advanceAmount||req.body.advance_person ? require('../lib/advances').create(ledgerId,req.session.userId,{...data,personal_cents:data.amount_cents-advanceAmount,person:req.body.advance_person,operation_key:req.body.advance_operation_key}) : null;
+    const id = advance?advance.primary_transaction_id:txn.createTransaction(ledgerId, req.session.userId, data);
     // P13：手动选的分类是用户有意识的判断，触发个人词表沉淀（≥3 次 80% 稳定才入表；失败不影响记账）
     dict.sediment(ledgerId, data.merchant);
     auth.audit(req, 'txn.create', { entity: 'transaction', entityId: id, ledgerId, detail: `${data.type} ${(data.amount_cents / 100).toFixed(2)}` });
@@ -147,7 +156,7 @@ router.post('/', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
     const form = fd.txFormData(ledgerId, req.session.userId);
     res.status(400).render('txn-form', {
       title: '记一笔', activeNav: 'new', mode: 'create', form,
-      t: { ...data, amount: (data.amount_cents / 100).toFixed(2) },
+      t: { ...data, amount: (data.amount_cents / 100).toFixed(2),advance_person:req.body.advance_person,advance_amount:req.body.advance_amount,advance_operation_key:req.body.advance_operation_key },
       splitRows: data.splits, splits: [], back: safeBack(req.body.back), error: e.message,
       family: require('../lib/ai').familyMembers(ledgerId),
     });
@@ -202,6 +211,8 @@ router.post('/bulk', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
       break;
     }
     case 'reimbursable': {
+      try { for (const id of ids) require('../lib/advances').guardTransaction(ledgerId,id); }
+      catch (e) { res.flash('error',e.message); break; }
       run(`UPDATE transactions SET is_reimbursable = 1, updated_at = ? WHERE ledger_id = ? AND id IN (${placeholders})`, require('../db').nowStr(), ledgerId, ...ids);
       res.flash('success', `已标记 ${ids.length} 笔为待报销`);
       break;
@@ -220,10 +231,23 @@ router.post('/bulk', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
 
 /* ---------------------------------- 编辑 ---------------------------------- */
 
+router.post('/:id/advance',auth.requireLogin,auth.requireLedgerWrite,(req,res)=>{
+  const lid=Number(res.locals.ledger.id),id=Number(req.params.id),t=get('SELECT * FROM transactions WHERE id=? AND ledger_id=?',id,lid);
+  try{
+    if(!t)throw Error('记录不存在');
+    const item=require('../lib/advances').create(lid,req.session.userId,{amount_cents:t.amount_cents,personal_cents:t.amount_cents-u.parseAmountToCents(req.body.advance_amount),person:req.body.advance_person,account_id:t.account_id,category_id:t.category_id,currency:t.currency,source_transaction_id:id,confirm_source:req.body.confirm_source,operation_key:req.body.operation_key});
+    auth.audit(req,'advance.convert',{ledgerId:lid,entity:'advance',entityId:item.id});
+    return res.redirect('/advances/'+item.id);
+  }catch(e){res.flash('error',e.message);res.redirect('/transactions/'+id+'/edit');}
+});
+
 router.get('/:id/edit', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
   const t = txn.getTransaction(Number(req.params.id), ledgerId);
   if (!t) return res.status(404).render('error', { title: '记录不存在', message: '该笔记录可能已被删除。' });
+  if(t.advance)return res.redirect('/advances/'+t.advance.id);
+  if(t.advance_collection)return res.redirect('/advances/'+t.advance_collection.advance_id);
+  t.advance_operation_key=require('node:crypto').randomUUID();
   const form = fd.txFormData(ledgerId, req.session.userId);
   res.render('txn-form', {
     title: '编辑记录', activeNav: 'transactions', mode: 'edit', form, t,

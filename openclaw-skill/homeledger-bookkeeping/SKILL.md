@@ -24,6 +24,12 @@ description: 家账簿（HomeLedger）记账、亲友借钱、贷款与信用卡
 - 交易列表、recent和单笔详情返回`txn_date/txn_time/created_at`及`account_type/account_type_label`、`to_account_type/to_account_type_label`。转账分别说明两端类型；空账户不解释成现金。
 - 创建/更新回执的`transaction`可直接核验交易时间和账户类型。AI批量回执只有IDs时按ID查询详情；未知时刻如实说未提供，不能用`created_at`替代。CSV导出含独立“时间”列，回导保留已知时刻，JSON导出保留`txn_time`。
 
+## 部分代垫与回收
+
+帮同事代买或同一付款包含个人消费时，先读 [代垫 API](references/finance-api.md#部分代垫与回收)。以付款总额和自用金额创建代垫组，不先把整笔记为消费再创建报销收入。回款使用 `/advances/:id/collect`；普通 `reimburse` 是旧整笔报销，不能代替代垫核销。分摊 splits 仅备注，没有待收款或回收效果。查询消费与预算只计自用，资金流计实际扣款和回款，信用卡仍出完整付款账单。
+
+网页即时手工新建默认成功保存时的实例当前时刻，可切换填写或未知；补记其他日期不自动填时刻。开放 API、AI 和导入仍保留未知：用户明确说“现在/刚发生”时可先读取 `/ping`，按实例时区传实际 date/time，并在重试中复用原参数；其他情况不复制处理时刻。未知时刻的历史流水按录入钟点辅助当日排序，该辅助值不是真实交易时刻。
+
 ## 借钱、贷款、信用卡与定期记账
 
 用户提到借出、借入、收还款、车贷、房贷、信用卡账单、分期或还款时，先读 [金融与定期记账 API](references/finance-api.md)。这些场景不走普通消费自动入账：本金没有收支分类，金融付款须核对本金、费用、账户及已有流水。用户要求记录或核销不等于授权银行扣款，API只维护账本。
@@ -110,11 +116,11 @@ curl -sS -X POST "$HOMELEDGER_URL/api/open/transactions" \
 # 连通性（含绑定账本、角色、today/server_time/timezone）
 curl -sS "$HOMELEDGER_URL/api/open/ping" -H "Authorization: Bearer $HOMELEDGER_TOKEN"
 
-# 按发生日期/时刻排序的近期 10 笔（含交易时刻、账户类型、images）
+# 按完整录入时间排序的最近 10 笔（含交易时刻、账户类型、images）
 curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorization: Bearer $HOMELEDGER_TOKEN"
 ```
 
-用户问「刚才那笔记上了吗」时，优先依据本次创建回执的`transaction`或返回ID查询详情。`/transactions/recent`按交易发生日/时刻排序，刚补记的往日账不一定出现在前10条，不能因此断言未入账，也不要凭记忆编造。
+用户问「刚才那笔记上了吗」时，优先依据本次创建回执的`transaction`或返回ID查询详情。`/transactions/recent`按完整录入时间排序，包含刚补记的往日账；仍优先按本次返回ID核验，不能仅因前10条中没有就断言未入账，也不要凭记忆编造。
 
 ## 分类编辑、删除与恢复
 

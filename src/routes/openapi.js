@@ -268,17 +268,7 @@ router.get('/ping', (req, res) => {
 router.get('/transactions/recent', (req, res) => {
   const { ledgerId } = req.openAuth;
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
-  const rows = all(
-    `SELECT t.id, t.type, t.amount_cents, t.currency, t.txn_date, t.txn_time, t.merchant, t.note, t.source, t.created_at, t.owner_label, t.no_rhythm,
-            c.name AS category_name, a.name AS account_name, a.type AS account_type, ta.name AS to_account_name, ta.type AS to_account_type
-     FROM transactions t
-     LEFT JOIN categories c ON c.id = t.category_id
-     LEFT JOIN accounts a ON a.id = t.account_id
-     LEFT JOIN accounts ta ON ta.id=t.to_account_id
-     WHERE t.ledger_id = ? AND t.deleted_at IS NULL
-     ORDER BY t.txn_date DESC, t.txn_time IS NULL ASC, t.txn_time DESC, t.id DESC LIMIT ?`,
-    ledgerId, limit
-  );
+  const rows = txn.listTransactions(ledgerId,{pageSize:limit,sort:'created_desc'}).rows;
   const imgMap = att.listByTxnIds(rows.map((r) => r.id));
   ok(res, {
     count: rows.length,
@@ -309,7 +299,7 @@ router.get('/transactions', (req, res) => {
     to: DATE_RE.test(String(q.to || '')) ? q.to : '',
     keyword: q.q || q.keyword || '',
     reimbursable: q.reimbursable || '',
-    sort: ['date_desc', 'date_asc', 'amount_desc', 'amount_asc'].includes(q.sort) ? q.sort : 'date_desc',
+    sort: ['date_desc', 'date_asc', 'created_desc', 'created_asc', 'amount_desc', 'amount_asc'].includes(q.sort) ? q.sort : 'date_desc',
     page: Math.max(1, Number(q.page) || 1),
     pageSize: Math.min(200, Math.max(1, Number(q.page_size) || 30)),
   };
@@ -322,6 +312,9 @@ router.get('/transactions', (req, res) => {
     transactions: result.rows.map((t) => ({
       id: t.id, type: t.type, type_label: t.type_label,
       amount_cents: t.amount_cents, amount_base_cents: t.amount_base_cents, currency: t.currency,
+      advance: t.advance || null,
+      advance_collection:t.advance_collection||null,
+      component_view:!!t.component_view,
       txn_date: t.txn_date, txn_time: t.txn_time, created_at: t.created_at, merchant: t.merchant, note: t.note,
       category: t.category_path, category_id: t.category_id,
       account: t.account_name, to_account: t.to_account_name,
@@ -1287,6 +1280,24 @@ router.post('/settings/ai/test', requireWrite, requireSiteAdmin, async (req, res
   if (!r.ok) return bad(res, 400, r.error);
   ok(res, { message: '连接成功，模型响应正常', raw: r.raw });
 });
+
+/* 部分代垫：页面和 Agent 共用同一资金服务，不使用普通报销收入模拟回款。 */
+const advances=require('../lib/advances');
+router.get('/advances',(req,res)=>ok(res,{advances:advances.list(req.openAuth.ledgerId,{includeDeleted:req.query.include_deleted==='1'})}));
+router.get('/advances/:id',(req,res)=>{
+  try{ok(res,advances.detail(req.openAuth.ledgerId,Number(req.params.id)));}catch(e){bad(res,404,e.message);}
+});
+function advanceWrite(action,fn){return (req,res)=>{
+  const {ledgerId,userId}=req.openAuth;
+  try{const result=fn(ledgerId,userId,req);auth.audit(req,'api.advance.'+action,{ledgerId,entity:'advance',entityId:Number(result.advance_id||result.id),detail:'开放API·'+req.openAuth.tokenName});ok(res,result);}catch(e){bad(res,400,e.message);}
+};}
+router.post('/advances',requireWrite,advanceWrite('create',(lid,uid,req)=>advances.create(lid,uid,req.body)));
+router.post('/advances/:id/collect',requireWrite,advanceWrite('collect',(lid,uid,req)=>advances.collect(lid,uid,Number(req.params.id),req.body)));
+router.post('/advances/:id/amend',requireWrite,advanceWrite('amend',(lid,uid,req)=>advances.amend(lid,uid,Number(req.params.id),req.body)));
+for(const action of ['reverse','restore']){
+  router.post('/advances/:id/'+action,requireWrite,advanceWrite(action,(lid,uid,req)=>advances[action](lid,Number(req.params.id))));
+  router.post('/advance-collections/:id/'+action,requireWrite,advanceWrite('collection.'+action,(lid,uid,req)=>advances[action==='reverse'?'reverseCollection':'restoreCollection'](lid,Number(req.params.id))));
+}
 
 /* ------------------------------- API 兜底 -------------------------------- */
 
