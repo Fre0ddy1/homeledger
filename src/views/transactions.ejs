@@ -28,6 +28,7 @@
     <a class="chip <%= f.kind === 'income' ? 'primary' : '' %>" href="/transactions<%= qs({ kind:'income', type:'', page:1 }) %>">只看收入</a>
     <a class="chip <%= f.type === 'transfer' ? 'primary' : '' %>" href="/transactions<%= qs({ type:'transfer', kind:'', page:1 }) %>">只看转账</a>
     <a class="chip <%= f.reimbursable === 'yes' ? 'primary' : '' %>" href="/transactions<%= qs({ reimbursable:'yes', page:1 }) %>">待报销</a>
+    <a class="btn btn-sm" href="/advances">代垫与回收</a>
     <a class="chip <%= f.source === 'ai_screenshot' ? 'primary' : '' %>" href="/transactions<%= qs({ source:'ai_screenshot', page:1 }) %>">AI 记账</a>
     <a class="chip <%= f.source === 'import' ? 'primary' : '' %>" href="/transactions<%= qs({ source:'import', page:1 }) %>">导入</a>
     <a class="chip <%= f.source === 'subscription' ? 'primary' : '' %>" href="/transactions<%= qs({ source:'subscription', page:1 }) %>">订阅</a>
@@ -78,6 +79,8 @@
     <div class="field"><select name="sort">
       <option value="date_desc" <%= f.sort === 'date_desc' ? 'selected' : '' %>>最新在前</option>
       <option value="date_asc" <%= f.sort === 'date_asc' ? 'selected' : '' %>>最早在前</option>
+      <option value="created_desc" <%= f.sort === 'created_desc' ? 'selected' : '' %>>最近录入</option>
+      <option value="created_asc" <%= f.sort === 'created_asc' ? 'selected' : '' %>>最早录入</option>
       <option value="amount_desc" <%= f.sort === 'amount_desc' ? 'selected' : '' %>>金额从大到小</option>
       <option value="amount_asc" <%= f.sort === 'amount_asc' ? 'selected' : '' %>>金额从小到大</option>
     </select></div>

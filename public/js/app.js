@@ -1048,6 +1048,8 @@
         const kv = (k, v) => rows.push('<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>');
         kv('交易时间', esc(t.txn_date) + ' ' + esc(t.txn_time_label || '（未提供时刻）'));
         kv('交易类型', esc(t.type_label));
+        if(t.advance){kv('付款总额',fmtCents(t.advance.total_cents));kv('自用 / 代垫',fmtCents(t.advance.personal_cents)+' / '+fmtCents(t.advance.advance_cents));kv('代垫与回收','<a class="btn btn-sm" href="/advances/'+Number(t.advance.id)+'">管理 '+esc(t.advance.person)+' 的代垫</a>');}
+        if(t.advance_collection)kv('代垫回款','<a class="btn btn-sm" href="/advances/'+Number(t.advance_collection.advance_id)+'">查看代垫与回收</a>');
         if (t.has_category) kv('分类', esc(t.category_path || '—'));
         if(t.debt_id)kv('借钱台账','<a href="/debts/'+Number(t.debt_id)+'">查看借钱条目 #'+Number(t.debt_id)+'</a>');
         (t.finance_payments||[]).forEach(p=>kv('关联付款','<a href="/finance/payments/'+Number(p.id)+'">付款 #'+Number(p.id)+(p.deleted_at?'（已撤销）':'')+'</a>'));
@@ -1082,14 +1084,14 @@
         mask.innerHTML =
           '<div class="modal txn-detail" ' + (inline ? 'role="region" aria-label="账单详情"' : 'role="dialog" aria-modal="true" aria-label="账单详情"') + '>' +
             '<div class="modal-title">' + esc(t.category_icon || t.type_icon) + ' ' + esc(t.type === 'transfer' ? '转账' : (t.category_name || t.type_label)) + '</div>' +
-            '<div class="txn-detail-amt amount ' + signCls + '">' + sign + fmtCents(t.amount_cents) + (t.currency !== 'CNY' ? ' <span class="tiny muted">' + esc(t.currency) + '</span>' : '') + '</div>' +
+            '<div class="txn-detail-amt amount ' + signCls + '">' + sign + fmtCents(t.advance?.total_cents??t.amount_cents) + (t.currency !== 'CNY' ? ' <span class="tiny muted">' + esc(t.currency) + '</span>' : '') + '</div>' +
             '<div class="modal-body">' + rows.join('') +
               (atts ? '<div class="txn-detail-att tiny muted">附件（点击放大）</div><div class="gallery txn-detail-gallery">' + atts + '</div>' : '') +
             '</div>' +
             '<div class="modal-actions">' +
               '<button type="button" class="btn btn-ghost" data-act="close">关闭</button>' +
               (canWrite ? '<button type="button" class="btn btn-ghost" style="color:var(--expense)" data-act="del">删除</button>' : '') +
-              (canWrite ? '<a class="btn btn-primary" href="/transactions/' + t.id + '/edit">编辑</a>' : '') +
+              (t.advance?'<a class="btn btn-primary" href="/advances/'+Number(t.advance.id)+'">管理代垫</a>':canWrite ? '<a class="btn btn-primary" href="/transactions/' + t.id + '/edit">编辑</a>' : '') +
             '</div>' +
           '</div>';
         if (inline) {
@@ -1598,6 +1600,20 @@
   }
   function initTransactionClocks() {
     $$('input[type="time"]').forEach(input=>{input.setAttribute('aria-label',input.getAttribute('aria-label')||'交易时刻（可选）');});
+    function currentParts(form){return Object.fromEntries(new Intl.DateTimeFormat('sv-SE',{timeZone:form.dataset.timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).map(p=>[p.type,p.value]));}
+    $$('select[name=txn_time_mode]').forEach(mode=>{
+      const form=mode.form,clock=form.querySelector('input[name=txn_time],input[name=time]'),date=form.querySelector('input[name=txn_date],input[name=date]');
+      function refresh(){
+        if(mode.value==='unknown')clock.value='';
+        if(mode.value==='auto'){
+          const parts=currentParts(form),today=parts.year+'-'+parts.month+'-'+parts.day;
+          clock.value=date.value===today?parts.hour+':'+parts.minute+':'+parts.second:'';
+        }
+        mode._hlRefresh?.();
+      }
+      clock.addEventListener('change',()=>{mode.value=clock.value?'explicit':'unknown';mode._hlRefresh?.();});
+      date.addEventListener('change',refresh);mode.addEventListener('change',refresh);refresh();
+    });
     $$('[data-txn-now],[data-txn-time-clear]').forEach(button=>{
       button.classList.remove('hidden');
       button.addEventListener('click',()=>{
@@ -1605,7 +1621,7 @@
         const clock=form.querySelector('input[name=txn_time],input[name=time]'),date=form.querySelector('input[name=txn_date],input[name=date],input[name=start_date]');if(!clock)return;
         if(button.hasAttribute('data-txn-time-clear')){clock.value='';}else{
           if(!date)return;
-          const parts=Object.fromEntries(new Intl.DateTimeFormat('sv-SE',{timeZone:form.dataset.timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).map(p=>[p.type,p.value]));
+          const parts=currentParts(form);
           date.value=parts.year+'-'+parts.month+'-'+parts.day;date._hlRefresh?.();date.dispatchEvent(new Event('change',{bubbles:true}));
           clock.value=parts.hour+':'+parts.minute+':'+parts.second;
         }
@@ -1622,7 +1638,7 @@
     function activePayment(){return $('[data-repayment-target]:not(.hidden) .finance-form',repayment);}
     function copyFields(from,to){
       if(!from||!to)return;
-      for(const [source,target] of [['account_id','account_id'],['txn_date','date'],['txn_time','time'],['amount','amount']]){
+      for(const [source,target] of [['account_id','account_id'],['txn_date','date'],['txn_time','time'],['amount','amount'],['txn_time_mode','txn_time_mode']]){
         if(source==='amount'&&$('#f-currency')?.value!==workspace.dataset.baseCurrency)continue;
         const value=from.querySelector('[name="'+source+'"]')?.value;
         const field=to.querySelector('[name="'+target+'"]');
@@ -1648,7 +1664,7 @@
       $$('[data-repayment-target]',repayment).forEach(panel=>panel.classList.toggle('hidden',panel.dataset.repaymentTarget!==target.value));
       const next=activePayment();
       if(previous&&next&&!initialized.has(target.value)){
-        for(const name of ['account_id','date','time']){
+        for(const name of ['account_id','date','time','txn_time_mode']){
           const value=previous.querySelector('[name='+name+']')?.value,field=next.querySelector('[name='+name+']');
           if((value||name==='time')&&field&&(!field.options||Array.from(field.options).some(option=>option.value===value))){field.value=value;field._hlRefresh?.();field.dispatchEvent(new Event('change',{bubbles:true}));}
         }

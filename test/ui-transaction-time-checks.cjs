@@ -11,12 +11,12 @@ module.exports=async function(browser,session,base){
    const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
    await page.goto(base+'/theme/'+theme);await page.goto(base+'/transactions/new');
    const form=page.locator('#txn-form'),clock=form.locator('[name=txn_time]'),date=form.locator('[name=txn_date]');
-   const blank=await clock.inputValue()==='';let nowWorks=true,clearWorks=true,repaymentSynced=true,targetSynced=true,clearSynced=true;
+   const blank=await form.locator('[name=txn_time_mode]').inputValue()==='auto'&&(native?await clock.inputValue()==='':/^\d{2}:\d{2}:\d{2}$/.test(await clock.inputValue()));let nowWorks=true,clearWorks=true,repaymentSynced=true,targetSynced=true,clearSynced=true;
    if(!native){
     await form.locator('[data-txn-now]').click();nowWorks=/^\d{2}:\d{2}:\d{2}$/.test(await clock.inputValue());
     await form.locator('[data-txn-time-clear]').click();clearWorks=await clock.inputValue()==='';
    }
-   if(native)await date.fill('2026-11-12');else await date.evaluate(el=>{el.value='2026-11-12';el._hlRefresh?.();el.dispatchEvent(new Event('change',{bubbles:true}));});await clock.fill('18:35:42');await form.locator('[name=amount]').fill('12.34');
+   if(native)await date.fill('2026-11-12');else await date.evaluate(el=>{el.value='2026-11-12';el._hlRefresh?.();el.dispatchEvent(new Event('change',{bubbles:true}));});await clock.fill('18:35:42');if(native)await choose(form.locator('[name=txn_time_mode]'),'explicit');await form.locator('[name=amount]').fill('12.34');
    const clockAligned=await clock.evaluate(el=>{const date=el.form.querySelector('[name=txn_date]'),a=(date.closest('.hl-date')?.querySelector('.hl-date-trigger')||date).getBoundingClientRect(),b=el.getBoundingClientRect();return Math.abs(a.top-b.top)<2;});
    if(!native){
     await page.locator('[data-entry-type=repayment]').click();

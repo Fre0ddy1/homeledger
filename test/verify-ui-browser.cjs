@@ -302,8 +302,13 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   const wideContentFills=results.filter(r=>r.route==='/'&&r.width>=1920).every(r=>Math.abs(r.contentWidth-(r.layoutViewport-240))<=1)&&tabletDrawerLayout&&phoneDrawerLayout;
   const adaptiveChecks=[];for(const theme of ['light','dark']){await page.goto('http://127.0.0.1:5113/theme/'+theme);adaptiveChecks.push(...(await require('./ui-workspace-checks.cjs')(page,'http://127.0.0.1:5113')).map(check=>({...check,theme})));}
   const adaptiveWorkspace=adaptiveChecks.every(check=>check.pass);
+  const accountGroupChecks=await require('./ui-account-group-checks.cjs')(page,'http://127.0.0.1:5113');
+  const accountGroups=accountGroupChecks.every(check=>check.pass);
+  const advanceChecks=await require('./ui-advance-checks.cjs')(browser,context,'http://127.0.0.1:5113');
   const interaction={borrowingTimes,transactionTimes,categorySorting,categoryIcons,categoryParentChanged,categoryEditPreserved,adaptiveWorkspace,foreignAmountNotCopied,entryStable,reportCalendarGrid,reportToolbarConsistent,controlFontsConsistent,transferFiltered,expenseCardRestored,recurringAccountFiltered,returnNavigation,financeLayout,menuClosed,focusReturned,rowFocusReturned,trapped,drawerClosed,resizedDrawerReleased,reduced,minimal,coarseTablet,zoom200,wideContentFills,ledgerMenuFits,dashboardGaps,compactLedger,advancedCollapsed,inlineDetails,inspectorFocusReturned,inspectorResizeReleased,mobileDetails,mobileOrder,inspectorControlsReachable,glassMaterial,categorySoftDeleted,categoryRestored,compactPageSize,categoryKindSync,categoryModalFocusReturned,categoryDropdownEscape,recurringClonedSelect,categoryNoJs,naturalCards,boundedPages,variantLayouts,darkLoginTheme,selectReopensAfterOutside};
-  const summary={borrowingTimeChecks,transactionTimeChecks,categorySortChecks,categoryIconChecks,categoryParentChecks,adaptiveChecks,financeJourneys,pages:results.length,failures:results.filter(x=>x.overflow||x.status>=500),errors,interaction,authChecks,variants,results};
+  interaction.accountGroups=accountGroups;
+  interaction.advances=advanceChecks.every(check=>check.pass);
+  const summary={advanceChecks,accountGroupChecks,borrowingTimeChecks,transactionTimeChecks,categorySortChecks,categoryIconChecks,categoryParentChecks,adaptiveChecks,financeJourneys,pages:results.length,failures:results.filter(x=>x.overflow||x.status>=500),errors,interaction,authChecks,variants,results};
   if(financeJourneys.some(j=>!j.reversed||!j.restored||!j.allocationVisible||j.overflow)||summary.failures.length||errors.length||Object.values(interaction).some(v=>!v)||authChecks.some(x=>x.overflow))process.exitCode=1;
 
   fs.writeFileSync(root+'/.screenshots/qa.json',JSON.stringify(summary,null,2));
