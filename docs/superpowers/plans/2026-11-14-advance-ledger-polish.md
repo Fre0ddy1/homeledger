@@ -55,5 +55,5 @@ Files: transactions 路由/表单/列表、advances 页面与路由、openapi.js
 - [x] 提供代垫列表、详情、回收、撤销/恢复及从已有支出分离入口，统一按钮与返回。
 - [x] Bearer 新增 /advances 列表/详情/创建/回收/撤销/恢复；读写授权、审计、幂等与页面一致。
 - [x] 同步技能主副本及金融参考，以实际字段为准；运行 quick_validate（UTF-8）。
-- [ ] `node test/run-all.js`、`node test/selfcheck-static.js` 与相关浏览器实操，独立审查修复后 PR/CI/main。
-- [ ] 维护本轮归档，记录确切证据、边界和最终状态。
+- [x] `node test/run-all.js`、`node test/selfcheck-static.js` 与相关浏览器实操，独立审查修复后 PR/CI/main。
+- [x] 维护本轮归档，记录确切证据、边界和最终状态。
