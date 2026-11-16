@@ -22,7 +22,9 @@ SELECT t.*,
   adv.amount_cents AS payment_total_cents, adv.personal_cents AS personal_cents,
   adv.advance_cents AS advance_cents, adv.person AS advance_person,
   adv.primary_transaction_id AS advance_primary_transaction_id,
-  (SELECT ac.advance_id FROM advance_collections ac WHERE ac.transaction_id=t.id AND ac.ledger_id=t.ledger_id) AS collection_advance_id,
+  ac.id AS collection_id, ac.advance_id AS collection_advance_id, ac.amount_cents AS collection_total_cents,
+  ac.principal_cents AS collection_principal_cents, ac.excess_cents AS collection_excess_cents,
+  CASE WHEN ac.transaction_id=t.id THEN 'principal' ELSE 'excess' END AS collection_role, ca.person AS collection_person,
   (SELECT GROUP_CONCAT(tg.name, ' ') FROM transaction_tags tt JOIN tags tg ON tg.id = tt.tag_id WHERE tt.transaction_id = t.id) AS tag_names
 FROM transactions t
 LEFT JOIN categories c ON c.id = t.category_id
@@ -32,6 +34,8 @@ LEFT JOIN accounts ta ON ta.id = t.to_account_id
 LEFT JOIN users u ON u.id = t.user_id
 LEFT JOIN advance_txns ax ON ax.transaction_id=t.id AND ax.advance_id=(SELECT MAX(l.advance_id) FROM advance_txns l WHERE l.transaction_id=t.id)
 LEFT JOIN advances adv ON adv.id=ax.advance_id AND adv.ledger_id=t.ledger_id
+LEFT JOIN advance_collections ac ON ac.ledger_id=t.ledger_id AND (ac.transaction_id=t.id OR ac.excess_transaction_id=t.id)
+LEFT JOIN advances ca ON ca.id=ac.advance_id AND ca.ledger_id=t.ledger_id
 `;
 
 function decorate(t) {
@@ -40,7 +44,7 @@ function decorate(t) {
   t.to_account_type_label = t.to_account_id ? (ACCOUNT_TYPE_MAP[t.to_account_type]?.label || '其他') : null;
   t.txn_time_label = time.formatTime(t.txn_time);
   if(t.advance_id&&t.advance_role!=='original'&&!t.advance_deleted_at)t.advance={id:t.advance_id,role:t.advance_role,total_cents:t.payment_total_cents,personal_cents:t.personal_cents,advance_cents:t.advance_cents,person:t.advance_person,primary_transaction_id:t.advance_primary_transaction_id};
-  if(t.collection_advance_id)t.advance_collection={advance_id:t.collection_advance_id};
+  if(t.collection_advance_id)t.advance_collection={id:t.collection_id,advance_id:t.collection_advance_id,role:t.collection_role,total_cents:t.collection_total_cents,principal_cents:t.collection_principal_cents,excess_cents:t.collection_excess_cents,person:t.collection_person};
   t.type_label = TXN_TYPE_MAP[t.type]?.label || t.type;
   t.type_icon = TXN_TYPE_MAP[t.type]?.icon || '•';
   t.type_color = TXN_TYPE_MAP[t.type]?.color || '#8c8c8c';
@@ -56,13 +60,23 @@ function decorate(t) {
 
 /* -------------------------------- 查询构建 -------------------------------- */
 
-function listingAmount(f){return f.includeComponents||f.accountId?'t.amount_base_cents':"COALESCE((SELECT ad.amount_cents FROM advances ad WHERE ad.ledger_id=t.ledger_id AND ad.primary_transaction_id=t.id AND ad.deleted_at IS NULL LIMIT 1),t.amount_base_cents)";}
+function listingAmount(f) {
+  if (f.includeComponents || f.accountId) return 't.amount_base_cents';
+  const groupedCollection = !f.kind && !f.type && !f.types?.length && !f.categoryId && !f.source;
+  const collection = groupedCollection
+    ? `(SELECT ac.amount_cents FROM advance_collections ac WHERE ac.ledger_id=t.ledger_id AND (ac.transaction_id=t.id${f.includeCollectionIncome ? ' OR ac.excess_transaction_id=t.id' : ''}) AND ac.deleted_at IS NULL)`
+    : 'NULL';
+  return `COALESCE((SELECT ad.amount_cents FROM advances ad WHERE ad.ledger_id=t.ledger_id AND ad.primary_transaction_id=t.id AND ad.deleted_at IS NULL LIMIT 1),${collection},t.amount_base_cents)`;
+}
 
 function buildWhere(ledgerId, f = {}) {
   const where = ['t.ledger_id = ?', 't.deleted_at IS NULL'];
   const params = [ledgerId];
   // One purchase in the ordinary ledger; cashflow and accounting retain every posting.
   if(!f.includeComponents&&!f.accountId)where.push("NOT EXISTS (SELECT 1 FROM advance_txns ax JOIN advances ad ON ad.id=ax.advance_id WHERE ax.transaction_id=t.id AND ax.role<>'original' AND t.id<>ad.primary_transaction_id)");
+
+  if (!f.includeComponents && !f.accountId && !f.includeCollectionIncome && !f.kind && !f.type && !f.types?.length && !f.categoryId && !f.source)
+    where.push("NOT EXISTS (SELECT 1 FROM advance_collections ac WHERE ac.ledger_id=t.ledger_id AND ac.excess_transaction_id=t.id)");
 
   if (f.types && f.types.length) {
     where.push(`t.type IN (${f.types.map(() => '?').join(',')})`);
@@ -103,9 +117,11 @@ function buildWhere(ledgerId, f = {}) {
   if (f.minCents) { where.push(listingAmount(f)+' >= ?'); params.push(f.minCents); }
   if (f.maxCents) { where.push(listingAmount(f)+' <= ?'); params.push(f.maxCents); }
   if (f.keyword) {
-    where.push('(t.note LIKE ? OR t.merchant LIKE ? OR c.name LIKE ? OR pc.name LIKE ? OR a.name LIKE ? OR CAST('+listingAmount(f)+' AS TEXT) LIKE ?)');
+    const grouped = !f.includeComponents && !f.accountId && !f.kind && !f.type && !f.types?.length && !f.categoryId && !f.source;
+    const related = grouped ? ` OR EXISTS (SELECT 1 FROM advance_collections ac JOIN transactions other ON other.id IN (ac.transaction_id,ac.excess_transaction_id) LEFT JOIN categories oc ON oc.id=other.category_id LEFT JOIN categories opc ON opc.id=oc.parent_id WHERE ac.ledger_id=t.ledger_id AND (ac.transaction_id=t.id OR ac.excess_transaction_id=t.id) AND (other.note LIKE ? OR other.merchant LIKE ? OR oc.name LIKE ? OR opc.name LIKE ?))` : '';
+    where.push('(t.note LIKE ? OR t.merchant LIKE ? OR c.name LIKE ? OR pc.name LIKE ? OR a.name LIKE ? OR EXISTS (SELECT 1 FROM advance_collections ac JOIN advances ad ON ad.id=ac.advance_id WHERE ac.ledger_id=t.ledger_id AND (ac.transaction_id=t.id OR ac.excess_transaction_id=t.id) AND ad.person LIKE ?) OR CAST('+listingAmount(f)+' AS TEXT) LIKE ?'+related+')');
     const kw = `%${f.keyword}%`;
-    params.push(kw, kw, kw, kw, kw, kw);
+    params.push(kw, kw, kw, kw, kw, kw, kw, ...(grouped ? [kw,kw,kw,kw] : []));
   }
   if (f.reimbursable === 'yes') where.push('t.is_reimbursable = 1 AND t.reimbursed_at IS NULL');
   if (f.reimbursable === 'done') where.push('t.is_reimbursable = 1 AND t.reimbursed_at IS NOT NULL');
@@ -130,14 +146,15 @@ function listTransactions(ledgerId, f = {}) {
   const rows = all(
     `${TXN_SELECT} WHERE ${sql} ORDER BY ${order} LIMIT ? OFFSET ?`,
     ...params, pageSize, (page - 1) * pageSize
-  ).map(t=>{decorate(t);if(f.includeComponents||f.accountId)t.component_view=true;return t;});
+  ).map(t=>{decorate(t);if(f.includeComponents||f.accountId||(t.advance_collection&&(f.kind||f.type||f.types?.length||f.categoryId||f.source)))t.component_view=true;return t;});
 
+  const sumWhere = buildWhere(ledgerId, {...f, includeCollectionIncome:true});
   const sum = get(
     `SELECT
        COALESCE(SUM(CASE WHEN t.type IN (${INCOME_TYPES.map(() => '?').join(',')}) THEN t.amount_base_cents ELSE 0 END),0) AS income,
        COALESCE(SUM(CASE WHEN t.type IN (${EXPENSE_TYPES.map(() => '?').join(',')}) THEN t.amount_base_cents ELSE 0 END),0) AS expense
-     FROM transactions t LEFT JOIN categories c ON c.id = t.category_id LEFT JOIN accounts a ON a.id = t.account_id LEFT JOIN categories pc ON pc.id = c.parent_id WHERE ${sql}`,
-    ...INCOME_TYPES, ...EXPENSE_TYPES, ...params
+     FROM transactions t LEFT JOIN categories c ON c.id = t.category_id LEFT JOIN accounts a ON a.id = t.account_id LEFT JOIN categories pc ON pc.id = c.parent_id WHERE ${sumWhere.sql}`,
+    ...INCOME_TYPES, ...EXPENSE_TYPES, ...sumWhere.params
   );
   return {
     rows, total, page, pageSize,
@@ -158,6 +175,7 @@ function groupByDate(rows, sort = 'date_desc') {
     }
     cur.items.push(r);
     if (INCOME_TYPES.includes(r.type)) cur.income += Number(r.amount_base_cents);
+    if (!r.component_view && r.advance_collection?.role === 'principal') cur.income += Number(r.advance_collection.excess_cents || 0);
     if (EXPENSE_TYPES.includes(r.type)) cur.expense += Number(r.amount_base_cents);
   }
   // 给每笔带上「关联了几张账单截图」，列表页据此显示 📎 标记（一次查询，避免 N+1）

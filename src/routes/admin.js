@@ -657,7 +657,7 @@ router.get('/export/csv', auth.requireLogin, (req, res) => {
   const rows = [];
   let page = 1;
   for (;;) {
-    const r = txn.listTransactions(ledgerId, { ...f, page, pageSize: 200 });
+    const r = txn.listTransactions(ledgerId, { ...f, includeComponents: true, page, pageSize: 200 });
     rows.push(...r.rows);
     if (page >= r.pages || page > 2500) break; // 安全上限 50 万行，正常账本远达不到
     page++;

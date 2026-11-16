@@ -35,20 +35,20 @@ module.exports=async function(browser,session,base){
    const merchant='混合代买 '+runId+' '+theme+' '+width+' '+native;
    await form.locator('[name=merchant]').fill(merchant);
    await form.getByText('部分代垫（帮别人付款）',{exact:true}).click();
-   await form.locator('[name=advance_person]').fill('同事小王');await form.locator('[name=advance_amount]').fill('60');
+   await form.locator('[name=advance_person]').fill('同事小王');await form.locator('[name=advance_amount]').fill('18.99');
    await Promise.all([page.waitForURL(/\/transactions(?:\?|$)/),page.locator('#submit-btn').click()]);
    await page.goto(base+'/transactions?q='+encodeURIComponent(merchant));
    const rows=page.locator('.transactions-primary .txn'),primary=rows.first();
    const oneBill=await rows.count()===1&&await primary.locator('.txn-amt').innerText()==='-100.00';
    const primaryId=await primary.getAttribute('data-txn-id');
    const saved=(await (await page.request.get(base+'/transactions/'+primaryId+'/json')).json()).txn;
-   const correctParts=saved.amount_cents===4000&&saved.advance?.total_cents===10000&&saved.advance.advance_cents===6000;
+   const correctParts=saved.amount_cents===8101&&saved.advance?.total_cents===10000&&saved.advance.advance_cents===1899;
    await page.goto(base+'/calendar?month=2026-01&date=2026-01-15');
    const calendarParts=await page.getByRole('link',{name:'管理代垫',exact:true}).count()===1&&await page.getByText('实际付款 100.00',{exact:true}).count()===1&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1);
    if(width===390)await page.screenshot({path:'.screenshots/audit-after/advance-calendar-'+theme+'-'+(native?'native':'js')+'.png',fullPage:true,animations:'disabled'});
    await context.addCookies([{name:'hl_simple',value:'1',url:base}]);await page.goto(base+'/');
    const minimalRow=page.locator('.m-txn[href="/advances/'+saved.advance.id+'"]');
-   const minimalParts=await minimalRow.count()===1&&(await minimalRow.innerText()).includes('自用 40.00 · 代垫 60.00')&&(await minimalRow.locator('.amt').innerText()).includes('100.00')&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1);
+   const minimalParts=await minimalRow.count()===1&&(await minimalRow.innerText()).includes('自用 81.01 · 代垫 18.99')&&(await minimalRow.locator('.amt').innerText()).includes('100.00')&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1);
    if(width===390)await page.screenshot({path:'.screenshots/audit-after/advance-minimal-'+theme+'-'+(native?'native':'js')+'.png',fullPage:true,animations:'disabled'});
    await context.addCookies([{name:'hl_simple',value:'0',url:base}]);
    await page.goto(base+'/accounts');
@@ -62,7 +62,7 @@ module.exports=async function(browser,session,base){
    const summaryLayout=summaryColumns===(width<540?2:3);
    await page.screenshot({path:'.screenshots/audit-after/advance-'+theme+'-'+width+'-'+(native?'native':'js')+'.png',fullPage:true,animations:'disabled'});
    const payment=page.locator('form[action="'+advancePath+'/collect"]');
-   await payment.locator('[name=amount]').fill('60');await choose(payment.locator('[name=account_id]'),account);
+   await payment.locator('[name=amount]').fill('20');await choose(payment.locator('[name=account_id]'),account);
    if(native)await payment.locator('[name=date]').fill('2026-02-02');else await payment.locator('[name=date]').evaluate(el=>{el.value='2026-02-02';el.dispatchEvent(new Event('change',{bubbles:true}));});
    await payment.locator('[name=time]').fill('09:10:11');
    async function submit(action,confirmation=false){
@@ -72,14 +72,47 @@ module.exports=async function(browser,session,base){
     if(confirmation&&!native)await page.locator('.modal-mask [data-act=ok]').click();
     await done;await page.goto(base+advancePath);
    }
+   const key=await payment.locator('[name=operation_key]').inputValue();
+   const preview=native||((await payment.locator('[data-excess-preview]').innerText()).includes('实际到账 20.00 · 回本 18.99 · 凑整收入 1.01'));
+   await Promise.all([page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===advancePath+'/collect'),payment.locator('button').last().click()]);await page.waitForLoadState('load');
+   const retry=page.locator('form[action="'+advancePath+'/collect"]');
+   const retryState={amount:await retry.locator('[name=amount]').inputValue(),key:await retry.locator('[name=operation_key]').inputValue(),account:await retry.locator('[name=account_id]').inputValue(),expectedAccount:account,expectedKey:key};
+   const rejected=await retry.count()===1&&Number(await retry.locator('[name=amount]').inputValue())===20&&await retry.locator('[name=operation_key]').inputValue()===key&&await retry.locator('[name=account_id]').inputValue()===account;
+   await retry.locator('[name=excess_handling]').check();
+   await page.screenshot({path:'.screenshots/audit-after/advance-rounding-'+theme+'-'+width+'-'+(native?'native':'js')+'.png',fullPage:true,animations:'disabled'});
    await submit(advancePath+'/collect');
+   const split=(await page.locator('.finance-detail').innerText()).includes('回本 18.99 · 凑整收入 1.01');
    const collected=await page.locator('.card-head .chip').first().innerText()==='已收齐'&&await page.locator('form[action="'+advancePath+'/collect"]').count()===0;
+   await page.goto(base+'/transactions?from=2026-02-02&to=2026-02-02');
+   const receiptRows=page.locator('.transactions-primary .txn');
+   const receiptList=await receiptRows.count()===1&&(await receiptRows.first().locator('.txn-amt').innerText()).trim()==='20.00'&&(await receiptRows.first().innerText()).includes('回本 18.99 · 凑整收入 1.01');
+   let receiptDetail=true;
+   if(!native){await receiptRows.first().click();const detail=page.locator('.txn-detail:visible');await detail.waitFor();const detailText=await detail.innerText();receiptDetail=detailText.includes('20.00')&&detailText.includes('18.99 / 1.01')&&detailText.includes('管理代垫');}
+   await page.goto(base+'/calendar?month=2026-02&date=2026-02-02');
+   const calendarReceipt=(await page.locator('body').innerText()).includes('回本 18.99 · 凑整收入 1.01')&&(await page.locator('.txn-amt').first().innerText()).includes('20.00')&&(await page.locator('body').innerText()).includes('收入 1.01');
+   await context.addCookies([{name:'hl_simple',value:'1',url:base}]);await page.goto(base+'/');
+   const receiptMini=page.locator('.m-txn[href="'+advancePath+'"]');
+   const minimalReceipt=await receiptMini.count()===2&&(await receiptMini.first().innerText()).includes('回本 18.99 · 凑整收入 1.01')&&(await receiptMini.first().locator('.amt').innerText()).includes('20.00');
+   await context.addCookies([{name:'hl_simple',value:'0',url:base}]);await page.goto(base+'/accounts/'+account+'?from=2026-02-02&to=2026-02-02');
+   const accountAmounts=await page.locator('.txn .txn-amt').allInnerTexts();
+   const accountParts=accountAmounts.length===2&&accountAmounts.some(v=>v.includes('18.99'))&&accountAmounts.some(v=>v.includes('1.01'));
+   await page.goto(base+advancePath);
    const reverseCollectionAction=await page.locator('form[action*="/collections/"][action$="/reverse"]').getAttribute('action');
    await submit(reverseCollectionAction,true);
    const collectionReversed=await page.locator('.card-head .chip').first().innerText()==='待回收';
    await submit(reverseCollectionAction.replace(/reverse$/,'restore'),true);
    const collectionRestored=await page.locator('.card-head .chip').first().innerText()==='已收齐';
-   await submit(reverseCollectionAction,true);await submit(advancePath+'/reverse',true);
+   await submit(reverseCollectionAction,true);
+   let part=page.locator('form[action="'+advancePath+'/collect"]');
+   await part.locator('[name=amount]').fill('18.99');await choose(part.locator('[name=account_id]'),account);await submit(advancePath+'/collect');
+   const equal=(await page.locator('.card-head .chip').first().innerText())==='已收齐';
+   const equalAction=await page.locator('form[action*="/collections/"][action$="/reverse"]').getAttribute('action');await submit(equalAction,true);
+   part=page.locator('form[action="'+advancePath+'/collect"]');await part.locator('[name=amount]').fill('10');await choose(part.locator('[name=account_id]'),account);await submit(advancePath+'/collect');
+   part=page.locator('form[action="'+advancePath+'/collect"]');await part.locator('[name=amount]').fill('10');await choose(part.locator('[name=account_id]'),account);await part.locator('[name=excess_handling]').check();await submit(advancePath+'/collect');
+   const multi=(await page.locator('.finance-detail').innerText()).includes('回本 8.99 · 凑整收入 1.01');
+   const activeForms=await page.locator('form[action*="/collections/"][action$="/reverse"]').evaluateAll(els=>els.map(el=>el.getAttribute('action')));
+   for(const action of activeForms)await submit(action,true);
+   await submit(advancePath+'/reverse',true);
    const reversed=await page.locator('.card-head .chip').first().innerText()==='已撤销';
    await submit(advancePath+'/restore',true);
    const restored=await page.locator('.card-head .chip').first().innerText()==='待回收';
@@ -100,7 +133,7 @@ module.exports=async function(browser,session,base){
    }
    const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1);
    const internalScroll=await page.locator('.finance-detail').evaluate(el=>[...el.querySelectorAll('*')].filter(n=>n.getClientRects().length&&!n.matches('select,input,textarea')&&!n.closest('.hl-select-menu,.hl-date-menu')&&['auto','scroll'].includes(getComputedStyle(n).overflowY)&&n.scrollHeight>n.clientHeight+2).length>0);
-   checks.push({native,theme,width,oneBill,correctParts,calendarParts,minimalParts,managedAccount,returnButton,summaryLayout,collected,collectionReversed,collectionRestored,reversed,restored,sourceConversion,sourceRetry,overflow,internalScroll,errors,pass:oneBill&&correctParts&&calendarParts&&minimalParts&&managedAccount&&returnButton&&summaryLayout&&collected&&collectionReversed&&collectionRestored&&reversed&&restored&&sourceConversion&&sourceRetry&&!overflow&&!internalScroll&&!errors.length});
+   checks.push({native,theme,width,oneBill,correctParts,calendarParts,minimalParts,managedAccount,returnButton,summaryLayout,preview,rejected,retryState,split,multi,equal,collected,receiptList,receiptDetail,calendarReceipt,minimalReceipt,accountParts,collectionReversed,collectionRestored,reversed,restored,sourceConversion,sourceRetry,overflow,internalScroll,errors,pass:oneBill&&correctParts&&calendarParts&&minimalParts&&managedAccount&&returnButton&&summaryLayout&&preview&&rejected&&split&&multi&&equal&&collected&&receiptList&&receiptDetail&&calendarReceipt&&minimalReceipt&&accountParts&&collectionReversed&&collectionRestored&&reversed&&restored&&sourceConversion&&sourceRetry&&!overflow&&!internalScroll&&!errors.length});
   }finally{
    if(ledgerId&&csrf)await context.request.post(base+'/ledgers/'+ledgerId+'/delete',{form:{_csrf:csrf,confirm:name}});
    if(originalLedger&&csrf)await context.request.post(base+'/ledgers/switch',{form:{_csrf:csrf,ledger_id:originalLedger}});

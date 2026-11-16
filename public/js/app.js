@@ -1049,7 +1049,7 @@
         kv('交易时间', esc(t.txn_date) + ' ' + esc(t.txn_time_label || '（未提供时刻）'));
         kv('交易类型', esc(t.type_label));
         if(t.advance){kv('付款总额',fmtCents(t.advance.total_cents));kv('自用 / 代垫',fmtCents(t.advance.personal_cents)+' / '+fmtCents(t.advance.advance_cents));kv('代垫与回收','<a class="btn btn-sm" href="/advances/'+Number(t.advance.id)+'">管理 '+esc(t.advance.person)+' 的代垫</a>');}
-        if(t.advance_collection)kv('代垫回款','<a class="btn btn-sm" href="/advances/'+Number(t.advance_collection.advance_id)+'">查看代垫与回收</a>');
+        if(t.advance_collection){kv('实际到账',fmtCents(t.advance_collection.total_cents));kv('回本 / 凑整收入',fmtCents(t.advance_collection.principal_cents)+' / '+fmtCents(t.advance_collection.excess_cents));kv('代垫回款','<a class="btn btn-sm" href="/advances/'+Number(t.advance_collection.advance_id)+'">查看代垫与回收</a>');}
         if (t.has_category) kv('分类', esc(t.category_path || '—'));
         if(t.debt_id)kv('借钱台账','<a href="/debts/'+Number(t.debt_id)+'">查看借钱条目 #'+Number(t.debt_id)+'</a>');
         (t.finance_payments||[]).forEach(p=>kv('关联付款','<a href="/finance/payments/'+Number(p.id)+'">付款 #'+Number(p.id)+(p.deleted_at?'（已撤销）':'')+'</a>'));
@@ -1084,14 +1084,14 @@
         mask.innerHTML =
           '<div class="modal txn-detail" ' + (inline ? 'role="region" aria-label="账单详情"' : 'role="dialog" aria-modal="true" aria-label="账单详情"') + '>' +
             '<div class="modal-title">' + esc(t.category_icon || t.type_icon) + ' ' + esc(t.type === 'transfer' ? '转账' : (t.category_name || t.type_label)) + '</div>' +
-            '<div class="txn-detail-amt amount ' + signCls + '">' + sign + fmtCents(t.advance?.total_cents??t.amount_cents) + (t.currency !== 'CNY' ? ' <span class="tiny muted">' + esc(t.currency) + '</span>' : '') + '</div>' +
+            '<div class="txn-detail-amt amount ' + signCls + '">' + sign + fmtCents(t.advance?.total_cents??(t.advance_collection?.role==='principal'?t.advance_collection.total_cents:t.amount_cents)) + (t.currency !== 'CNY' ? ' <span class="tiny muted">' + esc(t.currency) + '</span>' : '') + '</div>' +
             '<div class="modal-body">' + rows.join('') +
               (atts ? '<div class="txn-detail-att tiny muted">附件（点击放大）</div><div class="gallery txn-detail-gallery">' + atts + '</div>' : '') +
             '</div>' +
             '<div class="modal-actions">' +
               '<button type="button" class="btn btn-ghost" data-act="close">关闭</button>' +
               (canWrite ? '<button type="button" class="btn btn-ghost" style="color:var(--expense)" data-act="del">删除</button>' : '') +
-              (t.advance?'<a class="btn btn-primary" href="/advances/'+Number(t.advance.id)+'">管理代垫</a>':canWrite ? '<a class="btn btn-primary" href="/transactions/' + t.id + '/edit">编辑</a>' : '') +
+              (t.advance||t.advance_collection?'<a class="btn btn-primary" href="/advances/'+Number(t.advance?.id||t.advance_collection.advance_id)+'">管理代垫</a>':canWrite ? '<a class="btn btn-primary" href="/transactions/' + t.id + '/edit">编辑</a>' : '') +
             '</div>' +
           '</div>';
         if (inline) {
@@ -1810,6 +1810,21 @@
     initSidebar();
     initUserMenu();
     initAvatarUpload();
+    const collectionForm = document.querySelector('[data-advance-collection]');
+    if (collectionForm) {
+      const input = collectionForm.querySelector('[name="amount"]');
+      const panel = collectionForm.querySelector('[data-excess-panel]');
+      const preview = collectionForm.querySelector('[data-excess-preview]');
+      const remaining = Number(collectionForm.dataset.remaining);
+      const update = () => {
+        const match = input.value.trim().match(/^(\d+)(?:\.(\d{0,2}))?$/);
+        const cents = match ? Number(match[1]) * 100 + Number((match[2] || '').padEnd(2, '0')) : 0;
+        panel.hidden = !Number.isSafeInteger(cents) || cents <= remaining;
+        if (!panel.hidden) preview.textContent = '实际到账 ' + (cents / 100).toFixed(2) + ' · 回本 ' + (remaining / 100).toFixed(2) + ' · 凑整收入 ' + ((cents - remaining) / 100).toFixed(2);
+      };
+      input.addEventListener('input', update);
+      update();
+    }
     initAiWarnFlash();
     initTxnForm();
     initEntryWorkspace();

@@ -186,6 +186,8 @@ router.post('/bulk', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
       const cid = require('../lib/categories').resolveId(ledgerId, req.body.category_id);
       const c = cid ? require('../lib/categories').find(ledgerId, cid, true) : null;
       if (!c) { res.flash('error', '请选择要改成的分类'); break; }
+      try { for (const id of ids) require('../lib/advances').guardTransaction(ledgerId, id); }
+      catch (e) { res.flash('error', e.message); break; }
       run(`UPDATE transactions SET category_id = ?, updated_at = ? WHERE ledger_id = ? AND id IN (${placeholders}) AND type NOT IN ('transfer','adjust','lend','borrow','repay_receive','repay_pay','invest_buy','invest_sell')`, cid, require('../db').nowStr(), ledgerId, ...ids);
       res.flash('success', `已修改 ${ids.length} 笔的分类`);
       break;
@@ -193,6 +195,8 @@ router.post('/bulk', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
     case 'tag': {
       const tag = String(req.body.tag || '').trim();
       if (!tag) { res.flash('error', '请输入标签名'); break; }
+      try { for (const id of ids) require('../lib/advances').guardTransaction(ledgerId, id); }
+      catch (e) { res.flash('error', e.message); break; }
       for (const id of ids) txn.applyTags(id, ledgerId, tag, false);
       res.flash('success', `已为 ${ids.length} 笔添加标签「${tag}」`);
       break;
