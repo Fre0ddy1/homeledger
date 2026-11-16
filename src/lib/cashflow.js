@@ -4,7 +4,7 @@ const db=require('../db'),u=require('./util');
 // these accounts has zero household cash flow; liability/investment legs do not.
 const FUNDS="('cash','debit','virtual','prepaid')";
 const CTE=`WITH classified AS (
- SELECT t.*,COALESCE((SELECT 'advance:'||ax.advance_id FROM advance_txns ax WHERE ax.transaction_id=t.id AND ax.role<>'original' LIMIT 1),'txn:'||t.id) AS cash_event_id,a.type AS from_type,b.type AS to_type,a.type AS account_type,b.type AS to_account_type,a.name AS account_name,b.name AS to_account_name,c.name AS category_name,pc.name AS category_parent,c.icon AS category_icon,c.color AS category_color,
+ SELECT t.*,COALESCE((SELECT 'collection:'||ac.id FROM advance_collections ac WHERE ac.ledger_id=t.ledger_id AND (ac.transaction_id=t.id OR ac.excess_transaction_id=t.id) LIMIT 1),(SELECT 'advance:'||ax.advance_id FROM advance_txns ax WHERE ax.transaction_id=t.id AND ax.role<>'original' LIMIT 1),'txn:'||t.id) AS cash_event_id,a.type AS from_type,b.type AS to_type,a.type AS account_type,b.type AS to_account_type,a.name AS account_name,b.name AS to_account_name,c.name AS category_name,pc.name AS category_parent,c.icon AS category_icon,c.color AS category_color,
  CASE WHEN a.type IN ${FUNDS} THEN 1 ELSE 0 END AS from_fund,
  CASE WHEN b.type IN ${FUNDS} THEN 1 ELSE 0 END AS to_fund,
  COALESCE(pc.name,c.name,CASE WHEN t.type IN ('income','interest','refund','reimburse') THEN '其他流入' ELSE '日常支出' END) AS category_label

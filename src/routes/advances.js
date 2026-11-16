@@ -24,10 +24,10 @@ router.post('/:id/amend',auth.requireLedgerWrite,(req,res)=>{
 router.post('/:id/collect',auth.requireLedgerWrite,(req,res)=>{
   const lid=Number(res.locals.ledger.id),id=Number(req.params.id);
   try{
-    const r=service.collect(lid,req.session.userId,id,{amount_cents:parseAmountToCents(req.body.amount),account_id:req.body.account_id,txn_date:req.body.date,txn_time:req.body.time,operation_key:req.body.operation_key});
+    const r=service.collect(lid,req.session.userId,id,{amount_cents:parseAmountToCents(req.body.amount),account_id:req.body.account_id,txn_date:req.body.date,txn_time:req.body.time,excess_handling:req.body.excess_handling,excess_category_id:req.body.excess_category_id,operation_key:req.body.operation_key});
     auth.audit(req,'advance.collect',{ledgerId:lid,entity:'advance',entityId:id,detail:'代垫回收 #'+r.id});
-    res.flash('success','已回收，冲减待收款；不计消费收入。');
-  }catch(e){req.session.advanceDraft={ledgerId:lid,id,values:{amount:req.body.amount,account_id:req.body.account_id,date:req.body.date,time:req.body.time,operation_key:req.body.operation_key}};res.flash('error',e.message);}
+    res.flash('success',r.excess_cents?'已回收，回本 '+(r.principal_cents/100).toFixed(2)+'，凑整差额 '+(r.excess_cents/100).toFixed(2)+' 已计收入。':'已回收，冲减待收款；不计消费收入。');
+  }catch(e){req.session.advanceDraft={ledgerId:lid,id,values:{amount:req.body.amount,account_id:req.body.account_id,date:req.body.date,time:req.body.time,excess_handling:req.body.excess_handling,excess_category_id:req.body.excess_category_id,operation_key:req.body.operation_key}};res.flash('error',e.message);}
   res.redirect('/advances/'+id);
 });
 for(const action of ['reverse','restore']){

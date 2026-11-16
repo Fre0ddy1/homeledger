@@ -24,13 +24,15 @@ function detail(lid, id) {
   const collections = db.all(`SELECT c.*,a.name AS account_name,a.type AS account_type
     FROM advance_collections c JOIN accounts a ON a.id=c.account_id
     WHERE c.ledger_id=? AND c.advance_id=? ORDER BY c.txn_date DESC,c.id DESC`, lid, result.id);
-  const received = collections.filter(c => !c.deleted_at).reduce((sum, c) => sum + c.amount_cents, 0);
+  const received = collections.filter(c => !c.deleted_at).reduce((sum, c) => sum + c.principal_cents, 0);
+  const actualReceived = collections.filter(c => !c.deleted_at).reduce((sum, c) => sum + c.amount_cents, 0);
+  const excessReceived = collections.filter(c => !c.deleted_at).reduce((sum, c) => sum + c.excess_cents, 0);
   const account = db.get('SELECT name,type FROM accounts WHERE ledger_id=? AND id=?', lid, result.account_id);
   const transactions = db.all(`SELECT t.*,l.role FROM advance_txns l
     JOIN transactions t ON t.id=l.transaction_id WHERE l.advance_id=? AND t.ledger_id=? ORDER BY t.id`, result.id, lid);
   return {...result, account_name: account?.name, account_type: account?.type,
     account_type_label: db.ACCOUNT_TYPE_MAP[account?.type]?.label || null,
-    received_cents: received, remaining_cents: result.advance_cents - received,
+    received_cents: received, actual_received_cents: actualReceived, excess_received_cents: excessReceived, remaining_cents: result.advance_cents - received,
     txn_time_display: clock.formatTime(result.txn_time), transactions, collections};
 }
 
@@ -80,7 +82,7 @@ function managedAccount(lid, currency) {
 function guardTransaction(lid, id) {
   const link = db.get(`SELECT a.id FROM advance_txns l JOIN advances a ON a.id=l.advance_id
     WHERE a.ledger_id=? AND l.transaction_id=? AND (l.role<>'original' OR a.deleted_at IS NULL) LIMIT 1`, lid, Number(id));
-  const collection = db.get('SELECT id FROM advance_collections WHERE ledger_id=? AND transaction_id=?', lid, Number(id));
+  const collection = db.get('SELECT id FROM advance_collections WHERE ledger_id=? AND (transaction_id=? OR excess_transaction_id=?)', lid, Number(id), Number(id));
   if (link || collection) throw Error('此流水属于代垫或回款，请在代垫详情整体更正、撤销或恢复');
 }
 
@@ -173,8 +175,15 @@ function create(lid, uid, d) {
 
 function collect(lid, uid, id, d) {
   return db.tx(() => {
+    let categoryId = null;
+    if (d.excess_category_id !== undefined && d.excess_category_id !== null && d.excess_category_id !== '') {
+      if (typeof d.excess_category_id !== 'number' && typeof d.excess_category_id !== 'string') throw Error('收入分类无效');
+      categoryId = Number(d.excess_category_id);
+      if (!Number.isSafeInteger(categoryId) || categoryId <= 0) throw Error('收入分类无效');
+    }
     const key = keyOf(d), signature = JSON.stringify({id: Number(id), amount_cents: Number(d.amount_cents),
-      account_id: Number(d.account_id), ...requestedMoment(d)});
+      account_id: Number(d.account_id), ...requestedMoment(d),
+      ...(d.excess_handling !== undefined || d.excess_category_id !== undefined ? {excess_handling: d.excess_handling || null, excess_category_id: categoryId} : {})});
     const existing = db.get('SELECT * FROM advance_collections WHERE ledger_id=? AND operation_key=?', lid, key);
     if (existing) {
       if (existing.signature !== signature) throw Error('同一回款操作标识的请求内容不同');
@@ -183,17 +192,32 @@ function collect(lid, uid, id, d) {
     const advance = detail(lid, id);
     if (advance.deleted_at) throw Error('请先恢复代垫记录再登记回款');
     const amount = money.cents(d.amount_cents);
-    if (amount > advance.remaining_cents) throw Error('回款不能超过尚未收回的代垫金额');
+    if (advance.remaining_cents <= 0) throw Error('代垫已结清，不能继续登记回款');
+    const principal = Math.min(amount, advance.remaining_cents), excess = amount - principal;
+    if (excess && d.excess_handling !== 'income') throw Error('超额回款请确认多出金额计入收入');
+    if (d.excess_handling && d.excess_handling !== 'income') throw Error('差额处理方式无效');
+    let resolvedCategoryId = null;
+    if (excess) {
+      const categories = require('./categories');
+      if (categoryId) {
+        const category = categories.find(lid, categoryId, true);
+        if (!category || category.kind !== 'income') throw Error('请选择有效收入分类');
+        resolvedCategoryId = category.id;
+      } else resolvedCategoryId = categories.list(lid, 'income').find(c => c.name === '其他收入')?.id || null;
+    }
     const destination = money.account(lid, d.account_id, {currency: advance.currency});
     if (!FUND_TYPES.includes(destination.type)) throw Error('回款请选择现金、储蓄卡或支付账户');
     const actual = moment(d);
     if (actual.date < advance.txn_date) throw Error('回款日期不能早于代垫日期');
-    const txnId = Number(require('./txn').createTransaction(lid, uid, {type: 'transfer', amount_cents: amount,
+    const txnId = Number(require('./txn').createTransaction(lid, uid, {type: 'transfer', amount_cents: principal,
       currency: advance.currency, account_id: advance.receivable_account_id, to_account_id: destination.id,
       txn_date: actual.date, txn_time: actual.time, source: 'advance_collection', note: '代垫回款 · ' + advance.person}, {channel: 'finance'}));
+    const excessTxnId = excess ? Number(require('./txn').createTransaction(lid, uid, {type: 'income', amount_cents: excess,
+      currency: advance.currency, account_id: destination.id, category_id: resolvedCategoryId,
+      txn_date: actual.date, txn_time: actual.time, source: 'advance_collection', note: '代垫凑整差额 · ' + advance.person}, {channel: 'finance'})) : null;
     const collectionId = Number(db.run(`INSERT INTO advance_collections(ledger_id,advance_id,transaction_id,amount_cents,
-      account_id,operation_key,signature,txn_date,txn_time,created_at)VALUES(?,?,?,?,?,?,?,?,?,?)`, lid, advance.id,
-      txnId, amount, destination.id, key, signature, actual.date, actual.time, db.nowStr()).lastInsertRowid);
+      principal_cents,excess_cents,excess_transaction_id,account_id,operation_key,signature,txn_date,txn_time,created_at)VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, lid, advance.id,
+      txnId, amount, principal, excess, excessTxnId, destination.id, key, signature, actual.date, actual.time, db.nowStr()).lastInsertRowid);
     return {...collectionRow(lid, collectionId), advance: detail(lid, advance.id)};
   });
 }
@@ -250,7 +274,8 @@ function reverseCollection(lid, id) {
     if (!collection.deleted_at) {
       db.run('UPDATE advance_collections SET deleted_at=? WHERE id=?', db.nowStr(), collection.id);
       db.run('UPDATE transactions SET deleted_at=?,updated_at=? WHERE id=?', db.nowStr(), db.nowStr(), collection.transaction_id);
-      refresh(lid, [collection.transaction_id]);
+      if (collection.excess_transaction_id) db.run('UPDATE transactions SET deleted_at=?,updated_at=? WHERE id=?', db.nowStr(), db.nowStr(), collection.excess_transaction_id);
+      refresh(lid, [collection.transaction_id, collection.excess_transaction_id].filter(Boolean));
     }
     return {...collectionRow(lid, id), advance: detail(lid, collection.advance_id)};
   });
@@ -261,11 +286,12 @@ function restoreCollection(lid, id) {
     const collection = collectionRow(lid, id), advance = detail(lid, collection.advance_id);
     if (collection.deleted_at) {
       if (advance.deleted_at) throw Error('请先恢复代垫付款，再恢复回款');
-      if (collection.amount_cents > advance.remaining_cents) throw Error('恢复后回款会超过尚未收回金额');
+      if (collection.principal_cents > advance.remaining_cents) throw Error('恢复后回款会超过尚未收回金额');
       money.account(lid, collection.account_id, {currency: advance.currency});
       db.run('UPDATE advance_collections SET deleted_at=NULL WHERE id=?', collection.id);
       db.run('UPDATE transactions SET deleted_at=NULL,updated_at=? WHERE id=?', db.nowStr(), collection.transaction_id);
-      refresh(lid, [collection.transaction_id]);
+      if (collection.excess_transaction_id) db.run('UPDATE transactions SET deleted_at=NULL,updated_at=? WHERE id=?', db.nowStr(), collection.excess_transaction_id);
+      refresh(lid, [collection.transaction_id, collection.excess_transaction_id].filter(Boolean));
     }
     return {...collectionRow(lid, id), advance: detail(lid, collection.advance_id)};
   });

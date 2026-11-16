@@ -501,6 +501,8 @@ router.post('/transactions/bulk-category', requireWrite, (req, res) => {
   const ids = readBulkIds(req.body);
   const cid = validCategoryId(ledgerId, Number((req.body || {}).category_id));
   if (!ids.length || !cid) return bad(res, 400, '请提供 ids 与 category_id');
+  try { for (const id of ids) require('../lib/advances').guardTransaction(ledgerId, id); }
+  catch (e) { return bad(res, 400, e.message); }
   const ph = ids.map(() => '?').join(',');
   const info = run(`UPDATE transactions SET category_id = ?, updated_at = ? WHERE ledger_id = ? AND id IN (${ph}) AND type NOT IN ('transfer','adjust','lend','borrow','repay_receive','repay_pay','invest_buy','invest_sell')`, cid, nowStr(), ledgerId, ...ids);
   auth.audit(req, 'api.txn.bulkCategory', { ledgerId, detail: `开放API·${req.openAuth.tokenName} 批量改分类 ${info.changes} 笔` });
@@ -515,6 +517,8 @@ router.post('/transactions/bulk-tag', requireWrite, (req, res) => {
   // 只给本账本存在且未删除的交易挂标签
   const ph = ids.map(() => '?').join(',');
   const owned = all(`SELECT id FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND id IN (${ph})`, ledgerId, ...ids).map((r) => Number(r.id));
+  try { for (const id of owned) require('../lib/advances').guardTransaction(ledgerId, id); }
+  catch (e) { return bad(res, 400, e.message); }
   for (const id of owned) txn.applyTags(id, ledgerId, tag, false);
   auth.audit(req, 'api.txn.bulkTag', { ledgerId, detail: `开放API·${req.openAuth.tokenName} 批量加标签「${tag}」${owned.length} 笔` });
   ok(res, { tagged: owned.length });

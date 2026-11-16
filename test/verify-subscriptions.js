@@ -398,7 +398,8 @@ const csrfOf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[1]
   check('列表出现新订阅', r.text.includes('Adobe 全家桶'));
   check('年付按 1/12 摊平显示月均', r.text.includes('月均') && /74\.00/.test(r.text), '期望月均 ¥74.00');
   check('展示「每年 / 年付月份」信息', /2026-11-20/.test(r.text));
-  const idAdobe = (r.text.match(/\/subscriptions\/(\d+)\/charge/) || [])[1];
+  const adobeIdx = r.text.search(/<h2[^>]*>\s*Adobe 全家桶/);
+  const idAdobe = adobeIdx >= 0 ? (r.text.slice(adobeIdx).match(/\/subscriptions\/(\d+)\/charge/) || [])[1] : null;
   check('取到订阅 id', !!idAdobe, String(idAdobe));
 
   /* 新建：月付订阅 + 试用 */
@@ -419,12 +420,13 @@ const csrfOf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[1]
 
   /* 唯一锚点 = 下次扣费日：扣费日从该日期推导（日历轮询模型） */
   r = await req('GET', '/subscriptions');
+  const monthlyAnchor = shift(40).slice(0, 8) + '15';
   await req('POST', '/subscriptions', { form: {
     _csrf: csrfOf(r.text), name: '锚点月付', icon: '🧾', amount: '30.00',
-    cycle: 'monthly', next_charge_at: '2026-11-15', status: 'active', auto_renew: '1',
+    cycle: 'monthly', next_charge_at: monthlyAnchor, status: 'active', auto_renew: '1',
   } });
   r = await req('GET', '/subscriptions');
-  check('月付以下次扣费日为锚（11-15 存储且扣费日=15）', r.text.includes('锚点月付') && r.text.includes('2026-11-15'), '');
+  check('月付以下次扣费日为锚（15 日）', r.text.includes('锚点月付') && r.text.includes(monthlyAnchor), monthlyAnchor);
 
   r = await req('GET', '/subscriptions');
   await req('POST', '/subscriptions', { form: {
@@ -442,7 +444,7 @@ const csrfOf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[1]
   } });
   r = await req('GET', '/subscriptions');
   check('每 2 月订阅创建并显示周期标签', r.text.includes('每两月会员') && r.text.includes('每 2 月'));
-  const biIdx = r.text.indexOf('每两月会员');
+  const biIdx = r.text.search(/<h2[^>]*>\s*每两月会员/);
   const idBi = biIdx >= 0 ? (r.text.slice(biIdx).match(/\/subscriptions\/(\d+)\/charge/) || [])[1] : null;
   await req('POST', `/subscriptions/${idBi}`, { form: {
     _csrf: csrfOf(r.text), name: '每两月会员', icon: '🎬', amount: '60.00',

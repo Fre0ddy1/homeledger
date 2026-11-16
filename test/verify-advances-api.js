@@ -68,6 +68,19 @@ async function api(path,body,plain=token){
  check('跨账本详情返回404',(await api('/advances/'+advance.id,undefined,otherToken)).status===404);
  check('跨账本不能收回别人的代垫',(await api('/advances/'+advance.id+'/collect',{amount_cents:1,account_id:otherCash,operation_key:'foreign-collect'},otherToken)).status===400);
  check('无令牌不能读取代垫',(await api('/advances',undefined,'')).status===401);
+ const rounded=(await api('/advances',{amount_cents:1899,personal_cents:0,person:'API凑整',account_id:cash,txn_date:'2026-01-01',operation_key:'api-rounded'})).data;
+ const roundedBody={amount_cents:2000,account_id:cash,txn_date:'2026-02-01',operation_key:'api-rounded-collect'};
+ check('API超额未确认拒绝',(await api('/advances/'+rounded.id+'/collect',roundedBody)).status===400);
+ const roundedCollection=(await api('/advances/'+rounded.id+'/collect',{...roundedBody,excess_handling:'income'})).data;
+ check('API实收拆分本金及差额',roundedCollection.amount_cents===2000&&roundedCollection.principal_cents===1899&&roundedCollection.excess_cents===101&&roundedCollection.advance.actual_received_cents===2000);
+ check('API超额重试复用且变参拒绝',(await api('/advances/'+rounded.id+'/collect',{...roundedBody,excess_handling:'income'})).data.id===roundedCollection.id&&(await api('/advances/'+rounded.id+'/collect',{...roundedBody,excess_handling:'income',amount_cents:2001})).status===400);
+ response=await api('/transactions?from=2026-02-01&to=2026-02-28');
+ check('API回款元数据和收入汇总',response.data.transactions.some(t=>t.advance_collection?.id===roundedCollection.id&&t.advance_collection.total_cents===2000)&&response.data.sum.income===101);
+ response=await api('/transactions?source=advance_collection');
+ check('API来源筛选暴露真实分项',response.data.transactions.some(t=>t.id===roundedCollection.excess_transaction_id&&t.amount_cents===101&&t.advance_collection.role==='excess'&&t.component_view));
+ check('API批量分类和标签不能绕过分项保护',(await api('/transactions/bulk-category',{ids:[roundedCollection.excess_transaction_id],category_id:category})).status===400&&(await api('/transactions/bulk-tag',{ids:[roundedCollection.excess_transaction_id],tag:'不应保存'})).status===400);
+ check('API差额流水不能直接删除',(await api('/transactions/'+roundedCollection.excess_transaction_id+'/delete',{})).status===400);
+ check('API撤销恢复两分项',(await api('/advance-collections/'+roundedCollection.id+'/reverse',{})).data.advance.remaining_cents===1899&&(await api('/advance-collections/'+roundedCollection.id+'/restore',{})).data.advance.remaining_cents===0);
  db.run("UPDATE ledger_members SET role='viewer' WHERE ledger_id=? AND user_id=?",lid,uid);
  check('只读成员可读详情',(await api('/advances/'+advance.id)).status===200);
  for(const [name,path,data] of [['创建','/advances',{...body,operation_key:'viewer-create'}],['收款','/advances/'+advance.id+'/collect',{...collectionBody,operation_key:'viewer-collect'}],['更正','/advances/'+advance.id+'/amend',{...body,operation_key:'viewer-amend'}],['撤销付款','/advances/'+advance.id+'/reverse',{}],['恢复付款','/advances/'+advance.id+'/restore',{}],['撤销回款','/advance-collections/'+collection.id+'/reverse',{}]])check('只读成员禁止'+name,(await api(path,data)).status===403);
@@ -78,6 +91,8 @@ async function api(path,body,plain=token){
  const csrfOf=html=>html.match(/name="_csrf"\s+value="([^"]+)"/)?.[1];
  let page=await web('/login');page=await web('/login',{_csrf:csrfOf(page.text),username:'admin',password:'admin888'});check('代垫网页HTTP登录',page.status===302);
  page=await web('/transactions/new');let csrf=csrfOf(page.text);await web('/ledgers/switch',{_csrf:csrf,ledger_id:String(lid)});page=await web('/transactions/new');csrf=csrfOf(page.text);
+ page=await web('/export/csv?from=2026-02-01&to=2026-02-01');
+ check('CSV导出本金与差额真实资金分项',page.status===200&&page.text.includes('18.99')&&page.text.includes('1.01')&&page.text.includes('代垫凑整差额'));
  page=await web('/accounts/'+advance.receivable_account_id);
  const componentAmount=page.text.match(new RegExp('data-txn-id="'+component.id+'"[\\s\\S]*?<div class="txn-amt[^>]*>([\\s\\S]*?)</div>'))?.[1]||'';
  check('应收账户网页明细显示分项60而非整笔100',page.status===200&&componentAmount.includes('60.00')&&!componentAmount.includes('100.00'));

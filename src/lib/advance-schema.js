@@ -30,6 +30,11 @@ function ensure(db) {
       created_at TEXT NOT NULL, deleted_at TEXT, UNIQUE(ledger_id,operation_key)
     );
   `);
+  const columns = db.prepare('PRAGMA table_info(advance_collections)').all().map(c => c.name);
+  if (!columns.includes('principal_cents')) db.exec('ALTER TABLE advance_collections ADD COLUMN principal_cents INTEGER');
+  if (!columns.includes('excess_cents')) db.exec('ALTER TABLE advance_collections ADD COLUMN excess_cents INTEGER NOT NULL DEFAULT 0');
+  if (!columns.includes('excess_transaction_id')) db.exec('ALTER TABLE advance_collections ADD COLUMN excess_transaction_id INTEGER');
+  db.exec('UPDATE advance_collections SET principal_cents=amount_cents WHERE principal_cents IS NULL');
 }
 
 module.exports = {ensure};
