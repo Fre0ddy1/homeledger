@@ -260,4 +260,4 @@ Windows Node24 与 Node22 UTC、Linux22/24均各32套1695断言、静态15项通
 
 维护者选择顶部“代垫与回收”在账单明细内直接筛选，保留原工具栏、主辅列及宽度，不再跳转另一种宽度的管理页。当前实现`advance_related=1`可叠加日期/搜索/账户并分页，再次点击取消；独立`/advances`仍保留管理职责。原付款行直接显示代垫已收齐、部分收回待收或待收金额，按有效回款本金聚合，凑整收益不抵本金，撤销/恢复实时更新。
 
-API列表、recent、详情的`advance`新增`received_cents/remaining_cents`，列表支持同名筛选参数；两份技能同步。当前模型实施及独立审查完成，Windows22/24各32套1712项、静态15项及聚焦8组通过；全站矩阵与远端交付的最新状态见[本轮归档](superpowers/validation/2026-11-17_13-16_代垫账单状态与筛选稳定布局.md)。旧专用Terra要求已被维护者取消，见§3。
+API列表、recent、详情的`advance`新增`received_cents/remaining_cents`，列表支持同名筛选参数；两份技能同步。当前模型实施及独立审查完成，Windows/Linux22/24各32套1712项、静态15项及全站360视图/68变体/25认证视图通过，8组代垫状态和筛选宽度全部通过。[PR #13](https://github.com/Fre0ddy1/homeledger/pull/13)已合并main，完整证据见[本轮归档](superpowers/validation/2026-11-17_13-16_代垫账单状态与筛选稳定布局.md)。5112最终预览PID22004、8099/5113已清理，真实data和原未跟踪文件未动。旧专用Terra要求已被维护者取消，见§3。
