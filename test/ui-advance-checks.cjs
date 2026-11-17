@@ -62,6 +62,19 @@ module.exports=async function(browser,session,base){
    const summaryLayout=summaryColumns===(width<540?2:3);
    await page.screenshot({path:'.screenshots/audit-after/advance-'+theme+'-'+width+'-'+(native?'native':'js')+'.png',fullPage:true,animations:'disabled'});
    const payment=page.locator('form[action="'+advancePath+'/collect"]');
+   const amend=page.locator('form[action="'+advancePath+'/amend"]');
+   await amend.locator('..').locator('summary').click();
+   const amendStyles=await amend.evaluate((form)=>{
+    const reference=document.querySelector('form[data-advance-collection] [name=amount]');
+    const properties=['fontFamily','fontSize','paddingTop','paddingRight','paddingBottom','paddingLeft','borderTopWidth','borderRadius','backgroundColor','color','boxSizing'];
+    const referenceStyle=getComputedStyle(reference);
+    return [...form.querySelectorAll('input:not([type=hidden])')].every(input=>{
+     const style=getComputedStyle(input),field=input.parentElement,fieldStyle=getComputedStyle(field);
+     const available=field.clientWidth-parseFloat(fieldStyle.paddingLeft)-parseFloat(fieldStyle.paddingRight);
+     return properties.every(property=>style[property]===referenceStyle[property])&&Math.abs(input.getBoundingClientRect().width-available)<=1;
+    });
+   });
+   await page.screenshot({path:'.screenshots/audit-after/advance-amend-'+theme+'-'+width+'-'+(native?'native':'js')+'.png',fullPage:true,animations:'disabled'});
    await payment.locator('[name=amount]').fill('20');await choose(payment.locator('[name=account_id]'),account);
    if(native)await payment.locator('[name=date]').fill('2026-02-02');else await payment.locator('[name=date]').evaluate(el=>{el.value='2026-02-02';el.dispatchEvent(new Event('change',{bubbles:true}));});
    await payment.locator('[name=time]').fill('09:10:11');
@@ -116,6 +129,13 @@ module.exports=async function(browser,session,base){
    const reversed=await page.locator('.card-head .chip').first().innerText()==='已撤销';
    await submit(advancePath+'/restore',true);
    const restored=await page.locator('.card-head .chip').first().innerText()==='待回收';
+   await amend.locator('..').locator('summary').click();
+   await amend.locator('[name=person]').fill('更正后的同事');
+   await amend.locator('[name=amount]').fill('100');
+   await amend.locator('[name=personal]').fill('80');
+   await Promise.all([page.waitForURL(url=>/^\/advances\/\d+$/.test(url.pathname)&&url.pathname!==advancePath),amend.locator('button').click()]);
+   const amendedPath=new URL(page.url()).pathname;
+   const amended=amendedPath!==advancePath&&(await page.locator('h2').first().innerText()).includes('更正后的同事')&&(await page.locator('.advance-summary').innerText()).includes('80.00')&&(await page.locator('.advance-summary').innerText()).includes('20.00');
    let sourceConversion=true,sourceRetry=true;
    if(native){
     const sourceResponse=await page.request.post(base+'/transactions',{form:{_csrf:csrf,type:'expense',amount:'50',account_id:account,currency:'CNY',txn_date:'2026-01-16',txn_time:'13:14:15',txn_time_mode:'explicit',merchant:merchant+'原支出',_json:'1'}});
@@ -133,7 +153,7 @@ module.exports=async function(browser,session,base){
    }
    const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1);
    const internalScroll=await page.locator('.finance-detail').evaluate(el=>[...el.querySelectorAll('*')].filter(n=>n.getClientRects().length&&!n.matches('select,input,textarea')&&!n.closest('.hl-select-menu,.hl-date-menu')&&['auto','scroll'].includes(getComputedStyle(n).overflowY)&&n.scrollHeight>n.clientHeight+2).length>0);
-   checks.push({native,theme,width,oneBill,correctParts,calendarParts,minimalParts,managedAccount,returnButton,summaryLayout,preview,rejected,retryState,split,multi,equal,collected,receiptList,receiptDetail,calendarReceipt,minimalReceipt,accountParts,collectionReversed,collectionRestored,reversed,restored,sourceConversion,sourceRetry,overflow,internalScroll,errors,pass:oneBill&&correctParts&&calendarParts&&minimalParts&&managedAccount&&returnButton&&summaryLayout&&preview&&rejected&&split&&multi&&equal&&collected&&receiptList&&receiptDetail&&calendarReceipt&&minimalReceipt&&accountParts&&collectionReversed&&collectionRestored&&reversed&&restored&&sourceConversion&&sourceRetry&&!overflow&&!internalScroll&&!errors.length});
+   checks.push({native,theme,width,oneBill,correctParts,calendarParts,minimalParts,managedAccount,returnButton,summaryLayout,amendStyles,amended,preview,rejected,retryState,split,multi,equal,collected,receiptList,receiptDetail,calendarReceipt,minimalReceipt,accountParts,collectionReversed,collectionRestored,reversed,restored,sourceConversion,sourceRetry,overflow,internalScroll,errors,pass:oneBill&&correctParts&&calendarParts&&minimalParts&&managedAccount&&returnButton&&summaryLayout&&amendStyles&&amended&&preview&&rejected&&split&&multi&&equal&&collected&&receiptList&&receiptDetail&&calendarReceipt&&minimalReceipt&&accountParts&&collectionReversed&&collectionRestored&&reversed&&restored&&sourceConversion&&sourceRetry&&!overflow&&!internalScroll&&!errors.length});
   }finally{
    if(ledgerId&&csrf)await context.request.post(base+'/ledgers/'+ledgerId+'/delete',{form:{_csrf:csrf,confirm:name}});
    if(originalLedger&&csrf)await context.request.post(base+'/ledgers/switch',{form:{_csrf:csrf,ledger_id:originalLedger}});
