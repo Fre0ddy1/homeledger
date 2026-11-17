@@ -19,6 +19,8 @@ const consumption = (from='2000-01-01', to='2099-12-31') => txn.summary(lid, fro
 const body = {amount_cents: 10000, personal_cents: 4000, person: '同事甲', account_id: cash,
   txn_date: '2026-01-20', txn_time: '18:35', operation_key: 'purchase-1'};
 const mixed = advances.create(lid, uid, body);
+const progress = () => txn.getTransaction(mixed.primary_transaction_id, lid).advance;
+check('原付款查询直接返回未收本金进度', progress().received_cents === 0 && progress().remaining_cents === 6000);
 check('付款拆成个人消费与代垫两分项', mixed.transactions.length === 2 && mixed.amount_cents === 10000 && mixed.advance_cents === 6000);
 check('从付款当天只计个人消费', consumption().expense === 4000 && consumption().income === 0);
 check('现金整笔扣款且新增应收，净资产仅减少个人消费', balance(cash) === -10000 && balance(mixed.receivable_account_id) === 6000);
@@ -54,6 +56,7 @@ check('回款拒绝信用卡账户及超额', rejects(() => advances.collect(lid
 check('回款日期不能早于付款', rejects(() => advances.collect(lid, uid, mixed.id, {amount_cents: 1, account_id: bank, txn_date: '2026-01-19', operation_key: 'collect-early'})));
 const recovery = {amount_cents: 2000, account_id: bank, txn_date: '2026-02-01', txn_time: '09:10', operation_key: 'recover-1'};
 const part = advances.collect(lid, uid, mixed.id, recovery);
+check('部分回款实时反映在原付款行', progress().received_cents === 2000 && progress().remaining_cents === 4000);
 check('部分回款减少应收并增加到账账户', balance(bank) === 2000 && balance(mixed.receivable_account_id) === 4000 && part.advance.remaining_cents === 4000);
 check('跨月回款不形成消费收入', consumption('2026-02-01', '2026-02-28').income === 0 && consumption().expense === 4000);
 check('跨月回款进入资金流入', cashflow.summary(lid, '2026-02-01', '2026-02-28').inflow === 2000);
@@ -62,10 +65,13 @@ check('回款同标识变参拒绝', rejects(() => advances.collect(lid, uid, mi
 check('回款流水不能直接删改', rejects(() => txn.softDelete(part.transaction_id, lid)) && rejects(() => txn.restore(part.transaction_id, lid)));
 check('有有效回款不能撤销整笔付款', rejects(() => advances.reverse(lid, mixed.id)));
 advances.reverseCollection(lid, part.id);
+check('撤销回款恢复原付款待收进度', progress().received_cents === 0 && progress().remaining_cents === 6000);
 check('撤销回款恢复应收且不改消费', balance(bank) === 0 && balance(mixed.receivable_account_id) === 6000 && consumption().expense === 4000);
 advances.restoreCollection(lid, part.id);
+check('恢复回款重新显示已收本金', progress().received_cents === 2000 && progress().remaining_cents === 4000);
 check('恢复回款重新核销且只到账一次', balance(bank) === 2000 && advances.detail(lid, mixed.id).remaining_cents === 4000);
 const rest = advances.collect(lid, uid, mixed.id, {...recovery, amount_cents: 4000, operation_key: 'recover-rest'});
+check('多次收齐后原付款查询待收为零', progress().received_cents === 6000 && progress().remaining_cents === 0);
 check('多次回款可收齐本金且不形成收入', rest.advance.remaining_cents === 0 && rest.advance.received_cents === 6000 && consumption().income === 0);
 advances.reverseCollection(lid, part.id);
 advances.collect(lid, uid, mixed.id, {...recovery, operation_key: 'recover-replacement'});

@@ -294,6 +294,7 @@ router.get('/transactions', (req, res) => {
     memberId: q.member_id ? Number(q.member_id) : null,
     tagId: q.tag_id ? Number(q.tag_id) : null,
     source: q.source || '',
+    advanceRelated: q.advance_related === '1',
     month: /^\d{4}-\d{2}$/.test(String(q.month || '')) ? q.month : '',
     from: DATE_RE.test(String(q.from || '')) ? q.from : '',
     to: DATE_RE.test(String(q.to || '')) ? q.to : '',

@@ -76,6 +76,7 @@ router.get('/', auth.requireLogin, (req, res) => {
     owner: req.query.owner ? String(req.query.owner).replace(/[\s\u3000]+/g, '').slice(0, 20) : '',
     tagId: req.query.tag_id ? Number(req.query.tag_id) : null,
     source: req.query.source || '',
+    advanceRelated: req.query.advance_related === '1' ? '1' : '',
     month: req.query.month || '',
     from: req.query.from || '',
     to: req.query.to || '',

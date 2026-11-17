@@ -8,12 +8,15 @@ const lid=db.createDefaultLedger(uid,'代垫API验收'),other=db.createDefaultLe
 const cash=db.get("SELECT id FROM accounts WHERE ledger_id=? AND type='cash'",lid).id;
 const otherCash=db.get("SELECT id FROM accounts WHERE ledger_id=? AND type='cash'",other).id;
 const category=db.get("SELECT id FROM categories WHERE kind='expense' AND parent_id IS NOT NULL AND deleted_at IS NULL LIMIT 1").id;
-const token='hl_advances_api_verify',otherToken=token+'_other';
-for(const [plain,ledger] of [[token,lid],[otherToken,other]])db.run("INSERT INTO api_tokens(user_id,ledger_id,name,token_hash,token_tail,created_at)VALUES(?,?,'代垫验证',?,'test',?)",uid,ledger,crypto.createHash('sha256').update(plain).digest('hex'),db.nowStr());
+const token='hl_advances_api_verify',otherToken=token+'_other',queryToken=token+'_queries';
+// 查询扩展使用独立同账本令牌，避免测试本身超过每令牌60次/分钟。
+for(const [plain,ledger] of [[token,lid],[otherToken,other],[queryToken,lid]])db.run("INSERT INTO api_tokens(user_id,ledger_id,name,token_hash,token_tail,created_at)VALUES(?,?,'代垫验证',?,'test',?)",uid,ledger,crypto.createHash('sha256').update(plain).digest('hex'),db.nowStr());
 async function api(path,body,plain=token){
  const response=await fetch('http://127.0.0.1:8099/api/open'+path,{method:body===undefined?'GET':'POST',headers:{...(plain?{authorization:'Bearer '+plain}:{}),'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+ if(response.status===429)throw Error('测试令牌触发每分钟限频：'+path);
  return {status:response.status,data:await response.json()};
 }
+const queryApi=path=>api(path,undefined,queryToken);
 (async()=>{
  const body={amount_cents:10000,personal_cents:4000,person:'同事代买API',account_id:cash,category_id:category,txn_date:'2026-01-15',txn_time:'18:35',operation_key:'api-advance-create',merchant:'代垫API混合付款'};
  let response=await api('/advances',body),advance=response.data;
@@ -25,6 +28,7 @@ async function api(path,body,plain=token){
  response=await api('/transactions');
  check('普通账单只显示一笔付款',response.status===200&&response.data.total===1&&response.data.transactions[0].advance?.total_cents===10000);
  check('列表消费合计只计个人部分',response.data.sum.expense===4000&&response.data.sum.income===0);
+ check('API账单直接提供未回款进度',response.data.transactions[0].advance.received_cents===0&&response.data.transactions[0].advance.remaining_cents===6000);
  response=await api('/transactions?account_id='+advance.receivable_account_id);
  check('应收账户明细显示实际60元分项',response.data.total===1&&response.data.transactions[0].type==='transfer'&&response.data.transactions[0].amount_cents===6000&&response.data.transactions[0].component_view===true);
  response=await api('/transactions/recent');
@@ -43,6 +47,10 @@ async function api(path,body,plain=token){
  response=await api('/advances/'+advance.id+'/collect',collectionBody);const collection=response.data;
  check('回款API冲减应收并显示已收齐',response.status===200&&collection.amount_cents===6000&&collection.advance.remaining_cents===0&&collection.txn_time==='09:10:11');
  check('回款重试幂等',(await api('/advances/'+advance.id+'/collect',collectionBody)).data.id===collection.id&&db.get('SELECT balance_cents FROM accounts WHERE id=?',cash).balance_cents===-4000);
+ for(const path of ['/transactions','/transactions/recent','/transactions/'+advance.primary_transaction_id]){
+  const data=(await queryApi(path)).data,original=data.transaction||data.transactions.find(t=>t.id===advance.primary_transaction_id);
+  check('API付款已收齐进度一致 '+path,original.advance.received_cents===6000&&original.advance.remaining_cents===0);
+ }
  check('回款同key改参拒绝',(await api('/advances/'+advance.id+'/collect',{...collectionBody,amount_cents:1000})).status===400);
  response=await api('/summary?from=2026-02-01&to=2026-02-28');
  check('跨月回款资金流入60且不计收入',response.data.cashflow.inflow===6000&&response.data.cashflow.outflow===0&&response.data.consumption.income===0&&response.data.consumption.expense===0);
@@ -81,6 +89,17 @@ async function api(path,body,plain=token){
  check('API批量分类和标签不能绕过分项保护',(await api('/transactions/bulk-category',{ids:[roundedCollection.excess_transaction_id],category_id:category})).status===400&&(await api('/transactions/bulk-tag',{ids:[roundedCollection.excess_transaction_id],tag:'不应保存'})).status===400);
  check('API差额流水不能直接删除',(await api('/transactions/'+roundedCollection.excess_transaction_id+'/delete',{})).status===400);
  check('API撤销恢复两分项',(await api('/advance-collections/'+roundedCollection.id+'/reverse',{})).data.advance.remaining_cents===1899&&(await api('/advance-collections/'+roundedCollection.id+'/restore',{})).data.advance.remaining_cents===0);
+ const ordinary=(await api('/transactions',{type:'expense',amount_cents:123,account_id:cash,txn_date:'2026-04-01',merchant:'筛选应排除普通支出'},queryToken)).data.id;
+ const filtered=(await queryApi('/transactions?advance_related=1')).data;
+ check('API代垫筛选保留付款与回款并排除普通支出',filtered.transactions.some(t=>t.advance?.id===rounded.id)&&filtered.transactions.some(t=>t.advance_collection?.id===roundedCollection.id)&&!filtered.transactions.some(t=>t.id===ordinary)&&filtered.transactions.every(t=>t.advance||t.advance_collection));
+ const feb=(await queryApi('/transactions?advance_related=1&from=2026-02-01&to=2026-02-01')).data;
+ check('代垫筛选保持实收合并与差额汇总',feb.total===1&&feb.transactions[0].advance_collection.total_cents===2000&&feb.sum.income===101);
+ const paged=(await queryApi('/transactions?advance_related=1&page_size=1&page=2')).data;
+ check('代垫筛选支持分页且总数与汇总不漂移',paged.total===filtered.total&&paged.transactions.length===1&&paged.sum.income===filtered.sum.income&&paged.sum.expense===filtered.sum.expense);
+ const income=(await queryApi('/transactions?advance_related=1&kind=income')).data;
+ check('代垫筛选叠加收入仍显示凑整真实分项',income.transactions.some(t=>t.id===roundedCollection.excess_transaction_id&&t.component_view&&t.amount_cents===101));
+ check('代垫筛选关闭保留普通流水',(await queryApi('/transactions?advance_related=0')).data.transactions.some(t=>t.id===ordinary));
+ check('代垫筛选账本隔离',(await api('/transactions?advance_related=1',undefined,otherToken)).data.total===0);
  db.run("UPDATE ledger_members SET role='viewer' WHERE ledger_id=? AND user_id=?",lid,uid);
  check('只读成员可读详情',(await api('/advances/'+advance.id)).status===200);
  for(const [name,path,data] of [['创建','/advances',{...body,operation_key:'viewer-create'}],['收款','/advances/'+advance.id+'/collect',{...collectionBody,operation_key:'viewer-collect'}],['更正','/advances/'+advance.id+'/amend',{...body,operation_key:'viewer-amend'}],['撤销付款','/advances/'+advance.id+'/reverse',{}],['恢复付款','/advances/'+advance.id+'/restore',{}],['撤销回款','/advance-collections/'+collection.id+'/reverse',{}]])check('只读成员禁止'+name,(await api(path,data)).status===403);
@@ -91,6 +110,8 @@ async function api(path,body,plain=token){
  const csrfOf=html=>html.match(/name="_csrf"\s+value="([^"]+)"/)?.[1];
  let page=await web('/login');page=await web('/login',{_csrf:csrfOf(page.text),username:'admin',password:'admin888'});check('代垫网页HTTP登录',page.status===302);
  page=await web('/transactions/new');let csrf=csrfOf(page.text);await web('/ledgers/switch',{_csrf:csrf,ledger_id:String(lid)});page=await web('/transactions/new');csrf=csrfOf(page.text);
+ page=await web('/transactions?advance_related=1');
+ check('网页原布局代垫筛选有选中态和原生表单保留参数',page.status===200&&page.text.includes('transactions-workspace')&&page.text.includes('aria-current="true"')&&page.text.includes('name="advance_related" value="1"')&&!page.text.includes('data-txn-id="'+ordinary+'"'));
  page=await web('/export/csv?from=2026-02-01&to=2026-02-01');
  check('CSV导出本金与差额真实资金分项',page.status===200&&page.text.includes('18.99')&&page.text.includes('1.01')&&page.text.includes('代垫凑整差额'));
  page=await web('/accounts/'+advance.receivable_account_id);
