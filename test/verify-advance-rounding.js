@@ -12,6 +12,7 @@ const body={amount_cents:2000,account_id:bank,txn_date:'2026-02-01',txn_time:'12
 check('超额必须明确确认',rejects(()=>advances.collect(lid,uid,a.id,body)));
 check('无效收入分类拒绝且不影响资金',rejects(()=>advances.collect(lid,uid,a.id,{...body,excess_handling:'income',excess_category_id:expense}))&&db.get('SELECT balance_cents FROM accounts WHERE id=?',bank).balance_cents===0);
 const c=advances.collect(lid,uid,a.id,{...body,excess_handling:'income'});
+check('原付款进度只计回本不计凑整收入',txn.getTransaction(a.primary_transaction_id,lid).advance.received_cents===1899&&txn.getTransaction(a.primary_transaction_id,lid).advance.remaining_cents===0);
 check('实收拆分本金差额',c.amount_cents===2000&&c.principal_cents===1899&&c.excess_cents===101&&c.advance.received_cents===1899&&c.advance.actual_received_cents===2000&&c.advance.excess_received_cents===101&&c.advance.remaining_cents===0);
 check('账户和跨月资金流正确',db.get('SELECT balance_cents FROM accounts WHERE id=?',bank).balance_cents===2000&&cashflow.summary(lid,'2026-02-01','2026-02-28').inflow===2000&&cashflow.summary(lid,'2026-02-01','2026-02-28').inflow_count===1);
 check('消费不变且收入仅差额',txn.summary(lid,'2026-01-01','2026-02-28').expense===600&&txn.summary(lid,'2026-02-01','2026-02-28').income===101);

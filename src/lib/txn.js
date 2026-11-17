@@ -21,6 +21,8 @@ SELECT t.*,
   adv.id AS advance_id, ax.role AS advance_role, adv.deleted_at AS advance_deleted_at,
   adv.amount_cents AS payment_total_cents, adv.personal_cents AS personal_cents,
   adv.advance_cents AS advance_cents, adv.person AS advance_person,
+  CASE WHEN adv.id IS NULL THEN 0 ELSE COALESCE((SELECT SUM(progress.principal_cents) FROM advance_collections progress
+    WHERE progress.ledger_id=t.ledger_id AND progress.advance_id=adv.id AND progress.deleted_at IS NULL),0) END AS advance_received_cents,
   adv.primary_transaction_id AS advance_primary_transaction_id,
   ac.id AS collection_id, ac.advance_id AS collection_advance_id, ac.amount_cents AS collection_total_cents,
   ac.principal_cents AS collection_principal_cents, ac.excess_cents AS collection_excess_cents,
@@ -43,7 +45,7 @@ function decorate(t) {
   t.account_type_label = t.account_id ? (ACCOUNT_TYPE_MAP[t.account_type]?.label || '其他') : null;
   t.to_account_type_label = t.to_account_id ? (ACCOUNT_TYPE_MAP[t.to_account_type]?.label || '其他') : null;
   t.txn_time_label = time.formatTime(t.txn_time);
-  if(t.advance_id&&t.advance_role!=='original'&&!t.advance_deleted_at)t.advance={id:t.advance_id,role:t.advance_role,total_cents:t.payment_total_cents,personal_cents:t.personal_cents,advance_cents:t.advance_cents,person:t.advance_person,primary_transaction_id:t.advance_primary_transaction_id};
+  if(t.advance_id&&t.advance_role!=='original'&&!t.advance_deleted_at)t.advance={id:t.advance_id,role:t.advance_role,total_cents:t.payment_total_cents,personal_cents:t.personal_cents,advance_cents:t.advance_cents,person:t.advance_person,primary_transaction_id:t.advance_primary_transaction_id,received_cents:t.advance_received_cents,remaining_cents:t.advance_cents-t.advance_received_cents};
   if(t.collection_advance_id)t.advance_collection={id:t.collection_id,advance_id:t.collection_advance_id,role:t.collection_role,total_cents:t.collection_total_cents,principal_cents:t.collection_principal_cents,excess_cents:t.collection_excess_cents,person:t.collection_person};
   t.type_label = TXN_TYPE_MAP[t.type]?.label || t.type;
   t.type_icon = TXN_TYPE_MAP[t.type]?.icon || '•';
@@ -104,6 +106,11 @@ function buildWhere(ledgerId, f = {}) {
   if (f.memberId) { where.push('t.user_id = ?'); params.push(f.memberId); }
   if (f.owner) { where.push('t.owner_label = ?'); params.push(String(f.owner).replace(/[\s\u3000]+/g, '')); }
   if (f.source) { where.push('t.source = ?'); params.push(f.source); }
+  if (f.advanceRelated) where.push(`(EXISTS (SELECT 1 FROM advance_txns related
+    JOIN advances parent ON parent.id=related.advance_id AND parent.ledger_id=t.ledger_id
+    WHERE related.transaction_id=t.id AND related.role<>'original' AND parent.deleted_at IS NULL)
+    OR EXISTS (SELECT 1 FROM advance_collections collection JOIN advances parent ON parent.id=collection.advance_id AND parent.ledger_id=t.ledger_id
+    WHERE collection.ledger_id=t.ledger_id AND (collection.transaction_id=t.id OR collection.excess_transaction_id=t.id) AND collection.deleted_at IS NULL AND parent.deleted_at IS NULL))`);
   if (f.tagId) {
     where.push('EXISTS (SELECT 1 FROM transaction_tags tt WHERE tt.transaction_id = t.id AND tt.tag_id = ?)');
     params.push(f.tagId);

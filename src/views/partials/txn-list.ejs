@@ -57,6 +57,7 @@
               <% } %>
               <% if(t.advance_collection&&t.advance_collection.excess_cents){ %><span>回本 <%= helpers.fmtAmount(t.advance_collection.principal_cents) %> · 凑整收入 <%= helpers.fmtAmount(t.advance_collection.excess_cents) %></span><% } %>
               <% if(t.advance){ %><a class="btn btn-sm" href="/advances/<%= t.advance.id %>">自用 <%= helpers.fmtAmount(t.advance.personal_cents) %> · 代垫 <%= helpers.fmtAmount(t.advance.advance_cents) %></a><% } %>
+              <% if(t.advance){ %><span class="chip <%= t.advance.remaining_cents===0?'income':'warn' %>"><%= t.advance.remaining_cents===0?'代垫已收齐':(t.advance.received_cents?'部分收回 · ':'')+'待收 '+helpers.fmtAmount(t.advance.remaining_cents) %></span><% } %>
               <% if (t.status === 'pending') { %><span class="chip">待确认</span><% } %>
               <% if (t.attachment_count) { %><span class="chip" title="已关联账单截图">📎 <%= t.attachment_count %></span><% } %>
               <% if (t.source === 'ai_screenshot' || t.source === 'ai_text') { %><span class="chip primary">AI</span><% } %>

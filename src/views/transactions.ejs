@@ -4,7 +4,7 @@
     var parts = [];
     Object.keys(o).forEach(function(k){
       if (o[k] === '' || o[k] === null || o[k] === undefined) return;
-      var key = k === 'keyword' ? 'q' : k === 'pageSize' ? 'page_size' : k === 'categoryId' ? 'category_id' : k === 'accountId' ? 'account_id' : k === 'memberId' ? 'member_id' : k === 'tagId' ? 'tag_id' : k;
+      var key = k === 'keyword' ? 'q' : k === 'pageSize' ? 'page_size' : k === 'categoryId' ? 'category_id' : k === 'accountId' ? 'account_id' : k === 'memberId' ? 'member_id' : k === 'tagId' ? 'tag_id' : k === 'advanceRelated' ? 'advance_related' : k;
       parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(o[k]));
     });
     return parts.length ? '?' + parts.join('&') : '';
@@ -28,7 +28,7 @@
     <a class="chip <%= f.kind === 'income' ? 'primary' : '' %>" href="/transactions<%= qs({ kind:'income', type:'', page:1 }) %>">只看收入</a>
     <a class="chip <%= f.type === 'transfer' ? 'primary' : '' %>" href="/transactions<%= qs({ type:'transfer', kind:'', page:1 }) %>">只看转账</a>
     <a class="chip <%= f.reimbursable === 'yes' ? 'primary' : '' %>" href="/transactions<%= qs({ reimbursable:'yes', page:1 }) %>">待报销</a>
-    <a class="btn btn-sm" href="/advances">代垫与回收</a>
+    <a class="chip <%= f.advanceRelated ? 'primary' : '' %>" href="/transactions<%= qs({ advanceRelated:f.advanceRelated?'':'1', page:1 }) %>" <%- f.advanceRelated?'aria-current="true"':'' %>>代垫与回收</a>
     <a class="chip <%= f.source === 'ai_screenshot' ? 'primary' : '' %>" href="/transactions<%= qs({ source:'ai_screenshot', page:1 }) %>">AI 记账</a>
     <a class="chip <%= f.source === 'import' ? 'primary' : '' %>" href="/transactions<%= qs({ source:'import', page:1 }) %>">导入</a>
     <a class="chip <%= f.source === 'subscription' ? 'primary' : '' %>" href="/transactions<%= qs({ source:'subscription', page:1 }) %>">订阅</a>
@@ -37,7 +37,7 @@
   <details class="transaction-filters" <%= f.keyword || f.type || f.categoryId || f.accountId || f.memberId || f.owner || f.sort !== 'date_desc' ? 'open' : '' %>>
     <summary>搜索与高级筛选 <span class="muted tiny">分类、账户、成员与排序</span></summary>
   <form method="get" action="/transactions" class="inline-form">
-    <% [['month',f.month],['from',f.from],['to',f.to],['kind',f.kind],['source',f.source],['reimbursable',f.reimbursable],['page_size',f.pageSize],['tag_id',f.tagId]].forEach(function(pair){if(pair[1]){ %><input type="hidden" name="<%= pair[0] %>" value="<%= pair[1] %>"><% }}); %>
+    <% [['month',f.month],['from',f.from],['to',f.to],['kind',f.kind],['source',f.source],['reimbursable',f.reimbursable],['page_size',f.pageSize],['tag_id',f.tagId],['advance_related',f.advanceRelated]].forEach(function(pair){if(pair[1]){ %><input type="hidden" name="<%= pair[0] %>" value="<%= pair[1] %>"><% }}); %>
     <div class="field" style="flex:1;min-width:150px">
       <input type="search" name="q" value="<%= f.keyword %>" placeholder="搜索备注 / 商家 / 分类 / 金额">
     </div>
@@ -85,7 +85,7 @@
       <option value="amount_asc" <%= f.sort === 'amount_asc' ? 'selected' : '' %>>金额从小到大</option>
     </select></div>
     <div class="field"><button class="btn btn-primary" type="submit">筛选</button></div>
-    <% if (f.keyword || f.type || f.kind || f.categoryId || f.accountId || f.memberId || f.owner || f.month || f.from || f.to || f.source || f.reimbursable) { %>
+    <% if (f.keyword || f.type || f.kind || f.categoryId || f.accountId || f.memberId || f.owner || f.month || f.from || f.to || f.source || f.reimbursable || f.advanceRelated) { %>
       <div class="field"><a class="btn btn-ghost" href="/transactions">清空</a></div>
     <% } %>
   </form>

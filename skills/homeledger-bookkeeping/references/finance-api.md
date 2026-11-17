@@ -124,6 +124,8 @@ GET /cashflow 和 GET /reports/trend 支持可选 month=YYYY-MM，作为趋势�
 
 ## 部分代垫与回收
 
+`GET /transactions?advance_related=1`只查询有效代垫付款与回款，支持与日期、关键词、账户、收支类型及分页叠加；省略或传0保持普通明细。仍沿用付款组/实收单合并规则，凑整差额计入income汇总；叠加收入或账户筛选时保留真实分项口径。网页顶部同名筛选在原账单明细内切换，不跳转管理页。
+
 所有金额为整数分，目前仅账本本位币、同币种；每组一个对方，可多次回收。先读取账户和消费分类。不要先创建普通 expense 再创建新代垫，否则会重复扣款；已有支出必须使用来源转换。
 
 - `GET /advances`：有效代垫列表，`include_deleted=1` 包含撤销；返回 `advances` 数组。
@@ -137,7 +139,7 @@ GET /cashflow 和 GET /reports/trend 支持可选 month=YYYY-MM，作为趋势�
 
 create/collect 必填稳定 operation_key，同请求重试复用原结果，同key变参拒绝；撤销后同key重试仍返回原撤销记录，不自动复活。读允许账本成员，写要求可写成员，全部写入审计。不要用普通交易接口编辑、删除、恢复代垫分项或回款，不直接改“代垫待收款”账户的余额/类型/币种/净资产归属。
 
-交易列表与recent按付款组只展示一张主单；`amount_cents` 保持该主资金分项的原语义，自用40对应4000，新增 `advance:{id,role,total_cents,personal_cents,advance_cents,person,primary_transaction_id}` 提供完整付款100。消费汇总4000，不能把 `advance.total_cents` 再相加。回款行有 `advance_collection:{id,advance_id,role,total_cents,principal_cents,excess_cents,person}`；普通列表按一次实收展示，收入筛选与账户明细保留实际资金分项。单笔详情同样返回关联；代垫详情 transactions 保留所有真实分项与来源。原始导出是资金分项，不是每行一张付款组。资金流笔数按实际付款组去重，分组明细仍可含多项。
+交易列表与recent按付款组只展示一张主单；`amount_cents` 保持该主资金分项的原语义，自用40对应4000，新增 `advance:{id,role,total_cents,personal_cents,advance_cents,person,primary_transaction_id,received_cents,remaining_cents}` 提供完整付款100及实时回收进度。`received_cents`仅累计有效回款本金，`remaining_cents=0`表示已收齐；撤销回款后重新增加待收，凑整收入不计回本。消费汇总4000，不能把 `advance.total_cents` 再相加。回款行有 `advance_collection:{id,advance_id,role,total_cents,principal_cents,excess_cents,person}`；普通列表按一次实收展示，收入筛选与账户明细保留实际资金分项。单笔详情同样返回关联及进度；代垫详情 transactions 保留所有真实分项与来源。原始导出是资金分项，不是每行一张付款组。资金流笔数按实际付款组去重，分组明细仍可含多项。
 
 例：11月付款100、自用40、代垫60：11月消费40、资金流出100、应收60；12月收回60：12月消费收入0、资金流入60、应收0。信用卡付款出账100；其后的信用卡还款仍用金融付款接口，不再次计消费。
 
