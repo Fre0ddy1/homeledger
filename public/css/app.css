@@ -1840,10 +1840,12 @@ body { background: radial-gradient(ellipse 650px 800px at 0 10%, color-mix(in sr
   .transaction-filters > .inline-form { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .dashboard-grid:not(.has-columns) { columns: 1; }
 }
+.txn-sub .advance-bill-native-edit { display: none; }
 @media (max-width: 640px) {
   .transactions-primary .txn, .transactions-primary .txn:not(:has(> .bulk-item)), .transactions-primary .txn:not(:has(> .txn-act)) { grid-template-columns: 18px 30px minmax(0,1fr) 84px; gap: 7px; }
   .transactions-primary .txn > .txn-ico { width: 30px; height: 30px; font-size: 16px; }
   .transactions-primary .txn > .txn-act { display: none; }
+  .transactions-primary .txn-sub .advance-bill-native-edit { display: inline-flex; }
   .transactions-primary .txn > .txn-amt { font-size: 13px; }
 }
 @media (prefers-reduced-transparency: reduce), (forced-colors: active) {

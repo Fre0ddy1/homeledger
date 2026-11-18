@@ -8,6 +8,7 @@ const fd = require('../lib/formdata');
 const u = require('../lib/util');
 const att = require('../lib/attachments');
 const dict = require('../lib/dict');
+const advances = require('../lib/advances');
 
 const router = express.Router();
 
@@ -250,16 +251,58 @@ router.get('/:id/edit', auth.requireLogin, auth.requireLedgerWrite, (req, res) =
   const ledgerId = Number(res.locals.ledger.id);
   const t = txn.getTransaction(Number(req.params.id), ledgerId);
   if (!t) return res.status(404).render('error', { title: '记录不存在', message: '该笔记录可能已被删除。' });
-  if(t.advance)return res.redirect('/advances/'+t.advance.id);
   if(t.advance_collection)return res.redirect('/advances/'+t.advance_collection.advance_id);
+  if (t.advance && t.id !== t.advance.primary_transaction_id) {
+    return res.redirect('/transactions/'+t.advance.primary_transaction_id+'/edit?back='+encodeURIComponent(safeBack(req.query.back)));
+  }
   t.advance_operation_key=require('node:crypto').randomUUID();
   const form = fd.txFormData(ledgerId, req.session.userId);
+  const back = t.advance ? require('../lib/navigation').forView('txn-form', {back:req.query.back}).href : safeBack(req.query.back);
+  let advanceEdit;
+  let images = att.listByTxn(t.id);
+  if (t.advance) {
+    const item = advances.detail(ledgerId, t.advance.id);
+    const personal = item.transactions.find(row => row.role === 'personal');
+    const original = item.transactions.find(row => row.role === 'original');
+    const readDraft = key => {
+      const draft = req.session[key];
+      if (draft?.ledgerId !== ledgerId || draft.id !== item.id) return null;
+      delete req.session[key];
+      return draft.values;
+    };
+    const editDraft = readDraft('advanceEditDraft');
+    const categoryId = editDraft?.category_id ?? personal?.category_id;
+    const locked = item.received_cents > 0;
+    const paymentLocked = locked || !!original;
+    const timeLocked = locked || !!original?.txn_time;
+    advanceEdit = {item, locked, paymentLocked, timeLocked, original,
+      today:todayStr(), draft:readDraft('advanceDraft'), operationKey:require('node:crypto').randomUUID(),
+      amendKey:editDraft?.operation_key || t.advance_operation_key,
+      personal:(locked ? null : editDraft?.personal) ?? (item.personal_cents/100).toFixed(2),
+      person:editDraft?.person ?? item.person};
+    Object.assign(t, {
+      amount:(paymentLocked ? null : editDraft?.amount) ?? (item.amount_cents/100).toFixed(2),
+      type:(locked ? null : editDraft?.type) ?? personal?.type ?? 'expense',
+      account_id:(paymentLocked ? null : editDraft?.account_id) ?? item.account_id,
+      txn_date:(paymentLocked ? null : editDraft?.txn_date) ?? item.txn_date,
+      txn_time:(timeLocked ? null : editDraft?.txn_time) ?? item.txn_time,
+      category_id:categoryId,
+      category_path:form.expenseCats.find(category=>category.id===Number(categoryId))?.path ??
+        (categoryId && Number(t.category_id)===Number(categoryId) ? t.category_path : null),
+      merchant:editDraft?.merchant ?? item.merchant,
+      note:editDraft?.note ?? item.note,
+      owner_label:editDraft?.owner_label ?? t.owner_label,
+      tag_names:editDraft?.tags ?? t.tag_names,
+      no_rhythm:editDraft?.no_rhythm === undefined ? t.no_rhythm : editDraft.no_rhythm === '1',
+    });
+    if (original) images = images.concat(att.listByTxn(original.id));
+  }
   res.render('txn-form', {
-    title: '编辑记录', activeNav: 'transactions', mode: 'edit', form, t,
+    title: '编辑记录', activeNav: 'transactions', mode: 'edit', form, t, advanceEdit,
     splitRows: txn.splitsOf(t.id),
     splits: txn.splitsOf(t.id),
-    images: att.listByTxn(t.id),
-    back: req.query.back || '/transactions',
+    images,
+    back,
     family: require('../lib/ai').familyMembers(ledgerId),
   });
 });
@@ -287,8 +330,19 @@ router.post('/:id', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
 
 router.post('/:id/delete', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
-  let ok;try { ok=txn.softDelete(Number(req.params.id),ledgerId); } catch(e){if(req.body._json==='1')return res.status(400).json({ok:false,error:e.message});res.flash('error',e.message);return res.redirect(safeBack(req.body.back));}
-  auth.audit(req, 'txn.delete', { entity: 'transaction', entityId: Number(req.params.id), ledgerId });
+  const id = Number(req.params.id);
+  let ok;
+  try {
+    const advance = txn.getTransaction(id, ledgerId)?.advance;
+    if (advance?.primary_transaction_id === id) {
+      advances.reverse(ledgerId, advance.id);
+      auth.audit(req, 'advance.reverse', {entity:'advance', entityId:advance.id, ledgerId});
+      ok = true;
+    } else {
+      ok = txn.softDelete(id, ledgerId);
+      auth.audit(req, 'txn.delete', {entity:'transaction', entityId:id, ledgerId});
+    }
+  } catch(e){if(req.body._json==='1')return res.status(400).json({ok:false,error:e.message});res.flash('error',e.message);return res.redirect(safeBack(req.body.back));}
   if (req.body._json === '1') return res.json({ ok });
   res.flash(ok ? 'success' : 'error', ok ? '已删除' : '记录不存在');
   res.redirect(safeBack(req.body.back));

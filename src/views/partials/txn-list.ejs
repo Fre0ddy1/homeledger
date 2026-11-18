@@ -21,8 +21,12 @@
           <% if (g.expense) { %><span class="amount expense">-<%= helpers.fmtAmount(g.expense) %></span><% } %>
         </span>
       </div>
-      <% g.items.forEach(function(t){ %>
-        <div class="txn <%= t.status === 'pending' ? 'pending' : '' %>" data-txn-id="<%= t.id %>" title="点击查看详情" tabindex="0" role="group" aria-label="交易记录，按回车查看详情">
+      <% g.items.forEach(function(t){
+        const unifiedAdvance = typeof billList !== 'undefined' && billList && t.advance?.primary_transaction_id === t.id;
+        const editHref = '/transactions/'+t.id+'/edit?back='+encodeURIComponent(typeof currentUrl!=='undefined'?currentUrl:'/transactions');
+        const writable = ledger && canWrite(ledger.role);
+      %>
+        <div class="txn <%= t.status === 'pending' ? 'pending' : '' %>" data-txn-id="<%= t.id %>" <%= unifiedAdvance?'data-advance-main':'' %> title="点击查看详情" tabindex="0" role="group" aria-label="交易记录，按回车查看详情">
           <% if (showCheckbox) { %>
             <input type="checkbox" class="bulk-item" name="ids" value="<%= t.id %>" form="bulk-form">
           <% } %>
@@ -56,7 +60,18 @@
                 <span class="chip <%= t.reimbursed_at ? 'income' : 'warn' %>"><%= t.reimbursed_at ? '已报销' : '待报销' %></span>
               <% } %>
               <% if(t.advance_collection&&t.advance_collection.excess_cents){ %><span>回本 <%= helpers.fmtAmount(t.advance_collection.principal_cents) %> · 凑整收入 <%= helpers.fmtAmount(t.advance_collection.excess_cents) %></span><% } %>
-              <% if(t.advance){ %><a class="btn btn-sm" href="/advances/<%= t.advance.id %>">自用 <%= helpers.fmtAmount(t.advance.personal_cents) %> · 代垫 <%= helpers.fmtAmount(t.advance.advance_cents) %></a><% } %>
+              <% if(t.advance){
+                const personalAmount = helpers.fmtAmount(t.advance.personal_cents);
+                const advanceAmount = helpers.fmtAmount(t.advance.advance_cents);
+              %>
+                <% if(unifiedAdvance){ %>
+                  <span class="chip advance-split">自用&nbsp;<%= personalAmount %> · 代垫&nbsp;<%= advanceAmount %></span>
+                  <noscript>
+                    <% if(writable){ %><a class="btn btn-sm btn-ghost advance-bill-native-edit" href="<%= editHref %>">编辑</a>
+                    <% }else{ %><a class="btn btn-sm btn-ghost" href="/advances/<%= t.advance.id %>">查看代垫详情</a><% } %>
+                  </noscript>
+                <% }else{ %><a class="btn btn-sm" href="/advances/<%= t.advance.id %>">自用 <%= personalAmount %> · 代垫 <%= advanceAmount %></a><% } %>
+              <% } %>
               <% if(t.advance){ %><span class="chip <%= t.advance.remaining_cents===0?'income':'warn' %>"><%= t.advance.remaining_cents===0?'代垫已收齐':(t.advance.received_cents?'部分收回 · ':'')+'待收 '+helpers.fmtAmount(t.advance.remaining_cents) %></span><% } %>
               <% if (t.status === 'pending') { %><span class="chip">待确认</span><% } %>
               <% if (t.attachment_count) { %><span class="chip" title="已关联账单截图">📎 <%= t.attachment_count %></span><% } %>
@@ -83,10 +98,10 @@
             <% } %>
             <% if (t.currency !== 'CNY') { %><div class="tiny muted"><%= t.currency %></div><% } %>
           </div>
-          <% if (ledger && canWrite(ledger.role)) { %><div class="txn-act">
-            <% if(t.advance||t.advance_collection){ %><a class="btn btn-sm" href="/advances/<%= t.advance?.id||t.advance_collection.advance_id %>">管理代垫</a><% }else{ %>
-            <a class="btn btn-sm btn-ghost" href="/transactions/<%= t.id %>/edit?back=<%= encodeURIComponent(typeof currentUrl!=='undefined'?currentUrl:'/transactions') %>" title="编辑" aria-label="编辑"><svg class="icon sm"><use href="#i-pencil"></use></svg></a>
-            <button class="btn btn-sm btn-ghost" type="button" data-del-txn="<%= t.id %>" title="删除" aria-label="删除"><svg class="icon sm"><use href="#i-trash-2"></use></svg></button>
+          <% if (writable) { %><div class="txn-act">
+            <% if(t.advance_collection||t.advance&&t.id!==t.advance.primary_transaction_id){ %><a class="btn btn-sm" href="/advances/<%= t.advance_collection?.advance_id||t.advance.id %>">管理代垫</a><% }else{ %>
+            <a class="btn btn-sm btn-ghost" href="<%= editHref %>" title="编辑" aria-label="编辑"><svg class="icon sm"><use href="#i-pencil"></use></svg></a>
+            <button class="btn btn-sm btn-ghost" type="button" data-del-txn="<%= t.id %>" <%= t.advance?'data-del-advance':'' %> title="删除" aria-label="删除"><svg class="icon sm"><use href="#i-trash-2"></use></svg></button>
             <% } %>
           </div><% } %>
         </div>

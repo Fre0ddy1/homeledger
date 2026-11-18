@@ -111,7 +111,7 @@ function sourceFor(lid, d, funding, amount) {
   return source;
 }
 
-function create(lid, uid, d) {
+function create(lid, uid, d, {previousCategoryId, replacing = false} = {}) {
   return db.tx(() => {
     const key = keyOf(d), signature = createSignature(d);
     const existing = db.get('SELECT * FROM advances WHERE ledger_id=? AND operation_key=?', lid, key);
@@ -133,9 +133,9 @@ function create(lid, uid, d) {
     const personalType = d.type || source?.type || 'expense';
     let actual = moment(d);
     if (source) actual = {date: source.txn_date, time: d.txn_time !== undefined || d.time !== undefined ? actual.time : source.txn_time || null};
-    const categoryId = d.category_id || source?.category_id || null;
+    const categoryId = replacing && d.category_id !== undefined ? d.category_id || null : d.category_id || source?.category_id || null;
     if (personal && categoryId) {
-      const category = require('./categories').find(lid, categoryId, true);
+      const category = require('./categories').forUpdate(lid, categoryId, previousCategoryId);
       if (!category || category.kind !== 'expense') throw Error('个人消费请选择有效支出分类');
     }
     const receivable = managedAccount(lid, currency);
@@ -156,7 +156,7 @@ function create(lid, uid, d) {
     let primary;
     if (personal) {
       primary = Number(require('./txn').createTransaction(lid, uid, {...shared, type: personalType, amount_cents: personal,
-        category_id: categoryId}, {channel: 'finance', deferCardRefresh: true}));
+        category_id: categoryId, category_snapshot: previousCategoryId != null && Number(categoryId) === Number(previousCategoryId)}, {channel: 'finance', deferCardRefresh: true}));
       db.run("INSERT INTO advance_txns VALUES(?,?,'personal')", id, primary);
     }
     const advanceTxn = Number(require('./txn').createTransaction(lid, uid, {...shared, type: 'transfer',
@@ -165,7 +165,7 @@ function create(lid, uid, d) {
     primary = primary || advanceTxn;
     db.run('UPDATE advances SET primary_transaction_id=? WHERE id=?', primary, id);
     if (source) {
-      db.run('INSERT OR IGNORE INTO transaction_tags(transaction_id,tag_id) SELECT ?,tag_id FROM transaction_tags WHERE transaction_id=?', primary, source.id);
+      if (!replacing || d.tags === undefined) db.run('INSERT OR IGNORE INTO transaction_tags(transaction_id,tag_id) SELECT ?,tag_id FROM transaction_tags WHERE transaction_id=?', primary, source.id);
       db.run('UPDATE transactions SET posted_date=? WHERE id IN (?,?)', source.posted_date || null, primary, advanceTxn);
     }
     refresh(lid, [primary, advanceTxn, source?.id].filter(Boolean));
@@ -297,9 +297,89 @@ function restoreCollection(lid, id) {
   });
 }
 
+function detailsForEdit(lid, old, payment, personal, fields, personalCents) {
+  const {person, merchant, note, category_id, owner_label, tags, no_rhythm} = fields;
+  for (const [value, limit, label] of [[person, 60, '代垫对象'], [merchant, 60, '商家'], [note, 300, '备注'], [owner_label, 20, '归属人'], [tags, 500, '标签']]) {
+    if (value !== undefined && (typeof value !== 'string' || value.trim().length > limit)) {
+      throw Error(label + '长度不能超过' + limit + '字');
+    }
+  }
+  const nextPerson = person === undefined ? old.person : person.trim();
+  const nextMerchant = merchant === undefined ? old.merchant : merchant.trim() || null;
+  const nextNote = note === undefined ? old.note : note.trim() || null;
+  if (!nextPerson) throw Error('请填写代垫对象');
+  let categoryId = personalCents > 0 ? personal?.category_id ?? null : null;
+  if (personalCents > 0 && category_id !== undefined) {
+    if (category_id === '' || category_id === null) categoryId = null;
+    else {
+      const category = require('./categories').forUpdate(lid, category_id, personal?.category_id);
+      if (!category || category.kind !== 'expense') throw Error('自用消费请选择当前账本有效支出分类');
+      categoryId = Number(category.id);
+    }
+  }
+  if (no_rhythm !== undefined && ![true, false, 1, 0, '1', '0'].includes(no_rhythm)) throw Error('一次性大额须为有效布尔值');
+  return {person: nextPerson, merchant: nextMerchant, note: nextNote, category_id: categoryId,
+    owner_label: owner_label === undefined ? payment.owner_label || '' : owner_label.replace(/[\s\u3000]+/g, ''),
+    no_rhythm: no_rhythm === undefined ? !!payment.no_rhythm : [true, 1, '1'].includes(no_rhythm), tags};
+}
+
+function edit(lid, uid, id, fields) {
+  return db.tx(() => {
+    const old = detail(lid, id);
+    const payment = old.transactions.find(t => t.id === old.primary_transaction_id);
+    if (!payment) throw Error('代垫付款流水不存在');
+    const personal = old.transactions.find(t => t.role === 'personal');
+    const posted = requestedMoment(fields);
+    for (const value of [fields.amount_cents, fields.personal_cents]) {
+      if (value !== undefined && !Number.isSafeInteger(value)) throw Error('金额必须为有效整数分');
+    }
+    const amount = fields.amount_cents === undefined ? old.amount_cents : money.cents(fields.amount_cents);
+    const personalCents = fields.personal_cents === undefined ? old.personal_cents : money.cents(fields.personal_cents, {zero: true});
+    const account = fields.account_id === undefined ? old.account_id : Number(fields.account_id);
+    const date = posted.date ?? old.txn_date;
+    const time = fields.txn_time === undefined && fields.time === undefined ? old.txn_time : posted.time;
+    const oldType = personal?.type || 'expense';
+    const type = personalCents > 0 ? fields.type ?? oldType : oldType;
+    if (!['expense', 'fee'].includes(type)) throw Error('代垫付款类型须为支出或手续费');
+    const info = detailsForEdit(lid, old, payment, personal, fields, personalCents);
+    const fundingChanged = amount !== old.amount_cents || personalCents !== old.personal_cents || account !== old.account_id ||
+      date !== old.txn_date || time !== old.txn_time || type !== oldType;
+    if (fundingChanged) {
+      const tags = info.tags ?? db.all(`SELECT t.name FROM transaction_tags tt JOIN tags t ON t.id=tt.tag_id
+        WHERE tt.transaction_id=? AND t.ledger_id=? ORDER BY t.id`, payment.id, lid).map(t => t.name).join(' ');
+      return amend(lid, uid, id, {...info, tags, type, txn_date: date, txn_time: time, account_id: account,
+        amount_cents: amount, personal_cents: personalCents, currency: old.currency, operation_key: fields.operation_key});
+    }
+    if (old.deleted_at || old.replaced_by) throw Error('只能编辑有效代垫记录');
+    const {person: nextPerson, merchant: nextMerchant, note: nextNote} = info;
+
+    if (nextPerson !== old.person || nextMerchant !== old.merchant || nextNote !== old.note) {
+      db.run('UPDATE advances SET person=?,merchant=?,note=? WHERE ledger_id=? AND id=?', nextPerson, nextMerchant, nextNote, lid, id);
+    }
+    for (const t of old.transactions.filter(t => t.role !== 'original')) {
+      const categoryId = t.role === 'personal' ? info.category_id : null;
+      const owner = info.owner_label || null;
+      if (nextMerchant !== t.merchant || nextNote !== t.note || categoryId !== t.category_id || owner !== t.owner_label || Number(info.no_rhythm) !== t.no_rhythm) {
+        db.run('UPDATE transactions SET merchant=?,note=?,category_id=?,owner_label=?,no_rhythm=?,updated_at=? WHERE ledger_id=? AND id=? AND deleted_at IS NULL',
+          nextMerchant, nextNote, categoryId, owner, Number(info.no_rhythm), db.nowStr(), lid, t.id);
+      }
+      if (info.tags !== undefined) require('./txn').applyTags(t.id, lid, info.tags, true);
+    }
+    if (nextPerson !== old.person) {
+      for (const [column, prefix] of [['transaction_id', '代垫回款 · '], ['excess_transaction_id', '代垫凑整差额 · ']]) {
+        db.run(`UPDATE transactions SET note=?,updated_at=? WHERE ledger_id=? AND note=?
+          AND id IN (SELECT ${column} FROM advance_collections WHERE ledger_id=? AND advance_id=?)`,
+        prefix + nextPerson, db.nowStr(), lid, prefix + old.person, lid, id);
+      }
+    }
+    return detail(lid, id);
+  });
+}
+
 function amend(lid, uid, id, d) {
   return db.tx(() => {
-    const old = row(lid, id);
+    const old = detail(lid, id);
+    const previousCategoryId = old.transactions.find(t => t.role === 'personal')?.category_id;
     const body = {...d, source_transaction_id: old.source_transaction_id || undefined,
       confirm_source: old.source_transaction_id ? true : undefined};
     const existing = db.get('SELECT id FROM advances WHERE ledger_id=? AND operation_key=?', lid, keyOf(body));
@@ -308,13 +388,14 @@ function amend(lid, uid, id, d) {
       return create(lid, uid, body);
     }
     if (old.deleted_at || old.replaced_by) throw Error('只能更正有效代垫记录');
-    const oldTransactionIds = detail(lid,id).transactions.map(t => t.id);
+    const oldTransactionIds = old.transactions.map(t => t.id);
     reverse(lid, id, {deferCardRefresh: true});
-    const next = create(lid, uid, body);
+    const next = create(lid, uid, body, {previousCategoryId, replacing: true});
+    db.run('UPDATE attachments SET txn_id=? WHERE ledger_id=? AND txn_id=?', next.primary_transaction_id, lid, old.primary_transaction_id);
     refresh(lid,[...oldTransactionIds,...next.transactions.map(t=>t.id)]);
     db.run('UPDATE advances SET replaced_by=? WHERE id=?', next.id, old.id);
     return next;
   });
 }
 
-module.exports = {create, detail, list, collect, reverse, restore, reverseCollection, restoreCollection, amend, guardTransaction};
+module.exports = {create, detail, list, collect, reverse, restore, reverseCollection, restoreCollection, edit, amend, guardTransaction};

@@ -133,6 +133,7 @@ GET /cashflow 和 GET /reports/trend 支持可选 month=YYYY-MM，作为趋势�
 - `POST /advances`：`{operation_key,amount_cents,personal_cents,person,account_id,category_id?,currency?,txn_date?,txn_time?,note?,merchant?,tags?}`。例如总付10000、自用4000，服务算代垫6000；自用可0，必须小于总额。收支分类只用于自用。付款账户允许现金、储蓄卡、支付账户、预付及信用卡。
 - 已有普通支出转换：在上述请求中加 `source_transaction_id` 与 `confirm_source:true`，金额/账户/币种须与来源相同，日期/已知时刻不得冲突。确认范围是替换原支出为消费与应收，原记录软停用并保留追溯，不再次扣款。已报销、分摊、分期、确认信用卡账单及其他业务来源不能绕过保护。
 - `POST /advances/:id/amend`：完整提交与创建相同的付款字段及新的 operation_key，整体更正并返回新版本；原记录 replaced_by 指向新版本，已有回款须先撤销，已有来源的总额不能变。
+- `POST /advances/:id/details`：局部编辑，省略字段保留原值。`person`、`merchant`、`note`、`owner_label`、`tags`、`no_rhythm` 和 `category_id` 可在回款后编辑，原 ID 保留。分类只用于自用消费，可传 `null` 清除，指定新分类时须为当前账本的有效支出分类。商家、备注、归属人与标签可传空字符串清除。付款字段 `amount_cents`、`personal_cents`、`account_id`、`txn_date`、`txn_time`、`type` 发生变化时须传新的 `operation_key`，重试复用同一标识，返回整体更正后的新版本。已有有效回款、原始来源、确认账单等约束与 `/amend` 一致。`type` 限 `expense` 或 `fee`，币种沿用原记录。源凭证保留，挂在旧付款主单的附件沿用到新主单。
 - `POST /advances/:id/collect`：`{operation_key,amount_cents,account_id,txn_date?,txn_time?,excess_handling?,excess_category_id?}`，金额为实际到账，账户不能信用卡，日期不早于付款。超出待收本金时必须明确传 `excess_handling: "income"`，多出部分计收入；旧客户端未确认仍拒绝超额。可指定有效收入分类，省略时匹配有效“其他收入”，没有则未分类。返回回款及更新后的 `advance`；回款 `principal_cents` 为核销本金，`excess_cents` 为差额，`excess_transaction_id` 指向差额收入流水。
 - `POST /advances/:id/reverse`、`/restore`：整体撤销/恢复；有效回款须先撤销。转换来源的撤销会恢复原整笔支出，恢复代垫时再检查来源未变化。
 - `POST /advance-collections/:id/reverse`、`/restore`：单次回款撤销/恢复，恢复重新检查待收容量和付款有效性。

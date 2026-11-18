@@ -1,5 +1,6 @@
 <% if(t.finance_payments?.length||t.credit_plan){ %><div class="notice info mb16">此流水关联金融付款或分期，资金字段请在对应台账整体操作。<% (t.finance_payments||[]).forEach(p=>{ %> <a href="/finance/payments/<%= p.id %>">付款 #<%= p.id %></a><% }); %> <a href="/finance">贷款与信用卡 →</a></div><% } %>
 <%
+  var advance = typeof advanceEdit === 'undefined' ? null : advanceEdit;
   var typeList = [
     { key:'expense', label:'支出', icon:'💸' },
     { key:'income',  label:'收入', icon:'💰' },
@@ -26,22 +27,27 @@
   var catKind = form.incomeTree.some(root=>Number(root.id)===Number(t.category_id)||root.children.some(c=>Number(c.id)===Number(t.category_id)))?'income':form.expenseTree.some(root=>Number(root.id)===Number(t.category_id)||root.children.some(c=>Number(c.id)===Number(t.category_id)))?'expense':['income','interest'].includes(cur)?'income':'expense';
   var amountValue = t.amount !== undefined ? t.amount : (t.amount_cents !== undefined && t.amount_cents !== null ? (t.amount_cents / 100).toFixed(2) : '');
   if (typeof amountValue === 'number') amountValue = amountValue.toFixed(2);
-  var action = mode === 'edit' ? ('/transactions/' + t.id) : '/transactions';
+  var action = advance ? '/advances/'+advance.item.id+'/details' : mode === 'edit' ? '/transactions/'+t.id : '/transactions';
+  var paymentAccounts = advance ? form.accounts.filter(a=>a.currency===advance.item.currency&&['cash','debit','virtual','prepaid','credit'].includes(a.type)) : form.accounts;
 %>
 
 <% if (typeof error !== 'undefined' && error) { %>
   <div class="flash error"><span><%= error %></span></div>
 <% } %>
 
-<form method="post" action="<%= action %>" id="txn-form" data-timezone="<%= Intl.DateTimeFormat().resolvedOptions().timeZone %>">
-  <template id="transaction-account-options"><option value="">请选择账户…</option><% form.accounts.forEach(function(a){ %><option value="<%= a.id %>" data-types="<%= a.transaction_types %>"><%= a.icon %> <%= a.name %> · <%= a.type_label %>（<%= helpers.fmtAmount(a.balance_cents) %>）</option><% }); %></template>
+<form method="post" action="<%= action %>" id="txn-form" <%= advance?'data-advance-edit':'' %> data-timezone="<%= Intl.DateTimeFormat().resolvedOptions().timeZone %>">
+  <template id="transaction-account-options"><option value="">请选择账户…</option><% paymentAccounts.forEach(function(a){ %><option value="<%= a.id %>" data-types="<%= a.transaction_types %>"><%= a.icon %> <%= a.name %> · <%= a.type_label %>（<%= helpers.fmtAmount(a.balance_cents) %>）</option><% }); %></template>
   <input type="hidden" name="_csrf" value="<%= csrf %>">
-  <input type="hidden" name="type" id="f-type" value="<%= cur %>">
+  <% if(!advance){ %><input type="hidden" name="type" id="f-type" value="<%= cur %>"><% } %>
   <input type="hidden" name="back" value="<%= back %>">
+  <% if(advance){ %><input type="hidden" name="operation_key" value="<%= advance.amendKey %>"><% } %>
 
   <div class="grid grid-main">
     <div>
       <div class="card">
+        <% if(advance){ %>
+          <div class="card-head"><h2>付款信息</h2><span class="chip">代垫支出</span></div>
+        <% }else{ %>
         <div class="row between mb12">
           <div class="type-tabs <%= typeof embeddedEntry!=='undefined'&&embeddedEntry?'hidden':'' %>" style="flex:1">
             <% typeList.forEach(function(x){ %>
@@ -58,24 +64,34 @@
           <% }); %>
         </div>
 
+        <% } %>
+
         <div class="field">
-          <label>金额</label>
+          <label for="f-amount"><%= advance?'付款金额':'金额' %></label>
           <div class="amount-input">
-            <span class="cur" id="cur-symbol">¥</span>
-            <input type="text" name="amount" id="f-amount" inputmode="decimal" value="<%= amountValue %>" placeholder="0.00" required autocomplete="off">
+            <span class="cur" id="cur-symbol"><%= advance?helpers.currencySymbol(advance.item.currency).trim():'¥' %></span>
+            <input type="text" name="amount" id="f-amount" inputmode="decimal" value="<%= amountValue %>" placeholder="0.00" <%= advance?.paymentLocked?'readonly':'' %> required autocomplete="off">
           </div>
         </div>
+        <% if(advance){ %>
+          <div class="finance-fields">
+            <div class="field"><label for="advance-personal">其中自用金额</label><input id="advance-personal" type="text" name="personal" inputmode="decimal" value="<%= advance.personal %>" <%= advance.locked?'readonly':'' %> required></div>
+            <div class="field"><label for="f-type">自用类型</label><select name="type" id="f-type" <%= advance.locked?'disabled':'' %>><option value="expense" <%= cur==='expense'?'selected':'' %>>支出</option><option value="fee" <%= cur==='fee'?'selected':'' %>>手续费</option></select></div>
+          </div>
+          <% if(advance.locked){ %><p class="help">先撤销有效回款，即可更正付款信息。分类和备注可直接保存。</p><% } %>
+          <% if(advance.original){ %><p class="help">付款金额、账户、日期和已记录的时刻沿用原支出。</p><% } %>
+        <% } %>
 
         <div class="row wrap transaction-clock-row" style="gap:12px">
           <div class="field" style="flex:1;min-width:150px">
             <label>交易日期</label>
-            <input type="date" name="txn_date" value="<%= (t.txn_date || '').slice(0,10) %>" required>
+            <input type="date" name="txn_date" value="<%= (t.txn_date || '').slice(0,10) %>" <%= advance?.paymentLocked?'disabled':'' %> required>
           </div>
           <div class="field" style="flex:1;min-width:150px">
             <label for="f-txn-time">交易时刻 <span class="muted tiny">（可选）</span></label>
-            <input type="time" id="f-txn-time" name="txn_time" step="1" value="<%= t.txn_time || '' %>">
+            <input type="time" id="f-txn-time" name="txn_time" step="1" value="<%= t.txn_time || '' %>" <%= advance?.timeLocked?'disabled':'' %>>
             <% if(mode==='create'){ %><select name="txn_time_mode" aria-label="时刻记录方式" class="mt8"><% [['auto','保存时自动记录当前时刻'],['explicit','使用填写的时刻'],['unknown','未知时刻，保持留空']].forEach(([value,label])=>{ %><option value="<%= value %>" <%= (t.txn_time_mode||(t.txn_time?'explicit':'unknown'))===value?'selected':'' %>><%= label %></option><% }); %></select><p class="help">自动时刻仅用于今天；补记可填写实际时刻或保持未知。</p><% } %>
-            <div class="row mt8"><button type="button" class="btn btn-sm hidden" data-txn-now>此刻</button><button type="button" class="btn btn-sm hidden" data-txn-time-clear>清除时刻</button></div>
+            <% if(!advance?.timeLocked){ %><div class="row mt8"><% if(!advance?.paymentLocked){ %><button type="button" class="btn btn-sm hidden" data-txn-now>此刻</button><% } %><button type="button" class="btn btn-sm hidden" data-txn-time-clear>清除时刻</button></div><% } %>
           </div>
           <div class="field" style="flex:1;min-width:150px">
             <label>成员</label>
@@ -88,14 +104,15 @@
         <div class="row wrap" style="gap:12px">
           <div class="field" style="flex:1;min-width:160px">
             <label id="acc-label">支付账户</label>
-            <select name="account_id" id="f-account">
+            <select name="account_id" id="f-account" <%= advance?.paymentLocked?'disabled':'' %> <%= advance?'required':'' %>>
               <option value="">请选择账户…</option>
-              <% form.accounts.filter(function(a){return a.transaction_types.split(',').includes(cur);}).forEach(function(a){ %>
+              <% if(advance&&Number(t.account_id)===advance.item.account_id&&!paymentAccounts.some(a=>a.id===advance.item.account_id)){ %><option value="<%= t.account_id %>" selected><%= advance.item.account_name||'原付款账户' %></option><% } %>
+              <% paymentAccounts.filter(function(a){return advance||a.transaction_types.split(',').includes(cur);}).forEach(function(a){ %>
                 <option value="<%= a.id %>" <%= Number(t.account_id) === Number(a.id) ? 'selected' : '' %>><%= a.icon %> <%= a.name %> · <%= a.type_label %>（<%= helpers.fmtAmount(a.balance_cents) %>）</option>
               <% }); %>
             </select>
           </div>
-          <div class="field" data-for-type="transfer,invest_buy,invest_sell" style="flex:1;min-width:160px">
+          <% if(!advance){ %><div class="field" data-for-type="transfer,invest_buy,invest_sell" style="flex:1;min-width:160px">
             <label>转入 / 投资账户</label>
             <select name="to_account_id">
               <option value="">请选择账户…</option>
@@ -103,20 +120,20 @@
                 <option value="<%= a.id %>" <%= Number(t.to_account_id) === Number(a.id) ? 'selected' : '' %>><%= a.icon %> <%= a.name %> · <%= a.type_label %></option>
               <% }); %>
             </select>
-          </div>
+          </div><% } %>
         </div>
 
-        <p class="help" data-for-type="transfer">普通转账用于自有资产账户间划转。信用卡或贷款还款请使用上方“还款”。</p>
+        <% if(advance){ %><div class="field"><label for="advance-person">代垫对象</label><input id="advance-person" name="person" type="text" maxlength="60" value="<%= advance.person %>" required></div><% }else{ %><p class="help" data-for-type="transfer">普通转账用于自有资产账户间划转。信用卡或贷款还款请使用上方“还款”。</p><% } %>
         <div class="field">
-          <label>商家 / 对方 <span class="muted tiny">（借钱时填写对方姓名）</span></label>
+          <label><%= advance?'商家':'商家 / 对方' %> <% if(!advance){ %><span class="muted tiny">（借钱时填写对方姓名）</span><% } %></label>
           <input type="text" name="merchant" value="<%= t.merchant || '' %>" placeholder="例如：肯德基 / 张三 / 房东">
         </div>
-        <div class="field" data-for-type="lend,borrow,repay_receive,repay_pay">
+        <% if(!advance){ %><div class="field" data-for-type="lend,borrow,repay_receive,repay_pay">
           <label for="f-debt">关联借钱条目</label>
           <select id="f-debt" name="debt_id"><option value="">借出/借入：新建独立条目；收还款：待关联</option>
           <% (form.debts || []).forEach(function(d){ %><option value="<%= d.id %>" data-direction="<%= d.direction %>" <%= Number(t.debt_id)===Number(d.id)?'selected':'' %> <%= d.deleted_at&&Number(t.debt_id)!==Number(d.id)?'disabled':'' %>><%= d.counterparty %> · <%= d.direction==='receivable'?'应收':'应还' %> <%= helpers.money(d.balance_cents) %> · #<%= d.id %><%= d.deleted_at?'（已归档，保留原关联）':d.status==='closed'?'（已结清）':'' %></option><% }); %></select>
           <p class="help">同一人可以有多笔借钱；收还款请关联具体条目。没有关联的流水会保留为待关联，不按姓名自动核销。</p>
-        </div>
+        </div><% } %>
 
         <div class="field">
           <label>备注</label>
@@ -135,22 +152,22 @@
             <label>标签</label>
             <input type="text" name="tags" value="<%= t.tag_names || '' %>" placeholder="多个用空格分隔">
           </div>
-          <div class="field" style="flex:1;min-width:150px">
+          <% if(!advance){ %><div class="field" style="flex:1;min-width:150px">
             <label>状态</label>
             <select name="status">
               <option value="cleared" <%= t.status !== 'pending' ? 'selected' : '' %>>已确认</option>
               <option value="pending" <%= t.status === 'pending' ? 'selected' : '' %>>待确认</option>
             </select>
-          </div>
+          </div><% } %>
         </div>
 
         <div class="row wrap mb12" style="gap:16px">
-          <label class="check"><input type="checkbox" name="is_reimbursable" value="1" <%= t.is_reimbursable ? 'checked' : '' %>> 这笔可以报销</label>
+          <% if(!advance){ %><label class="check"><input type="checkbox" name="is_reimbursable" value="1" <%= t.is_reimbursable ? 'checked' : '' %>> 这笔可以报销</label><% } %>
           <% // P7 修订：一次性大额——事实级信号，月末预测的节奏外推必剔（统计层对未勾选的照常自动判） %>
           <label class="check"><input type="checkbox" name="no_rhythm" value="1" <%= t.no_rhythm ? 'checked' : '' %>> 一次性大额（不计入月末预测节奏）</label>
         </div>
 
-        <details style="margin-top:4px">
+        <% if(!advance){ %><details style="margin-top:4px">
           <summary class="small muted" style="cursor:pointer;margin-bottom:10px">多币种 / 汇率（可选）</summary>
           <div class="row wrap" style="gap:12px">
             <div class="field" style="flex:1;min-width:120px">
@@ -166,11 +183,11 @@
               <input type="text" name="rate" value="<%= t.rate || 1 %>">
             </div>
           </div>
-        </details>
+        </details><% } %>
       </div>
 
       <% if(mode==='create'){ %><div class="card" data-for-type="expense,fee"><details <%= t.advance_amount?'open':'' %>><summary>部分代垫（帮别人付款）</summary><p class="help">上方金额填写实际付款总额，下面填写替对方垫付的部分。自用部分才计消费，回款冲减应收，不计收入。</p><input type="hidden" name="advance_operation_key" value="<%= t.advance_operation_key||'' %>"><div class="finance-fields"><div class="field"><label>替谁垫付</label><input type="text" name="advance_person" maxlength="60" value="<%= t.advance_person||'' %>" placeholder="例如：同事小王"></div><div class="field"><label>其中代垫金额</label><input type="text" inputmode="decimal" name="advance_amount" value="<%= t.advance_amount||'' %>" placeholder="0.00"></div></div><a class="btn btn-sm" href="/advances">查看代垫与回收</a></details></div><% } %>
-      <div class="card"><details <%= splitRows?.length?'open':'' %>><summary>分摊备注（不产生待收款）</summary>
+      <% if(!advance){ %><div class="card"><details <%= splitRows?.length?'open':'' %>><summary>分摊备注（不产生待收款）</summary>
         <div class="card-head">
           <h2>分摊备注</h2>
           <span class="muted small">仅记录份额，不核销、不调整消费。需回收代买款请用部分代垫。</span>
@@ -188,15 +205,19 @@
           <button type="button" class="btn btn-sm" id="add-split">＋ 添加分摊人</button>
           <button type="button" class="btn btn-sm btn-ghost" id="split-average">按人数均摊</button>
         </div></details>
-      </div>
+      </div><% } %>
     </div>
 
     <div>
       <div class="card <%= noCategory?'hidden':'' %>" id="f-cat-wrap" data-not-type="transfer,adjust,lend,borrow,repay_receive,repay_pay,invest_buy,invest_sell">
         <div class="card-head">
           <h2>分类</h2>
-          <span class="muted small" id="cat-hint"><%= t.category_path && t.category_path !== '未分类' ? t.category_path : '未选择' %></span>
+          <div class="row wrap">
+            <span class="muted small" id="cat-hint"><%= t.category_path && t.category_path !== '未分类' ? t.category_path : '未选择' %></span>
+            <% if(mode==='edit'){ %><button type="button" class="btn btn-sm hidden" id="category-clear">清除分类</button><% } %>
+          </div>
         </div>
+        <% if(advance){ %><p class="help">分类适用于自用消费。全额代垫时无需分类。</p><% } %>
 
         <div class="field category-native"><label for="f-category">选择分类</label>
           <select name="category_id" id="f-category" data-native>
@@ -225,6 +246,7 @@
         </div>
       </div>
 
+      <% if(advance){ %><%- include('partials/advance-recovery',{...advance,back,editing:true}) %><% } %>
       <% if(mode==='edit'){ %><div class="card entry-record-meta">
         <% if (mode === 'edit') { %>
         <div class="mt12">
@@ -236,13 +258,14 @@
       </div>
 
       <% } %>
-      <div class="notice small">
+      <% if(!advance){ %><div class="notice small">
         自有资金账户之间转账不重复统计；借钱、还款本金和投资转入影响资金流，消费收支单独统计。
-      </div>
+      </div><% } %>
     </div>
   </div>
 </form>
-<% if(mode==='edit'&&['expense','fee'].includes(cur)&&!t.finance_payments?.length&&!t.credit_plan&&!t.reimbursed_at){ %><section class="card mt16"><details><summary>从这笔支出分离代垫</summary><p class="help">原记录保留追溯，以自用消费和代垫应收替换，不再次扣款。已有分摊、报销、分期或已确认账单的记录须先解除相关业务。</p><form class="finance-form mt16" method="post" action="/transactions/<%= t.id %>/advance"><input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="operation_key" value="<%= t.advance_operation_key||'' %>"><div class="finance-fields"><div class="field"><label>替谁垫付</label><input type="text" name="advance_person" maxlength="60" required></div><div class="field"><label>其中代垫金额</label><input type="text" name="advance_amount" inputmode="decimal" required></div></div><label class="check"><input type="checkbox" name="confirm_source" value="1" required>确认将原支出拆为消费与应收，保留原记录</label><button class="btn">确认分离代垫</button></form></details></section><% } %>
+<% if(advance){ %><form id="advance-recovery-form" method="post" action="/advances/<%= advance.item.id %>/collect"></form><% } %>
+<% if(!advance&&mode==='edit'&&['expense','fee'].includes(cur)&&!t.finance_payments?.length&&!t.credit_plan&&!t.reimbursed_at){ %><section class="card mt16"><details><summary>从这笔支出分离代垫</summary><p class="help">原记录保留追溯，以自用消费和代垫应收替换，不再次扣款。已有分摊、报销、分期或已确认账单的记录须先解除相关业务。</p><form class="finance-form mt16" method="post" action="/transactions/<%= t.id %>/advance"><input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="operation_key" value="<%= t.advance_operation_key||'' %>"><div class="finance-fields"><div class="field"><label>替谁垫付</label><input type="text" name="advance_person" maxlength="60" required></div><div class="field"><label>其中代垫金额</label><input type="text" name="advance_amount" inputmode="decimal" required></div></div><label class="check"><input type="checkbox" name="confirm_source" value="1" required>确认将原支出拆为消费与应收，保留原记录</label><button class="btn">确认分离代垫</button></form></details></section><% } %>
 <% if(typeof embeddedEntry==='undefined'||!embeddedEntry){ %><%- include('partials/entry-actions',{entryFormId:'txn-form',entryLabel:mode==='edit'?'保存修改':'保存这一笔'}) %><% } %>
 
 <% if (mode === 'edit' && typeof images !== 'undefined' && images.length) { %>
