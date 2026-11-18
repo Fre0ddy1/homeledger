@@ -44,7 +44,7 @@
 <nav class="m-tabbar" aria-label="主导航">
   <a class="m-tab <%= activeNav === 'home' ? 'active' : '' %>" href="/"><svg class="icon"><use href="#i-house"></use></svg><span>记</span></a>
   <a class="m-tab <%= activeNav === 'transactions' ? 'active' : '' %>" href="/transactions"><svg class="icon"><use href="#i-list"></use></svg><span>明细</span></a>
-  <a class="m-tab <%= activeNav === 'more' ? 'active' : '' %>" href="/more"><svg class="icon"><use href="#i-library"></use></svg><span>更多</span></a>
+  <a class="m-tab <%= ['more', 'advances'].includes(activeNav) ? 'active' : '' %>" href="/more"><svg class="icon"><use href="#i-library"></use></svg><span>更多</span></a>
 </nav>
 <script src="/static/js/app.js?v=<%= assetV.js %>" defer></script>
 <script src="/static/js/category-icons.js?v=<%= typeof assetV !== 'undefined' ? assetV.categoryIcons : '' %>" defer></script>

@@ -376,17 +376,22 @@
     const category=$('#f-category'),picker=$('.entry-category-picker');
     if(category&&picker){
       picker.classList.remove('hidden');$('.category-native').classList.add('hidden');
-      const query=$('#category-query'),results=$('#category-search-results');
+      const query=$('#category-query'),results=$('#category-search-results'),clear=$('#category-clear');
+      clear?.classList.toggle('hidden',!category.value);
       let categoryType=$('#f-type').value;
       let categoryKind=category.selectedOptions[0]?.closest('optgroup')?.dataset.kind||(['income','interest'].includes($('#f-type').value)?'income':'expense');
       function group(section,id){
         $$('.cat-parent',section).forEach(el=>{const active=el.dataset.root===id;el.classList.toggle('primary',active);el.setAttribute('aria-pressed',String(active));});
         $$('.cat-group',section).forEach(el=>el.classList.toggle('hidden',el.dataset.root!==id));
       }
-      function choose(item){
-        category.value=item.dataset.id;
+      function selectCategory(id,path){
+        category.value=id;
         $$('.cat-item',picker).forEach(el=>el.classList.toggle('selected',el.dataset.id===category.value));
-        $('#cat-hint').textContent=item.dataset.path;
+        $('#cat-hint').textContent=path;
+        clear?.classList.toggle('hidden',!category.value);
+      }
+      function choose(item){
+        selectCategory(item.dataset.id,item.dataset.path);
         const section=$('.cat-section[data-cat-kind="'+item.dataset.kind+'"]',picker);
         group(section,item.dataset.root);query.value='';search();
         category.dispatchEvent(new Event('change',{bubbles:true}));
@@ -405,13 +410,19 @@
         if(parent)group(parent.closest('.cat-section'),parent.dataset.root);
         if(item)choose(item);
       });
+      clear?.addEventListener('click',()=>{
+        selectCategory('','未选择');
+        query.value='';search();query.focus();
+        category.dispatchEvent(new Event('change',{bubbles:true}));
+      });
       query.addEventListener('input',search);
       $$('[data-type]',form).forEach(btn=>btn.addEventListener('click',()=>{
         if(categoryType===btn.dataset.type){search();return;}
         categoryType=btn.dataset.type;
         const kind=['income','interest'].includes(btn.dataset.type)?'income':'expense';categoryKind=kind;
         $$('optgroup',category).forEach(el=>{el.disabled=false;el.hidden=el.dataset.kind!==kind;});
-        if(category.selectedOptions[0]?.closest('optgroup')?.dataset.kind&&category.selectedOptions[0].closest('optgroup').dataset.kind!==kind)category.value='';
+        const selectedKind=category.selectedOptions[0]?.closest('optgroup')?.dataset.kind;
+        if(!category.value||(selectedKind&&selectedKind!==kind))selectCategory('','未选择');
         query.value='';search();
       }));
     }
@@ -990,11 +1001,18 @@
 
   /* ============================ 确认危险操作 ============================ */
   function initConfirm() {
-    $$('form[data-confirm]').forEach((f) => {
+    const advanceEditor = $('#txn-form[data-advance-edit]');
+    const editValues = () => JSON.stringify([...new FormData(advanceEditor)]);
+    const saved = advanceEditor ? editValues() : null;
+    $$('form[data-confirm],#advance-recovery-form').forEach((f) => {
       f.addEventListener('submit', (e) => {
         if (f._confirmPass) { f._confirmPass = false; return; }
+        let msg = e.submitter?.dataset.confirm || f.dataset.confirm || (f.hasAttribute('data-confirm')?'确定执行该操作？':'');
+        if (f.id === 'advance-recovery-form' && advanceEditor && editValues() !== saved) {
+          msg = '当前账单有未保存的修改。继续回款操作将放弃这些修改。'+(msg||'继续操作？');
+        }
+        if (!msg) return;
         e.preventDefault();
-        const msg = f.dataset.confirm || '确定执行该操作？';
         const danger = /删除|清空|吊销|重置|⚠️|覆盖/.test(msg);
         hlConfirm(msg, { danger }).then((ok) => {
           if (!ok) return;
@@ -1044,11 +1062,22 @@
         if (version !== detailVersion) return;
         if (!data.ok) return toast(data.error || '加载失败', 'error');
         const t = data.txn;
+        const selectedRow = document.querySelector('.txn[data-txn-id="' + t.id + '"]');
+        const unifiedAdvance = selectedRow?.hasAttribute('data-advance-main');
         const rows = [];
         const kv = (k, v) => rows.push('<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>');
         kv('交易时间', esc(t.txn_date) + ' ' + esc(t.txn_time_label || '（未提供时刻）'));
         kv('交易类型', esc(t.type_label));
-        if(t.advance){kv('付款总额',fmtCents(t.advance.total_cents));kv('自用 / 代垫',fmtCents(t.advance.personal_cents)+' / '+fmtCents(t.advance.advance_cents));kv('代垫与回收','<a class="btn btn-sm" href="/advances/'+Number(t.advance.id)+'">管理 '+esc(t.advance.person)+' 的代垫</a>');}
+        if (t.advance) {
+          kv('付款总额', fmtCents(t.advance.total_cents));
+          kv('自用 / 代垫', fmtCents(t.advance.personal_cents)+' / '+fmtCents(t.advance.advance_cents));
+          if (unifiedAdvance) {
+            kv('代垫对象', esc(t.advance.person));
+            kv('回款状态', t.advance.remaining_cents===0?'已收齐':(t.advance.received_cents?'部分收回 · ':'')+'待收 '+fmtCents(t.advance.remaining_cents));
+          } else {
+            kv('代垫与回收','<a class="btn btn-sm" href="/advances/'+Number(t.advance.id)+'">管理 '+esc(t.advance.person)+' 的代垫</a>');
+          }
+        }
         if(t.advance_collection){kv('实际到账',fmtCents(t.advance_collection.total_cents));kv('回本 / 凑整收入',fmtCents(t.advance_collection.principal_cents)+' / '+fmtCents(t.advance_collection.excess_cents));kv('代垫回款','<a class="btn btn-sm" href="/advances/'+Number(t.advance_collection.advance_id)+'">查看代垫与回收</a>');}
         if (t.has_category) kv('分类', esc(t.category_path || '—'));
         if(t.debt_id)kv('借钱台账','<a href="/debts/'+Number(t.debt_id)+'">查看借钱条目 #'+Number(t.debt_id)+'</a>');
@@ -1074,11 +1103,10 @@
         ).join('');
 
         // 写权限：与列表行的操作按钮同源（只读成员行内没有编辑/删除钮）
-        const canWrite = !!document.querySelector('[data-del-txn="' + t.id + '"]');
+        const canWrite = !!selectedRow?.querySelector('[data-del-txn]');
         const inspector = $('#txnInspector');
         const inline = !!inspector && inspectorMedia.matches;
         const placeholder = $('#txnInspectorEmpty');
-        const selectedRow = document.querySelector('.txn[data-txn-id="' + t.id + '"]');
         const mask = document.createElement('div');
         mask.className = inline ? 'inspector-detail' : 'modal-mask';
         mask.innerHTML =
@@ -1091,7 +1119,7 @@
             '<div class="modal-actions">' +
               '<button type="button" class="btn btn-ghost" data-act="close">关闭</button>' +
               (canWrite ? '<button type="button" class="btn btn-ghost" style="color:var(--expense)" data-act="del">删除</button>' : '') +
-              (t.advance||t.advance_collection?'<a class="btn btn-primary" href="/advances/'+Number(t.advance?.id||t.advance_collection.advance_id)+'">管理代垫</a>':canWrite ? '<a class="btn btn-primary" href="/transactions/' + t.id + '/edit">编辑</a>' : '') +
+              (canWrite ? '<a class="btn btn-primary" href="/transactions/' + t.id + '/edit?back=' + encodeURIComponent(location.pathname+location.search) + '">编辑</a>' : t.advance||t.advance_collection ? '<a class="btn btn-primary" href="/advances/'+Number(t.advance?.id||t.advance_collection.advance_id)+'">'+(unifiedAdvance?'查看代垫详情':'管理代垫')+'</a>' : '') +
             '</div>' +
           '</div>';
         if (inline) {
@@ -1118,15 +1146,16 @@
           if (!act) return;
           if (act.dataset.act === 'close') return close();
           if (act.dataset.act === 'del') {
-            if (!(await hlConfirm('删除这笔记录？', { danger: true, okText: '删除' }))) return;
+            if (!(await hlConfirm(t.advance?'删除这笔记录将撤销整笔代垫。确认删除？':'删除这笔记录？', { danger: true, okText: '删除' }))) return;
             const res = await postJson('/transactions/' + t.id + '/delete', { _json: '1' });
             if (res.ok) {
+              if (t.advance) return location.reload();
               const row = document.querySelector('.txn[data-txn-id="' + t.id + '"]');
               if (row) row.remove();
               if (refreshBulk) refreshBulk();
               close();
               toast('已删除', 'success');
-            } else toast('删除失败', 'error');
+            } else toast(res.error||'删除失败', 'error');
           }
         });
         document.addEventListener('keydown', onKey);
@@ -1153,14 +1182,16 @@
     $$('[data-del-txn]').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
-        if (!(await hlConfirm('删除这笔记录？', { danger: true, okText: '删除' }))) return;
+        const advance = btn.hasAttribute('data-del-advance');
+        if (!(await hlConfirm(advance?'删除这笔记录将撤销整笔代垫。确认删除？':'删除这笔记录？', { danger: true, okText: '删除' }))) return;
         const res = await postJson('/transactions/' + btn.dataset.delTxn + '/delete', { _json: '1' });
         if (res.ok) {
+          if (advance) return location.reload();
           const row = btn.closest('.txn');
           if (row) row.remove();
           if (refreshBulk) refreshBulk();
           toast('已删除', 'success');
-        } else toast('删除失败', 'error');
+        } else toast(res.error||'删除失败', 'error');
       });
     });
   }
@@ -1198,7 +1229,7 @@
   }
 
   function initDatePicker(input) {
-    if (input.dataset.hlDate) return;
+    if (input.dataset.hlDate || input.disabled) return;
     input.dataset.hlDate = '1';
     const wrap = document.createElement('span');
     wrap.className = 'hl-date';

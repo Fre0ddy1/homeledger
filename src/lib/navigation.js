@@ -1,7 +1,7 @@
 'use strict';
 function forView(view,options={},originalUrl='/'){
  const url=new URL(originalUrl,'http://localhost'),q=url.searchParams,back=q.get('back')||options.back;
- const safeBack=typeof back==='string'&&/^\/(?:transactions|accounts\/\d+|calendar|reports|search)(?:\?|$)/.test(back)&&!/[\r\n]/.test(back)?back:null;
+ const safeBack=typeof back==='string'&&/^\/(?:transactions|accounts\/\d+|advances\/\d+|calendar|reports|search)(?:\?|$)/.test(back)&&!/[\r\n]/.test(back)?back:null;
  const result=(href,label)=>({href,label});
  if(view==='advance-detail')return result('/advances','返回代垫与回收');
  if(view==='advances')return result('/transactions','返回账单明细');
@@ -12,7 +12,7 @@ function forView(view,options={},originalUrl='/'){
  if(['finance-loan','finance-card'].includes(view))return result('/finance','返回贷款与信用卡');
  if(view==='debt-detail')return result('/debts','返回借钱台账');
  if(view==='account-detail')return result('/accounts','返回账户列表');
- if(view==='txn-form'||view==='entry-workspace')return result(safeBack||'/transactions','返回账单列表');
+ if(view==='txn-form'||view==='entry-workspace')return result(safeBack||'/transactions',safeBack?.startsWith('/advances/')?'返回代垫详情':'返回账单列表');
  if(view==='repayment-form')return result(options.selected?'/transactions/new?type=repayment':'/transactions/new',options.selected?'返回还款对象选择':'返回记一笔');
  if(view==='subscriptions'&&options.edit)return result('/subscriptions','返回订阅列表');
  if(view==='annual')return result('/reports','返回报表分析');

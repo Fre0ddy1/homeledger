@@ -113,7 +113,7 @@
       <label class="check"><input type="checkbox" id="bulk-all"> 全选本页</label>
       <span class="muted tiny">勾选后可用下方批量操作</span>
     </div><% } %>
-    <%- include('partials/txn-list', { groups: groups, bulk: ledger && canWrite(ledger.role) }) %>
+    <%- include('partials/txn-list', { groups: groups, bulk: ledger && canWrite(ledger.role), billList: true }) %>
   </div>
 
   <% if (result.pages > 1) { %>

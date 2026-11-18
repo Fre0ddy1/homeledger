@@ -1299,6 +1299,13 @@ function advanceWrite(action,fn){return (req,res)=>{
 router.post('/advances',requireWrite,advanceWrite('create',(lid,uid,req)=>advances.create(lid,uid,req.body)));
 router.post('/advances/:id/collect',requireWrite,advanceWrite('collect',(lid,uid,req)=>advances.collect(lid,uid,Number(req.params.id),req.body)));
 router.post('/advances/:id/amend',requireWrite,advanceWrite('amend',(lid,uid,req)=>advances.amend(lid,uid,Number(req.params.id),req.body)));
+router.post('/advances/:id/details',requireWrite,advanceWrite('edit_details',(lid,uid,req)=>{
+  const fields=req.body;
+  if (!fields || !Object.keys(fields).length || Object.keys(fields).some(key=>!['person','merchant','note','category_id','owner_label','tags','no_rhythm','amount_cents','personal_cents','account_id','txn_date','txn_time','type','operation_key'].includes(key))) {
+    throw Error('请提供支持编辑的代垫账单字段');
+  }
+  return advances.edit(lid,uid,Number(req.params.id),fields);
+}));
 for(const action of ['reverse','restore']){
   router.post('/advances/:id/'+action,requireWrite,advanceWrite(action,(lid,uid,req)=>advances[action](lid,Number(req.params.id))));
   router.post('/advance-collections/:id/'+action,requireWrite,advanceWrite('collection.'+action,(lid,uid,req)=>advances[action==='reverse'?'reverseCollection':'restoreCollection'](lid,Number(req.params.id))));

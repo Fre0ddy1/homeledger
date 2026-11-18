@@ -26,6 +26,8 @@ description: 家账簿（HomeLedger）记账、亲友借钱、贷款与信用卡
 
 ## 部分代垫与回收
 
+用 `POST /advances/:id/details` 编辑代垫账单。对象、商家、备注、自用消费分类、归属人、标签和预测标记在收齐后仍可改。更正金额、付款账户、日期、时刻或自用类型须传稳定的 `operation_key`，有有效回款时先撤销回款。全额代垫无消费分类。
+
 查询账单列表、最近记录或单笔详情时，`advance.received_cents`为有效已收本金，`advance.remaining_cents=0`可直接报告“已收齐”；凑整收入不抵扣待收，撤销/恢复回款后重新查询进度。
 只看代垫付款与回款可用 `GET /transactions?advance_related=1`，可叠加日期/账户等条件并分页，保持一次付款/实收的合并展示及真实收支汇总。
 

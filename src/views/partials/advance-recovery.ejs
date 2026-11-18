@@ -1,0 +1,64 @@
+<% const writable = canWrite(ledger.role) && !item.deleted_at; %>
+<section class="card advance-recovery" aria-labelledby="advance-recovery-title">
+  <div class="card-head">
+    <h2 id="advance-recovery-title">回款</h2>
+    <span class="chip <%= item.deleted_at?'':item.remaining_cents?'warn':'income' %>"><%= item.deleted_at?'已撤销':item.remaining_cents?'待收 '+helpers.fmtAmount(item.remaining_cents):'已收齐' %></span>
+  </div>
+  <% if(writable){ %>
+    <input form="advance-recovery-form" type="hidden" name="_csrf" value="<%= csrf %>">
+    <% if(editing){ %>
+      <input form="advance-recovery-form" type="hidden" name="return_to_edit" value="1">
+      <input form="advance-recovery-form" type="hidden" name="back" value="<%= back %>">
+      <noscript><p class="help">操作回款前，请先保存账单修改。</p></noscript>
+    <% } %>
+  <% } %>
+  <% if(writable && item.remaining_cents){ %>
+    <div class="finance-form" data-advance-collection data-remaining="<%= item.remaining_cents %>">
+      <input form="advance-recovery-form" type="hidden" name="operation_key" value="<%= draft?.operation_key||operationKey %>">
+      <div class="field">
+        <label for="advance-receipt-amount">实际到账金额</label>
+        <input form="advance-recovery-form" id="advance-receipt-amount" type="text" inputmode="decimal" name="amount" value="<%= draft?.amount??(item.remaining_cents/100).toFixed(2) %>" required>
+      </div>
+      <div class="field">
+        <label for="advance-receipt-account">收款账户</label>
+        <select form="advance-recovery-form" id="advance-receipt-account" name="account_id" required>
+          <option value="">请选择</option>
+          <% form.accounts.filter(a=>['cash','debit','virtual','prepaid'].includes(a.type)&&a.currency===item.currency).forEach(a=>{ %>
+            <option value="<%= a.id %>" <%= Number(draft?.account_id)===a.id?'selected':'' %>><%= a.name %> · <%= a.type_label %></option>
+          <% }); %>
+        </select>
+      </div>
+      <div class="finance-fields">
+        <div class="field"><label for="advance-receipt-date">收款日期</label><input form="advance-recovery-form" id="advance-receipt-date" type="date" name="date" value="<%= draft?.date??today %>" required></div>
+        <div class="field"><label for="advance-receipt-time">收款时刻（可选）</label><input form="advance-recovery-form" id="advance-receipt-time" type="time" name="time" step="1" value="<%= draft?.time??'' %>"></div>
+      </div>
+      <div data-excess-panel>
+        <p class="help" data-excess-preview>如实际到账超过待收本金，请确认多出的金额是否为朋友凑整赠予。</p>
+        <label class="check"><input form="advance-recovery-form" type="checkbox" name="excess_handling" value="income" <%= draft?.excess_handling==='income'?'checked':'' %>> 朋友凑整，多出的计入收入</label>
+        <div class="field">
+          <label for="advance-receipt-category">差额收入分类（可选）</label>
+          <select form="advance-recovery-form" id="advance-receipt-category" name="excess_category_id">
+            <option value="">自动选择其他收入；没有则未分类</option>
+            <% form.incomeCats.forEach(c=>{ %><option value="<%= c.id %>" <%= Number(draft?.excess_category_id)===c.id?'selected':'' %>><%= c.path %></option><% }); %>
+          </select>
+        </div>
+      </div>
+      <button form="advance-recovery-form" class="btn btn-primary">确认收回</button>
+    </div>
+  <% } %>
+  <div class="<%= writable&&item.remaining_cents?'mt16':'' %>">
+    <h3 class="small">回收记录</h3>
+    <% if(!item.collections.length){ %><p class="muted small">还没有回款</p><% } %>
+    <% item.collections.forEach(c=>{ const action = c.deleted_at?'restore':'reverse'; const label = c.deleted_at?'恢复回款':'撤销回款'; %>
+      <div class="finance-item">
+        <div>
+          <b><%= helpers.fmtAmount(c.amount_cents) %> <%= item.currency %></b>
+          <p class="small muted">回本 <%= helpers.fmtAmount(c.principal_cents) %><% if(c.excess_cents){ %> · 凑整收入 <%= helpers.fmtAmount(c.excess_cents) %><% } %> · <%= c.txn_date %><%= c.txn_time?' '+c.txn_time:'' %> · <%= c.deleted_at?'已撤销':'已回收' %></p>
+        </div>
+        <% if(writable){ %>
+          <button form="advance-recovery-form" formnovalidate formaction="/advances/<%= item.id %>/collections/<%= c.id %>/<%= action %>" data-confirm="确认<%= label %>？" class="btn btn-sm <%= c.deleted_at?'':'btn-danger' %>"><%= label %></button>
+        <% } %>
+      </div>
+    <% }); %>
+  </div>
+</section>
