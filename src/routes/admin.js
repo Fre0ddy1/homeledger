@@ -32,6 +32,18 @@ router.get('/settings', auth.requireLogin, (req, res) => {
   const newToken = req.session.newToken || null;
   delete req.session.newToken;
   const isAdmin = !!res.locals.user.is_admin;
+  const ledger = res.locals.ledger;
+  const canManageNotifications = ledger && !ledger.is_archived && ['owner', 'admin'].includes(ledger.role);
+  const notificationSettings = require('../lib/notification-push').settingsFor(res.locals.user.id, canManageNotifications ? ledger.id : null);
+  if (canManageNotifications) {
+    notificationSettings.ledger = ledger;
+    notificationSettings.categories = fd.flatCategories(ledger.id, 'expense');
+    notificationSettings.accounts = fd.accounts(ledger.id);
+    notificationSettings.cards = all(`SELECT a.id,a.name,p.remind_enabled,r.timezone,r.send_time,r.closing_days,r.repayment_days
+      FROM accounts a JOIN credit_profiles p ON p.account_id=a.id
+      LEFT JOIN credit_reminder_rules r ON r.account_id=a.id
+      WHERE a.ledger_id=? AND a.is_archived=0 ORDER BY a.name`, ledger.id);
+  }
   // 管理员：附带「系统管理」区块数据（用户 / 统计 / 审计日志）
   let adminData = null;
   if (isAdmin) {
@@ -57,6 +69,7 @@ router.get('/settings', auth.requireLogin, (req, res) => {
     title: '设置', activeNav: 'settings',
     cfg,
     aiReady: ai.isAiReady(),
+    notificationSettings,
     settings: require('../db').allSettings(),
     isAdmin,
     newToken,

@@ -215,7 +215,7 @@ router.post('/join/:code', auth.requireLogin, (req, res) => {
   for (const uid of auth.ledgerWriterIds(invite.ledger_id)) {
     if (Number(uid) === Number(req.session.userId)) continue;
     auth.notify(uid, {
-      kind: 'info', ledgerId: Number(invite.ledger_id),
+      kind: 'info', ledgerId: Number(invite.ledger_id), eventType: 'member_joined',
       title: `${res.locals.user.display_name} 加入了账本「${ledger.name}」`,
       link: '/members',
     });

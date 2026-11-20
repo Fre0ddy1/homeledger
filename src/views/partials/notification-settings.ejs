@@ -1,0 +1,97 @@
+<div class="card">
+  <div class="card-head"><h2>推送渠道</h2></div>
+  <p class="muted small">将你的通知中心新消息发到手机。开启渠道后，只转发之后产生的消息。订阅的提前天数在订阅页面设置。</p>
+  <% push.list.forEach(channel => { %>
+    <section class="mb16">
+      <div class="row between wrap mb8">
+        <div><strong><%= channel.name %></strong> <span class="muted small"><%= push.kinds[channel.type] %></span></div>
+        <span class="chip <%= channel.enabled ? 'primary' : 'neutral' %>"><%= channel.enabled ? '已启用' : '已停用' %></span>
+      </div>
+      <div class="row wrap mb8" style="gap:8px">
+        <form method="post" action="/settings/notifications/channels/<%= channel.id %>/test">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <button class="btn btn-sm" type="submit">发送测试通知</button>
+        </form>
+        <form method="post" action="/settings/notifications/channels/<%= channel.id %>/state">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <button class="btn btn-sm" name="action" value="<%= channel.enabled ? 'disable' : 'enable' %>"><%= channel.enabled ? '停用' : '启用' %></button>
+          <button class="btn btn-sm btn-danger" name="action" value="delete" onclick="return confirm('删除此推送渠道？')">删除</button>
+        </form>
+      </div>
+      <details><summary>编辑渠道</summary><div class="mt12"><%- include('notification-channel-form', { channel }) %></div></details>
+    </section>
+  <% }) %>
+  <details <%= push.list.length ? '' : 'open' %>>
+    <summary>添加推送渠道</summary>
+    <div class="mt12"><%- include('notification-channel-form', { channel: { events: ['*'] } }) %></div>
+  </details>
+</div>
+
+<% if (push.ledger) { const daily = push.daily || {}; %>
+  <div class="card">
+    <div class="card-head"><h2>当天消费预警</h2></div>
+    <p class="muted small">适用于 <%= push.ledger.name %>。当天累计消费达到你设置的比例时发一条通知，次日重新累计。</p>
+    <form method="post" action="/settings/notifications/daily">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <input type="hidden" name="ledger_id" value="<%= push.ledger.id %>">
+      <div class="grid grid-2">
+        <label class="field">每日预算（<%= push.ledger.currency %>）<input type="number" min="0.01" step="0.01" name="budget" value="<%= daily.budget_cents ? (daily.budget_cents / 100).toFixed(2) : '' %>" required></label>
+        <label class="field">提醒比例（%）<input type="number" name="alert_pct" min="1" max="100" value="<%= daily.alert_pct || 80 %>" required></label>
+        <label class="field">统计范围<select name="scope"><% Object.entries({ overall: '全账本', category: '按分类', account: '按账户' }).forEach(([key, label]) => { %>
+          <option value="<%= key %>" <%= daily.scope === key ? 'selected' : '' %>><%= label %></option>
+        <% }) %></select></label>
+        <label class="field">时区<input type="text" name="timezone" value="<%= daily.timezone || push.timezone %>" required></label>
+        <label class="field">适用分类<select name="category_id"><option value="">请选择</option>
+          <% push.categories.forEach(item => { %><option value="<%= item.id %>" <%= daily.category_id === item.id ? 'selected' : '' %>><%= item.path %></option><% }) %>
+        </select></label>
+        <label class="field">适用账户<select name="account_id"><option value="">请选择</option>
+          <% push.accounts.forEach(item => { %><option value="<%= item.id %>" <%= daily.account_id === item.id ? 'selected' : '' %>><%= item.name %></option><% }) %>
+        </select></label>
+      </div>
+      <div class="row wrap" style="gap:12px">
+        <label class="check"><input type="checkbox" name="enabled" value="1" <%= daily.enabled ? 'checked' : '' %>>启用当天消费预警</label>
+        <button type="submit" class="btn btn-primary">保存消费预警</button>
+      </div>
+    </form>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2>信用卡提醒</h2></div>
+    <% if (!push.cards.length) { %><p class="muted">设置信用卡账期后可配置提醒。</p><% } %>
+    <% push.cards.forEach(card => { %>
+      <details class="mb12">
+        <summary><%= card.name %></summary>
+        <form method="post" action="/settings/notifications/cards/<%= card.id %>" class="mt12">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <div class="grid grid-2">
+            <label class="field">出账提前天数<input type="number" name="closing_days" min="0" max="30" value="<%= card.closing_days ?? '' %>" placeholder="0 表示当天，留空停用"></label>
+            <label class="field">还款提前天数<input type="text" name="repayment_days" value="<%= card.repayment_days ? JSON.parse(card.repayment_days).join(', ') : '' %>" placeholder="例如 7, 3, 1, 0"></label>
+            <label class="field">提醒时间<input type="time" name="send_time" value="<%= card.send_time || '09:00' %>" required></label>
+            <label class="field">时区<input type="text" name="timezone" value="<%= card.timezone || push.timezone %>" required></label>
+          </div>
+          <p class="muted small">还款提前天数留空会沿用现有提醒。信用卡账期设置中的还款提醒当前<%= card.remind_enabled ? '已启用' : '已停用' %>。</p>
+          <button type="submit" class="btn btn-primary">保存信用卡提醒</button>
+        </form>
+      </details>
+    <% }) %>
+  </div>
+<% } %>
+
+<div class="card">
+  <div class="card-head"><h2>推送记录</h2></div>
+  <% if (!push.logs.length) { %><p class="muted">还没有推送记录。</p><% } else {
+    const statusLabels = { sent: '服务已接受', failed: '失败', unknown: '结果未知', skipped: '已跳过', pending: '待发送', sending: '发送中' };
+  %>
+    <div data-push-log>
+      <% push.logs.forEach(log => { %>
+        <div class="mb12">
+          <div class="row between wrap">
+            <strong><%= push.types[log.event_type] || '测试通知' %></strong>
+            <span class="chip <%= log.status === 'sent' ? 'primary' : ['failed', 'unknown'].includes(log.status) ? 'warn' : 'neutral' %>"><%= statusLabels[log.status] %></span>
+          </div>
+          <p class="muted small"><%= log.channel_name %> · <%= new Date(log.created_ms).toLocaleString('zh-CN', { hour12: false }) %></p>
+          <% if (log.error) { %><p class="small"><%= log.error %></p><% } %>
+        </div>
+      <% }) %>
+    </div>
+  <% } %>
+</div>

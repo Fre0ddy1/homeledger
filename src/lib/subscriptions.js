@@ -109,8 +109,8 @@ function firstChargeDate({ cycle, cycle_n, anchor_month, anchor_day, startFrom =
 }
 
 /** 距某日还有几天（负数为已过） */
-function daysUntil(dateStr) {
-  const t = new Date(`${todayStr()}T00:00:00`);
+function daysUntil(dateStr, today = todayStr()) {
+  const t = new Date(`${today}T00:00:00`);
   const d = new Date(`${String(dateStr).slice(0, 10)}T00:00:00`);
   if (Number.isNaN(d.getTime())) return null;
   return Math.round((d - t) / 86400000);
@@ -270,7 +270,8 @@ function runDue(today = todayStr()) {
       if (!alreadyNotified(key)) {
         for (const uid of ledgerWriterIds(sub.ledger_id)) {
           notify(uid, {
-            kind: 'warn', ledgerId: sub.ledger_id,
+            kind: 'warn', ledgerId: sub.ledger_id, eventType: 'subscription_due',
+            details: { subscriptionId: sub.id, date: sub.next_charge_at, amountCents: sub.amount_cents },
             title: `订阅到期待确认：${sub.name}`,
             body: isFixed(sub)
               ? `固定到期日 ${sub.next_charge_at} 已到，参考金额 ${(sub.amount_cents / 100).toFixed(2)}，续费后请更新日期 |${key}`
@@ -320,7 +321,7 @@ function runDue(today = todayStr()) {
       if (!alreadyNotified(key)) {
         for (const uid of ledgerWriterIds(sub.ledger_id)) {
           notify(uid, {
-            kind: 'warn', ledgerId: sub.ledger_id,
+            kind: 'warn', ledgerId: sub.ledger_id, eventType: 'subscription_blocked',
             title: `订阅未能自动记账：${sub.name}`,
             body: `订阅金额为 0，${sub.next_charge_at} 起的扣费已跳过记账，请补全金额 |${key}`,
             link: `/subscriptions/${sub.id}/edit`,
@@ -342,14 +343,15 @@ function checkReminders(today = todayStr()) {
   const items = all("SELECT * FROM subscriptions WHERE status IN ('active','trial')");
   let n = 0;
   for (const sub of items) {
-    const days = daysUntil(sub.next_charge_at);
+    const days = daysUntil(sub.next_charge_at, today);
     const ahead = Math.max(0, Number(sub.reminder_days) || 0);
     if (days !== null && days >= 0 && days <= ahead) {
       const key = `sub:${sub.id}:${sub.next_charge_at}`;
       if (!alreadyNotified(key)) {
         for (const uid of ledgerWriterIds(sub.ledger_id)) {
           notify(uid, {
-            kind: 'info', ledgerId: sub.ledger_id,
+            kind: 'info', ledgerId: sub.ledger_id, eventType: isFixed(sub) ? 'subscription_expiry' : 'subscription_renewal',
+            details: { subscriptionId: sub.id, date: sub.next_charge_at, amountCents: sub.amount_cents, vendorUrl: sub.vendor_url },
             title: isFixed(sub) ? `订阅即将到期：${sub.name}` : `订阅即将扣费：${sub.name}`,
             body: isFixed(sub)
               ? `${days === 0 ? '今天' : days + ' 天后'}（${sub.next_charge_at}）到期，参考金额 ${(sub.amount_cents / 100).toFixed(2)} |${key}`
@@ -361,13 +363,14 @@ function checkReminders(today = todayStr()) {
       }
     }
     if (sub.trial_ends_on) {
-      const tDays = daysUntil(sub.trial_ends_on);
+      const tDays = daysUntil(sub.trial_ends_on, today);
       if (tDays !== null && tDays >= 0 && tDays <= 3) {
         const key = `subtrial:${sub.id}:${sub.trial_ends_on}`;
         if (!alreadyNotified(key)) {
           for (const uid of ledgerWriterIds(sub.ledger_id)) {
             notify(uid, {
-              kind: 'warn', ledgerId: sub.ledger_id,
+              kind: 'warn', ledgerId: sub.ledger_id, eventType: 'subscription_trial',
+              details: { subscriptionId: sub.id, date: sub.trial_ends_on, amountCents: sub.amount_cents },
               title: `试用即将结束：${sub.name}`,
               body: `${tDays === 0 ? '今天' : tDays + ' 天后'}结束试用，之后将按 ${(sub.amount_cents / 100).toFixed(2)} ${cycleLabel(sub.cycle, sub.cycle_n)}扣费，不想续就先去取消 |${key}`,
               link: '/subscriptions',

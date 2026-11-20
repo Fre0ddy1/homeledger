@@ -315,7 +315,7 @@ function checkForecasts(ref = new Date()) {
       + `；按本月日常节奏+已知扣费估算 |${dedupeKey}`;
     for (const uid of auth.ledgerWriterIds(b.ledger_id)) {
       auth.notify(uid, {
-        kind: 'warn', ledgerId: b.ledger_id,
+        kind: 'warn', ledgerId: b.ledger_id, eventType: 'forecast', details: { amountCents: f.forecast_cents },
         title: `月末预测：${b.name} 将超支`, body, link: '/budgets',
       });
     }

@@ -87,7 +87,7 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
    await page.goto('http://127.0.0.1:5113/theme/'+theme);await page.setViewportSize({width:1920,height:1080});
    for(const width of [390,820,1280,1920,2560]){
     await page.setViewportSize({width,height:1080});await page.goto('http://127.0.0.1:5113/settings');
-    for(const tab of ['account','ai','api','site','admin','env']){
+    for(const tab of ['account','ai','api','notifications','site','admin','env']){
      await page.locator('.tabs a[href="#'+tab+'"]').click();await page.waitForTimeout(240);
      const visible=await page.locator('[data-tab="'+tab+'"]').isVisible();
      const cards=await page.locator('.card[data-tab="'+tab+'"], [data-tab="'+tab+'"] > .card').evaluateAll(nodes=>nodes.filter(el=>el.getClientRects().length).map(el=>el.getBoundingClientRect().width));
@@ -121,7 +121,7 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   await page.setViewportSize({width:1920,height:1080});
   await page.keyboard.press('Escape');const inspectorFocusReturned=await listRow.evaluate(el=>el===document.activeElement);
   await listRow.focus();await page.keyboard.press('Enter');await page.locator('.inspector-detail').waitFor();await page.setViewportSize({width:390,height:844});
-  const inspectorResizeReleased=await page.locator('.inspector-detail').count()===0;
+  const inspectorResizeReleased=await page.locator('.inspector-detail').waitFor({state:'detached',timeout:5000}).then(()=>true,()=>false);
   await page.keyboard.press('Enter');await page.locator('.modal-mask .txn-detail').waitFor();await page.keyboard.press('Escape');
   const mobileDetails=await listRow.evaluate(el=>el===document.activeElement);
   await page.goto('http://127.0.0.1:5113/');await page.setViewportSize({width:1920,height:1080});await page.setViewportSize({width:390,height:844});
@@ -139,7 +139,7 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   await page.setViewportSize({width:390,height:844});await page.locator('#navBurger').click();await page.keyboard.press('Escape');
   const drawerClosed=await page.locator('#navBurger').getAttribute('aria-expanded')==='false';
   await page.locator('#navBurger').click();await page.setViewportSize({width:1280,height:900});
-  const resizedDrawerReleased=await page.evaluate(()=>!document.body.classList.contains('nav-open')&&document.activeElement.id==='main-content');
+  const resizedDrawerReleased=await page.waitForFunction(()=>!document.body.classList.contains('nav-open')&&document.activeElement.id==='main-content',undefined,{timeout:5000}).then(()=>true,()=>false);
   const bar=await page.locator('.topbar').boundingBox();await page.mouse.move(bar.x+100,bar.y+20);await page.waitForTimeout(60);
   const glassMaterial=await page.locator('.topbar').evaluate(el=>getComputedStyle(el).backdropFilter.includes('blur')&&el.style.getPropertyValue('--glass-x')!=='');
   await page.emulateMedia({reducedMotion:'reduce'});const reduced=await page.locator('.card').first().evaluate(el=>getComputedStyle(el).animationName==='none');
@@ -305,10 +305,12 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   const accountGroupChecks=await require('./ui-account-group-checks.cjs')(page,'http://127.0.0.1:5113');
   const accountGroups=accountGroupChecks.every(check=>check.pass);
   const advanceChecks=await require('./ui-advance-checks.cjs')(browser,context,'http://127.0.0.1:5113');
+  const notificationChecks=await require('./ui-notification-checks.cjs')(page,'http://127.0.0.1:5113');
   const interaction={borrowingTimes,transactionTimes,categorySorting,categoryIcons,categoryParentChanged,categoryEditPreserved,adaptiveWorkspace,foreignAmountNotCopied,entryStable,reportCalendarGrid,reportToolbarConsistent,controlFontsConsistent,transferFiltered,expenseCardRestored,recurringAccountFiltered,returnNavigation,financeLayout,menuClosed,focusReturned,rowFocusReturned,trapped,drawerClosed,resizedDrawerReleased,reduced,minimal,coarseTablet,zoom200,wideContentFills,ledgerMenuFits,dashboardGaps,compactLedger,advancedCollapsed,inlineDetails,inspectorFocusReturned,inspectorResizeReleased,mobileDetails,mobileOrder,inspectorControlsReachable,glassMaterial,categorySoftDeleted,categoryRestored,compactPageSize,categoryKindSync,categoryModalFocusReturned,categoryDropdownEscape,recurringClonedSelect,categoryNoJs,naturalCards,boundedPages,variantLayouts,darkLoginTheme,selectReopensAfterOutside};
   interaction.accountGroups=accountGroups;
   interaction.advances=advanceChecks.every(check=>check.pass);
-  const summary={advanceChecks,accountGroupChecks,borrowingTimeChecks,transactionTimeChecks,categorySortChecks,categoryIconChecks,categoryParentChecks,adaptiveChecks,financeJourneys,pages:results.length,failures:results.filter(x=>x.overflow||x.status>=500),errors,interaction,authChecks,variants,results};
+  interaction.notifications=notificationChecks.every(check=>check.pass);
+  const summary={notificationChecks,advanceChecks,accountGroupChecks,borrowingTimeChecks,transactionTimeChecks,categorySortChecks,categoryIconChecks,categoryParentChecks,adaptiveChecks,financeJourneys,pages:results.length,failures:results.filter(x=>x.overflow||x.status>=500),errors,interaction,authChecks,variants,results};
   if(financeJourneys.some(j=>!j.reversed||!j.restored||!j.allocationVisible||j.overflow)||summary.failures.length||errors.length||Object.values(interaction).some(v=>!v)||authChecks.some(x=>x.overflow))process.exitCode=1;
 
   fs.writeFileSync(root+'/.screenshots/qa.json',JSON.stringify(summary,null,2));

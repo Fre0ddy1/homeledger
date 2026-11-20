@@ -248,10 +248,12 @@ function csrfProtect(req, res, next) {
 
 /* --------------------------------- 通知中心 -------------------------------- */
 
-function notify(userId, { kind = 'info', title, body = null, link = null, ledgerId = null }) {
+function notify(userId, { kind = 'info', title, body = null, link = null, ledgerId = null, eventType = null, details = null }) {
+  const { eventKey } = require('./notification-types');
   run(
-    'INSERT INTO notifications (user_id, ledger_id, kind, title, body, link, created_at) VALUES (?,?,?,?,?,?,?)',
-    userId, ledgerId, kind, title, body, link, nowStr()
+    `INSERT INTO notifications (user_id, ledger_id, kind, title, body, link, created_at, event_type, event_details, event_key, created_ms)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,
+    userId, ledgerId, kind, title, body, link, nowStr(), eventType, details ? JSON.stringify(details) : null, eventKey(body), Date.now()
   );
 }
 

@@ -159,6 +159,7 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 | `GET /api/open/accounts` | 账户余额、净资产及`type/type_label/transaction_types` |
 | `GET /api/open/categories` / `GET /api/open/tags` | 有效分类扁平清单、标签；分类可用 `show=deleted` 查询已删除项 |
 | `GET /api/open/debts` / `GET /api/open/budgets` / `GET /api/open/goals` / `GET /api/open/subscriptions` / `GET /api/open/recurring` | 借钱台账 / 预算 / 目标 / 订阅 / 定期记账 |
+| `GET /api/open/notifications` / `GET /api/open/notifications/rules` | 当前账号在绑定账本的通知 / 当天消费及信用卡提醒规则。订阅仍使用订阅自身的 `reminder_days` |
 | `GET /api/open/settings` | 站点与 AI 配置（API Key 永不回显，只有 `api_key_set`） |
 
 ### 写入（可写成员）
@@ -174,6 +175,7 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 | `POST /api/open/categories` / `:id` / `:id/delete` / `:id/restore`；`POST /api/open/tags` / `:id/delete` | 内置/自建分类的增改、软删除与恢复；标签管理 |
 | `POST /api/open/debts`（`create_txn:true` 同时记借出/借入流水）/ `:id/settle`（收还款，缺省金额=全部余额）/ `:id/delete` / `:id/restore` / `:id/link` | 借钱台账（完整参数见金融参考） |
 | `POST /api/open/budgets` / `:id` / `:id/toggle` / `:id/delete` | 预算管理 |
+| `POST /api/open/notifications/rules/daily` / `/rules/cards/:id` | 账本管理员保存当天消费预警（`budget_cents`、`alert_pct`、`enabled`、`scope`、`timezone`）或信用卡提醒（`closing_days`、`repayment_days`、`send_time`、`timezone`）。个人推送渠道及凭据在网页设置管理 |
 | `POST /api/open/goals` / `:id/deposit`（`amount` 负数为取出；`create_txn:true` 记流水）/ `:id/delete` | 储蓄目标 |
 | `POST /api/open/subscriptions` / `:id` / `:id/charge` / `:id/skip` / `:id/toggle` / `:id/cancel` / `:id/delete` | 订阅扣费全生命周期 |
 | `POST /api/open/recurring` / `:id/run` / `:id/toggle` / `:id/delete` | 定期记账（`auto_post:true` 到期自动记账；执行须传`scheduled_date=next_run_at`，重试复用同一期日期） |

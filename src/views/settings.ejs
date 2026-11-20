@@ -2,6 +2,7 @@
   <a href="#account" class="active">账号安全</a>
   <a href="#ai">AI 记账</a>
   <a href="#api">开放 API</a>
+  <a href="#notifications">通知与推送</a>
   <% if (isAdmin) { %><a href="#site">站点设置</a><a href="#admin">系统管理</a><% } %>
   <a href="#env">运行信息</a>
 </div>
@@ -281,6 +282,8 @@
 </div>
 
 <% if (isAdmin) { %>
+<div id="notifications" data-tab="notifications"><%- include('partials/notification-settings', { push: notificationSettings }) %></div>
+
 <div class="card" id="site" data-tab="site">
   <div class="card-head"><h2>站点与安全设置</h2></div>
   <form method="post" action="/settings/site">

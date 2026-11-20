@@ -5,6 +5,12 @@ function ruleFor(p,date){return [...p.rules].reverse().find(r=>r.effective_from<
 function closingFor(date,day){let close=c.monthDate(date,0,day);if(date>close)close=c.monthDate(date,1,day);return close;}
 function nextClosing(p,after){for(let n=0;n<4;n++)for(const rule of p.rules){const close=c.monthDate(after,n,rule.bill_day);if(close>after&&ruleFor(p,close).bill_day===rule.bill_day)return close;}throw Error('无法推进账期');}
 function previousClosing(p,close){const candidates=[];for(let n=0;n>=-3;n--)for(const rule of p.rules){const d=c.monthDate(close,n,rule.bill_day);if(d<close&&ruleFor(p,d).bill_day===rule.bill_day)candidates.push(d);}return candidates.sort().at(-1)||c.monthDate(close,-1,ruleFor(p,close).bill_day);}
+function plannedClosing(ledgerId, accountId, date) {
+  const p = profile(ledgerId, accountId);
+  const rule = ruleFor(p, date);
+  if (c.monthDate(date, 0, rule.bill_day) !== date) return null;
+  return { closing_date: date, due_date: c.monthDate(date, rule.due_month_offset, rule.due_day) };
+}
 function configure(lid,id,body){return db.tx(()=>{
  const account=c.account(lid,id,{type:'credit'});c.baseCurrency(lid,account.currency);
  const old=db.get('SELECT * FROM credit_profiles WHERE ledger_id=? AND account_id=?',lid,Number(id)),bill=Number(body.bill_day??old?.bill_day??account.bill_day??20),due=Number(body.due_day??old?.due_day??account.due_day??10),offset=Number(body.due_month_offset??old?.due_month_offset??1);
@@ -89,4 +95,4 @@ function recordCharges(lid,id,body,uid){return db.tx(()=>{
  refresh(lid,s.account_id);if(s.confirmed_at)confirmStatement(lid,id,{confirm:true,confirmed_cents:body.confirmed_cents??s.confirmed_cents,note:body.note||s.note});db.run('INSERT INTO credit_charge_operations VALUES(?,?,?,?,?)',lid,key,s.id,signature,JSON.stringify(ids));return {transaction_ids:ids,txn_date:date,txn_time:txnTime,statement:statementDetail(lid,id)};
 });}
 function afterTransactions(lid,ids,extraAccounts=[]){const cards=new Set();for(const aid of extraAccounts)if(aid&&db.get('SELECT account_id FROM credit_profiles WHERE ledger_id=? AND account_id=?',lid,aid))cards.add(aid);for(const id of ids||[]){const t=db.get('SELECT account_id,to_account_id FROM transactions WHERE ledger_id=? AND id=?',lid,Number(id));if(t)for(const aid of [t.account_id,t.to_account_id])if(aid&&db.get('SELECT account_id FROM credit_profiles WHERE ledger_id=? AND account_id=?',lid,aid))cards.add(aid);}for(const id of cards)refresh(lid,id);}
-module.exports={profile,configure,closingFor,refresh,statements,statementDetail,detail,list,confirmStatement,unconfirmStatement,guardTransaction,correctPosting,statementForTransaction,installment,cancelPlan,recordCharges,afterTransactions};
+module.exports={profile,configure,closingFor,plannedClosing,refresh,statements,statementDetail,detail,list,confirmStatement,unconfirmStatement,guardTransaction,correctPosting,statementForTransaction,installment,cancelPlan,recordCharges,afterTransactions};

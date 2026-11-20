@@ -240,6 +240,7 @@ app.use('/', require('./src/routes/subscriptions'));
 app.use('/', require('./src/routes/ai'));
 app.use('/', require('./src/routes/reports'));
 app.use('/', require('./src/routes/admin'));
+app.use('/settings/notifications', require('./src/routes/notifications'));
 app.use('/', require('./src/routes/about'));
 
 /* --------------------------------- 错误处理 -------------------------------- */
