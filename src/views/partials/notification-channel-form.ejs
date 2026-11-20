@@ -1,0 +1,55 @@
+<form method="post" action="<%= channel.id ? '/settings/notifications/channels/' + channel.id + '/save' : '/settings/notifications/channels' %>">
+  <input type="hidden" name="_csrf" value="<%= csrf %>">
+  <div class="grid grid-2">
+    <label class="field">渠道名称<input type="text" name="name" value="<%= channel.name || '' %>" required maxlength="60" placeholder="我的手机"></label>
+    <% if (!channel.id) { %>
+      <label class="field">类型<select name="type"><% Object.entries(push.kinds).forEach(([id, label]) => { %>
+        <option value="<%= id %>"><%= label %></option>
+      <% }) %></select></label>
+    <% } %>
+    <label class="field">完整服务地址<input name="url" type="password" autocomplete="new-password" maxlength="2048"
+      placeholder="<%= channel.id ? '留空保留已保存的地址' : '留空使用 Bark 或 Server 酱默认地址' %>"></label>
+    <label class="field">连接与响应超时（毫秒）<input name="timeout_ms" type="number" min="500" max="20000" value="<%= channel.timeout_ms || 5000 %>"></label>
+    <label class="field">SendKey 或设备 Key<input name="key" type="password" autocomplete="new-password" maxlength="200"
+      placeholder="<%= channel.id ? '•••••••• 留空保留' : '完整 Server 酱地址已含密钥，可留空' %>"></label>
+    <label class="field">时区<input type="text" name="timezone" value="<%= channel.timezone || push.timezone %>" required></label>
+  </div>
+  <details class="mt12 mb12">
+    <summary>协议、端口与请求设置</summary>
+    <div class="grid grid-2 mt12">
+      <label class="field">协议<select name="protocol"><option value="https">HTTPS</option><option value="http">HTTP</option></select></label>
+      <label class="field">域名或 IP<input type="text" name="host" placeholder="192.168.1.20" maxlength="253"></label>
+      <label class="field">端口<input name="port" type="number" min="1" max="65535" placeholder="使用协议默认端口"></label>
+      <label class="field">路径<input type="text" name="path" maxlength="1024" placeholder="/notify"></label>
+      <label class="field">Webhook 请求方法<select name="method"><option value="">默认或保持现有值</option><option>POST</option><option>GET</option></select></label>
+      <label class="field">Webhook 请求体格式<select name="bodyFormat"><option value="">默认或保持现有值</option><option value="json">JSON</option><option value="form">表单</option></select></label>
+      <label class="field">Webhook Query（JSON）<textarea name="query" maxlength="8192" rows="2" placeholder='{"title":"{{title}}"}'></textarea></label>
+      <label class="field">Webhook 请求头（JSON）<textarea name="headers" maxlength="8192" rows="2" placeholder='{"Authorization":"Bearer …"}'></textarea></label>
+      <label class="field">Webhook 请求体（JSON）<textarea name="body" maxlength="8192" rows="2" placeholder='{"title":"{{title}}","body":"{{content}}"}'></textarea></label>
+      <label class="field">Bark 或 Server 酱参数（JSON）<textarea name="options" maxlength="8192" rows="2" placeholder='{"group":"家账簿"}'></textarea></label>
+      <label class="field">标题模板<input type="text" name="titleTemplate" placeholder="{{title}}" maxlength="512"></label>
+      <label class="field">正文模板<textarea name="contentTemplate" rows="2" placeholder="{{content}}" maxlength="4096"></textarea></label>
+      <% if (channel.id && channel.type !== 'webhook') { %><label class="check"><input type="checkbox" name="official_url" value="1">恢复服务默认地址</label><% } %>
+      <% if (channel.id) { %><label class="check"><input type="checkbox" name="replace_config" value="1">清除原请求配置并使用本次填写内容</label><% } %>
+    </div>
+    <p class="muted small">支持 {{title}}、{{content}}、{{event_type}}、{{amount}}、{{date}} 和 {{url}}。已有地址、凭据和请求配置会掩码处理，留空保留。</p>
+  </details>
+  <div class="grid grid-2">
+    <label class="field">免打扰开始<input name="quiet_start" type="time" value="<%= channel.quiet_start || '' %>"></label>
+    <label class="field">免打扰结束<input name="quiet_end" type="time" value="<%= channel.quiet_end || '' %>"></label>
+  </div>
+  <div class="row wrap mb12" style="gap:12px">
+    <label class="check"><input type="checkbox" name="enabled" value="1" <%= channel.enabled ? 'checked' : '' %>>启用渠道</label>
+    <label class="check"><input type="checkbox" name="hide_amount" value="1" <%= channel.hide_amount ? 'checked' : '' %>>隐藏金额</label>
+    <label class="check"><input type="checkbox" name="all_events" value="1" <%= channel.events.includes('*') ? 'checked' : '' %>>转发所有通知类型</label>
+  </div>
+  <details class="mb12">
+    <summary>选择要推送的通知类型</summary>
+    <div class="row wrap mt12" style="gap:12px">
+      <% Object.entries(push.types).forEach(([key, label]) => { %>
+        <label class="check"><input type="checkbox" name="event_types" value="<%= key %>" <%= channel.events.includes(key) ? 'checked' : '' %>><%= label %></label>
+      <% }) %>
+    </div>
+  </details>
+  <button type="submit" class="btn btn-primary"><%= channel.id ? '保存渠道' : '添加渠道' %></button>
+</form>

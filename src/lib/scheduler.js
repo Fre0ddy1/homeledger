@@ -70,7 +70,8 @@ function runDueRecurring(today = todayStr()) {
     if (!alreadyNotified(dedupeKey)) {
       for (const uid of ledgerWriterIds(rule.ledger_id)) {
         notify(uid, {
-          kind: 'recurring', ledgerId: rule.ledger_id,
+          kind: 'recurring', ledgerId: rule.ledger_id, eventType: 'recurring',
+          details: { date: rule.next_run_at },
           title: `周期账单待确认：${rule.name}`,
           body: `计划日期 ${rule.next_run_at} |${dedupeKey}`,
           link: '/recurring',
@@ -132,13 +133,14 @@ function budgetPeriodRange(b, ref = new Date()) {
   }
 }
 
-function budgetUsedInRange(b, start, end, { fixedOnly = false } = {}) {
+function budgetUsedInRange(b, start, end, { fixedOnly = false, clearedOnly = false } = {}) {
   const params = [b.ledger_id, start, end];
   const typeCond = b.trigger_type === 'income' ? "AND type IN ('income')" : "AND type IN ('expense','fee')";
   // fixedOnly：只统计系统自动入账的固定扣费（订阅扣费/周期账单），供月末预测拆日常节奏用
   const fixedCond = fixedOnly ? "AND source IN ('subscription','recurring')" : '';
   let sql = `SELECT COALESCE(SUM(amount_base_cents),0) AS s FROM transactions
-             WHERE ledger_id = ? AND deleted_at IS NULL AND txn_date BETWEEN ? AND ? ${typeCond} ${fixedCond}`;
+             WHERE ledger_id = ? AND deleted_at IS NULL AND txn_date BETWEEN ? AND ? ${typeCond} ${fixedCond}
+             ${clearedOnly ? "AND status = 'cleared'" : ''}`;
   if (b.scope === 'category' && b.category_id) {
     sql += ' AND (category_id = ? OR category_id IN (SELECT id FROM categories WHERE parent_id = ?))';
     params.push(b.category_id, b.category_id);
@@ -223,7 +225,8 @@ function checkBudgets() {
       : `预算预警：${b.name}`;
     const body = `已用 ${(used / 100).toFixed(2)} / ${(amount / 100).toFixed(2)}（${ratio.toFixed(0)}%）|${dedupeKey}`;
     for (const uid of ledgerWriterIds(b.ledger_id)) {
-      notify(uid, { kind: level === 'over' ? 'danger' : 'warn', ledgerId: b.ledger_id, title, body, link: '/budgets' });
+      notify(uid, { kind: level === 'over' ? 'danger' : 'warn', ledgerId: b.ledger_id,
+        title, body, link: '/budgets', eventType: 'budget', details: { amountCents: used, date: range.end } });
     }
     alerted++;
   }
@@ -246,7 +249,8 @@ function checkDebts() {
     const who = d.direction === 'receivable' ? `应收 ${d.counterparty}` : `应付 ${d.counterparty}`;
     for (const uid of ledgerWriterIds(d.ledger_id)) {
       notify(uid, {
-        kind: overdue ? 'danger' : 'warn',
+        kind: overdue ? 'danger' : 'warn', eventType: 'debt',
+        details: { date: d.due_date, amountCents: d.balance_cents },
         ledgerId: d.ledger_id,
         title: `${overdue ? '已逾期' : '即将到期'}：${who}`,
         body: `金额 ${(d.balance_cents / 100).toFixed(2)}，到期日 ${d.due_date} |${dedupeKey}`,
@@ -260,12 +264,31 @@ function checkDebts() {
 
 function checkFinance(today=todayStr()) {
   const end=require('./finance/common').nextDay(require('./finance/common').nextDay(require('./finance/common').nextDay(today)));let count=0;
-  function remind(lid,key,title,due,amount,link){if(!amount||due>end||alreadyNotified(key))return;for(const uid of ledgerWriterIds(lid))notify(uid,{kind:due<today?'danger':'warn',ledgerId:lid,title,body:`待还 ${(amount/100).toFixed(2)}，还款日 ${due} |${key}`,link});count++;}
+  function remind(lid,key,title,due,amount,link,eventType, details = {}) {
+    if (!amount || due > end || alreadyNotified(key)) return;
+    for (const uid of ledgerWriterIds(lid)) notify(uid, {
+      kind: due < today ? 'danger' : 'warn', ledgerId: lid, title, eventType,
+      details: { date: due, amountCents: amount, ...details },
+      body: `待还 ${(amount / 100).toFixed(2)}，还款日 ${due} |${key}`, link,
+    });
+    count++;
+  }
   for(const loan of all('SELECT * FROM finance_contracts WHERE deleted_at IS NULL AND remind_enabled=1')){
     if(!get('SELECT id FROM ledgers WHERE id=?',loan.ledger_id))continue;
-    for(const i of require('./finance/loans').installments(loan.ledger_id,loan.id))remind(loan.ledger_id,`finance:loan:${i.id}:${i.due_date}`,loan.name+'还款提醒',i.due_date,i.remaining_principal+i.remaining_interest+i.remaining_fee,'/finance/loans/'+loan.id);
+    for(const i of require('./finance/loans').installments(loan.ledger_id,loan.id))remind(loan.ledger_id,`finance:loan:${i.id}:${i.due_date}`,loan.name+'还款提醒',i.due_date,i.remaining_principal+i.remaining_interest+i.remaining_fee,'/finance/loans/'+loan.id,'loan');
   }
-  for(const p of all('SELECT p.* FROM credit_profiles p JOIN accounts a ON a.id=p.account_id JOIN ledgers l ON l.id=p.ledger_id WHERE p.remind_enabled=1 AND a.is_archived=0'))for(const s of require('./finance/cards').refresh(p.ledger_id,p.account_id))remind(p.ledger_id,`finance:card:${s.id}:${s.due_date}`,'信用卡账单还款提醒'+(s.dirty?'（待核对）':''),s.due_date,s.remaining_cents,'/finance/statements/'+s.id);
+  const profiles = all(`SELECT p.*, a.name AS card_name, a.currency FROM credit_profiles p
+    JOIN accounts a ON a.id=p.account_id JOIN ledgers l ON l.id=p.ledger_id
+    WHERE a.is_archived=0 AND p.remind_enabled=1`);
+  for (const p of profiles) {
+    const statements = require('./finance/cards').refresh(p.ledger_id, p.account_id);
+    const rules = require('./notification-rules');
+    const rule = rules.cardRule(p.account_id);
+    if (rule?.repayment_days) continue;
+    for (const s of statements) remind(p.ledger_id, `finance:card:${s.id}:${s.due_date}`,
+      '信用卡账单还款提醒' + (s.dirty ? '（待核对）' : ''), s.due_date, s.remaining_cents,
+      '/finance/statements/' + s.id, 'card_repayment', { statementId: s.id });
+  }
   return count;
 }
 
@@ -281,7 +304,8 @@ function checkGoals() {
     const left = Math.max(0, Number(g.target_cents) - Number(g.saved_cents));
     for (const uid of ledgerWriterIds(g.ledger_id)) {
       notify(uid, {
-        kind: 'info', ledgerId: g.ledger_id,
+        kind: 'info', ledgerId: g.ledger_id, eventType: 'goal_due',
+        details: { date: g.target_date, amountCents: left },
         title: `储蓄目标临近：${g.name}`,
         body: `还差 ${(left / 100).toFixed(2)}，目标日 ${g.target_date} |${dedupeKey}`,
         link: '/goals',
@@ -331,6 +355,7 @@ function runDaily() {
 }
 
 function initScheduler() {
+  require('./notification-push').init();
   // 启动时先跑一次（补上次停机期间漏掉的周期账单与订阅扣费）
   setTimeout(() => {
     const r = runDaily();

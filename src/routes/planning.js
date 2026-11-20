@@ -330,7 +330,7 @@ router.post('/goals/:id/deposit', auth.requireLogin, auth.requireLedgerWrite, (r
   }
   if (status === 'done') {
     for (const uid of auth.ledgerWriterIds(ledgerId)) {
-      auth.notify(uid, { kind: 'success', ledgerId, title: `🎉 储蓄目标达成：${g.name}`, link: '/goals' });
+      auth.notify(uid, { kind: 'success', ledgerId, eventType: 'goal_reached', title: `🎉 储蓄目标达成：${g.name}`, link: '/goals' });
     }
   }
   res.flash('success', status === 'done' ? '目标已达成 🎉' : '进度已更新');

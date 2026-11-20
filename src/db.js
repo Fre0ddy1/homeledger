@@ -35,6 +35,7 @@ function reopenDatabase() {
   cache.clear();
   initialized = false;
   init();
+  require('./lib/notification-schema').afterRestore(db);
 }
 
 /* ---------------------------------- 小工具 --------------------------------- */
@@ -763,6 +764,7 @@ function init() {
   if (initialized) return;
   require('./lib/finance-schema').ensure(db,ensureColumn);
   require('./lib/advance-schema').ensure(db);
+  require('./lib/notification-schema').ensure(db, ensureColumn);
   // A restored pre-upgrade backup also needs the new category schema; module
   // top-level migrations only run once per process, while reopenDatabase doesn't.
   db.exec(`CREATE TABLE IF NOT EXISTS category_copies (

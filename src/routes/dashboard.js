@@ -199,7 +199,9 @@ router.get('/notifications', auth.requireLogin, (req, res) => {
      WHERE n.user_id = ? ORDER BY n.is_read, n.id DESC LIMIT 200`,
     req.session.userId
   );
-  res.render('notifications', { title: '通知中心', activeNav: 'notifications', rows });
+  const { readableBody } = require('../lib/notification-types');
+  res.render('notifications', { title: '通知中心', activeNav: 'notifications',
+    rows: rows.map(n => ({ ...n, readableBody: readableBody(n.body) })) });
 });
 
 router.post('/notifications/read-all', auth.requireLogin, (req, res) => {

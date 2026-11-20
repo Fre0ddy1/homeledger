@@ -21,9 +21,7 @@
             <% if (n.ledger_name) { %><span class="chip"><%= n.ledger_name %></span><% } %>
             <% if (!n.is_read) { %><span class="chip primary">未读</span><% } %>
           </div>
-          <% if (n.body) { %>
-            <div class="small muted mt8"><%= n.body.replace(/\|budget:.*$/, '').replace(/\|debt:.*$/, '').replace(/\|goal:.*$/, '') %></div>
-          <% } %>
+          <% if (n.body) { %><div class="small muted mt8"><%= n.readableBody %></div><% } %>
           <div class="tiny muted mt8"><%= helpers.fmtDateTime(n.created_at) %></div>
         </div>
         <div class="right">

@@ -38,7 +38,7 @@ function materialize(ledgerId) {
     }
     for (const c of sources) run('UPDATE categories SET parent_id=? WHERE id=?', c.parent_id ? (map.get(Number(c.parent_id)) || c.parent_id) : null,map.get(Number(c.id)));
     for (const [source,copy] of map) {
-      for (const table of ['transactions','budgets','subscriptions']) run(`UPDATE ${table} SET category_id=? WHERE ledger_id=? AND category_id=?`,copy,ledgerId,source);
+      for (const table of ['transactions','budgets','subscriptions','daily_spend_rules']) run(`UPDATE ${table} SET category_id=? WHERE ledger_id=? AND category_id=?`,copy,ledgerId,source);
       run('UPDATE categories SET parent_id=? WHERE ledger_id=? AND parent_id=?',copy,ledgerId,source);
       for (const field of ['recommended','confirmed']) run(`UPDATE habit_feedback SET ${field}=? WHERE ledger_id=? AND field='category' AND ${field}=?`,String(copy),ledgerId,String(source));
     }

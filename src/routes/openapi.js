@@ -403,6 +403,7 @@ router.get('/tags', (req, res) => {
 
 router.use('/debts', require('./borrowing').routerFactory(true,{requireWrite,ok,bad}));
 router.use('/finance', require('./finance-api')({requireWrite,ok,bad}));
+router.use('/notifications', require('./notification-api')({ ok, bad }));
 
 router.get('/budgets', (req, res) => {
   const { ledgerId } = req.openAuth;
@@ -1016,7 +1017,7 @@ router.post('/goals/:id/deposit', requireWrite, (req, res) => {
   }); } catch(e) { return bad(res,400,e.message); }
   if (status === 'done') {
     for (const uid of auth.ledgerWriterIds(ledgerId)) {
-      auth.notify(uid, { kind: 'success', ledgerId, title: `🎉 储蓄目标达成：${g.name}`, link: '/goals' });
+      auth.notify(uid, { kind: 'success', ledgerId, eventType: 'goal_reached', title: `🎉 储蓄目标达成：${g.name}`, link: '/goals' });
     }
   }
   auth.audit(req, 'api.goal.deposit', { ledgerId, entity: 'goal', entityId: g.id, detail: String(delta) });

@@ -14,6 +14,7 @@ const SUITES = [
   'verify-about.js',
   'verify-startup.js',
   'verify-settings-admin.js',
+  'verify-notification-push.js',
   'verify-ai-chat.js',
   'verify-ai-image.js',
   'verify-ai-attachments.js',
