@@ -225,6 +225,8 @@ function readTxnBody(ledgerId, body, { createdAccounts = [], existingCategoryId 
     type,
     amount_cents: amountCents,
     currency: String(body.currency || 'CNY').toUpperCase().slice(0, 8),
+    rate: body.rate,
+    settlement_amount_cents: body.settlement_amount_cents,
     account_id: accountId,
     to_account_id: toAccountId,
     category_id: category ? Number(category.id) : null,
@@ -278,7 +280,7 @@ router.get('/transactions/recent', (req, res) => {
       to_account_type_label: r.to_account_type ? ACCOUNT_TYPE_MAP[r.to_account_type]?.label || '其他' : null,
       // 与 GET /transactions 序列化同型：no_rhythm 统一为布尔，不给对接方两种类型
       no_rhythm: !!Number(r.no_rhythm),
-      images: (imgMap.get(Number(r.id)) || []).map((i) => ({ id: i.id, path: `/uploads/${i.rel_path}`, size: i.size })),
+      images: (imgMap.get(Number(r.id)) || []).map((i) => ({ id: i.id, path: `/api/open/attachments/${i.id}`, size: i.size })),
     })),
   });
 });
@@ -313,6 +315,7 @@ router.get('/transactions', (req, res) => {
     transactions: result.rows.map((t) => ({
       id: t.id, type: t.type, type_label: t.type_label,
       amount_cents: t.amount_cents, amount_base_cents: t.amount_base_cents, currency: t.currency,
+      rate: t.rate, rate_source: t.rate_source, rate_date: t.rate_date,
       advance: t.advance || null,
       advance_collection:t.advance_collection||null,
       component_view:!!t.component_view,
@@ -326,7 +329,7 @@ router.get('/transactions', (req, res) => {
       no_rhythm: !!Number(t.no_rhythm),
       is_reimbursable: !!t.is_reimbursable, reimbursed_at: t.reimbursed_at,
       source: t.source, attachment_count: t.attachment_count || 0,
-      images: (imgMap.get(Number(t.id)) || []).map((i) => ({ id: i.id, path: `/uploads/${i.rel_path}`, size: i.size })),
+      images: (imgMap.get(Number(t.id)) || []).map((i) => ({ id: i.id, path: `/api/open/attachments/${i.id}`, size: i.size })),
     })),
   });
 });
@@ -336,7 +339,7 @@ router.get('/transactions/:id', (req, res) => {
   const t = txn.getTransaction(Number(req.params.id), ledgerId);
   if (!t) return bad(res, 404, '记录不存在');
   ok(res, {
-    transaction: { ...t, images: att.listByTxn(t.id).map((i) => ({ id: i.id, path: `/uploads/${i.rel_path}`, size: i.size })), splits: txn.splitsOf(t.id) },
+    transaction: { ...t, images: att.listByTxn(t.id).map((i) => ({ id: i.id, path: `/api/open/attachments/${i.id}`, size: i.size })), splits: txn.splitsOf(t.id) },
   });
 });
 
@@ -379,6 +382,7 @@ router.get('/accounts', (req, res) => {
   const overview = txn.accountOverview(ledgerId);
   ok(res, {
     net: overview.net, assets: overview.assets, liabilities: overview.liabilities,
+    currency: overview.currency, unvalued_currencies: overview.unvaluedCurrencies,
     accounts: overview.accounts.map((a) => ({
       id: a.id, name: a.name, type: a.type, type_label: ACCOUNT_TYPE_MAP[a.type]?.label || '其他', icon: a.icon, currency: a.currency,
       transaction_types:require('../lib/account-policy').decorate([a])[0].transaction_types.split(',').filter(Boolean),
@@ -562,6 +566,8 @@ router.post('/transactions/:id', requireWrite, (req, res) => {
       amount: body.amount_cents != null ? undefined : (body.amount ?? (Number(old.amount_cents) / 100)),
       amount_cents: body.amount_cents ?? undefined,
       currency: body.currency ?? old.currency,
+      rate: body.rate,
+      settlement_amount_cents: body.settlement_amount_cents,
       account_id: body.account_id ?? (body.account != null ? undefined : old.account_id),
       account: body.account,
       to_account_id: body.to_account_id ?? (body.to_account != null ? undefined : old.to_account_id),
@@ -660,7 +666,7 @@ router.post('/ai/bill', requireWrite, async (req, res) => {
       return ok(res, {
         engine: result.engine, model: result.model || null,
         warnings, drafts: result.items, confirmed: false,
-        images: savedImages.map((s) => ({ id: s.id, path: `/uploads/${s.rel}`, size: s.size, txn_id: null })),
+        images: savedImages.map((s) => ({ id: s.id, path: `/api/open/attachments/${s.id}`, size: s.size, txn_id: null })),
         hint: '检查 drafts 无误后，用 confirm=true 重新调用即可直接入库（图片会随记录一起保存并关联）',
       });
     }
@@ -716,7 +722,7 @@ router.post('/ai/bill', requireWrite, async (req, res) => {
       warnings, accounts_created: createdAccounts,
       confirmed: true, created: created.length, ids: created, errors,
       images: savedImages.map((s) => ({
-        id: s.id, path: `/uploads/${s.rel}`, size: s.size,
+        id: s.id, path: `/api/open/attachments/${s.id}`, size: s.size,
         txn_id: (linked.find((l) => l.image_id === s.id) || {}).txn_id ?? null,
       })),
     });
@@ -727,14 +733,15 @@ router.post('/ai/bill', requireWrite, async (req, res) => {
 
 /* ---------------------------- 记录 / 截图回查 ----------------------------- */
 
-/** 取回某张账单截图（需令牌；网页端 /uploads/<rel_path> 同样可直接访问） */
+/** 取回绑定账本的截图。网页端图片走会话和账本成员权限。 */
 router.get('/attachments/:id', (req, res) => {
   const { ledgerId } = req.openAuth;
   const found = att.resolveFile(ledgerId, req.params.id);
   if (!found) return bad(res, 404, '截图不存在');
   res.type(att.safeMime(found.row.mime));
-  res.setHeader('Cache-Control', 'private, max-age=86400');
-  res.sendFile(found.abs);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.sendFile(found.abs, { cacheControl: false });
 });
 
 /* --------------------------------- 账户管理 -------------------------------- */
@@ -827,7 +834,7 @@ router.post('/accounts/:id/adjust', requireWrite, (req, res) => {
   if (!delta) return bad(res, 400, '余额一致，无需调整');
   try {
     const id = txn.createTransaction(ledgerId, userId, {
-      type: 'adjust', amount_cents: delta, account_id: acc.id,
+      type: 'adjust', amount_cents: delta, currency: acc.currency, account_id: acc.id,
       txn_date: txnTime.normalizeDate(body.date ?? body.txn_date ?? body.adjust_date, todayStr()),
       txn_time: txnTime.normalizeTime(Object.prototype.hasOwnProperty.call(body,'time') ? body.time : body.txn_time),
       note: `余额调整：${u.fmtAmount(acc.balance_cents)} → ${u.fmtAmount(actual)}${body.note ? ' · ' + body.note : ''}`,

@@ -26,7 +26,8 @@ function readForm(body) {
     type: TXN_TYPE_MAP[body.type] ? body.type : 'expense',
     amount_cents: u.parseAmountToCents(body.amount),
     currency: body.currency || 'CNY',
-    rate: body.rate ? Number(body.rate) : 1,
+    rate: body.rate === undefined ? undefined : String(body.rate).trim(),
+    settlement_amount_cents: String(body.settlement_amount ?? '').trim() ? u.parseAmountToCents(body.settlement_amount) : undefined,
     account_id: body.account_id || null,
     to_account_id: body.to_account_id || null,
     category_id: body.category_id || null,
@@ -61,7 +62,7 @@ router.get('/:id/json', auth.requireLogin, (req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
   const t = txn.getTransaction(Number(req.params.id), ledgerId);
   if (!t) return res.status(404).json({ ok: false, error: '记录不存在' });
-  res.json({ ok: true, txn: t, attachments: att.listByTxn(t.id) });
+  res.json({ ok: true, txn: t, base_currency: res.locals.ledger.currency, attachments: att.listByTxn(t.id) });
 });
 
 router.get('/', auth.requireLogin, (req, res) => {
@@ -120,8 +121,7 @@ router.get('/new', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
     merchant: '',
     tags: '',
     is_reimbursable: 0,
-    currency: 'CNY',
-    rate: 1,
+    currency: res.locals.ledger.currency || 'CNY',
     status: 'cleared',
   };
   if (req.query.from_ai) {
@@ -158,7 +158,7 @@ router.post('/', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
     const form = fd.txFormData(ledgerId, req.session.userId);
     res.status(400).render('txn-form', {
       title: '记一笔', activeNav: 'new', mode: 'create', form,
-      t: { ...data, amount: (data.amount_cents / 100).toFixed(2),advance_person:req.body.advance_person,advance_amount:req.body.advance_amount,advance_operation_key:req.body.advance_operation_key },
+      t: { ...data, amount: (data.amount_cents / 100).toFixed(2), settlement_amount: req.body.settlement_amount, advance_person:req.body.advance_person,advance_amount:req.body.advance_amount,advance_operation_key:req.body.advance_operation_key },
       splitRows: data.splits, splits: [], back: safeBack(req.body.back), error: e.message,
       family: require('../lib/ai').familyMembers(ledgerId),
     });
@@ -321,7 +321,7 @@ router.post('/:id', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
     const t = txn.getTransaction(id, ledgerId);
     res.status(400).render('txn-form', {
       title: '编辑记录', activeNav: 'transactions', mode: 'edit', form,
-      t: { ...t, ...data, amount: (data.amount_cents / 100).toFixed(2) },
+      t: { ...t, ...data, amount: (data.amount_cents / 100).toFixed(2), settlement_amount: req.body.settlement_amount },
       splitRows: data.splits, splits: data.splits, back: safeBack(req.body.back), error: e.message,
       family: require('../lib/ai').familyMembers(ledgerId),
     });

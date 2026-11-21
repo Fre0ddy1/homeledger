@@ -200,6 +200,8 @@ for (const c of CASES) {
 }
 
 db.run('UPDATE transactions SET txn_time=? WHERE ledger_id=? AND merchant=?','18:35:20',srcLedger,'循源-支出');
+const multilineNote = '第一行,含逗号\r\n第二行"含引号"\n最后一行';
+db.run('UPDATE transactions SET note=? WHERE ledger_id=? AND merchant=?', multilineNote, srcLedger, '循源-支出');
 const listed = txn.listTransactions(srcLedger, { sort: 'date_asc', page: 1, pageSize: 200 });
 const csv = importer.toCsv(importer.EXPORT_HEADER, importer.exportRows(srcLedger, listed.rows));
 check('导出 14 行且表头含 type_key 机读列', listed.rows.length === 14 && csv.includes('type_key'), `${listed.rows.length} 行`);
@@ -208,6 +210,7 @@ const round = importer.parseBill(Buffer.from(csv, 'utf8'));
 check('导出的 CSV 能被解析器识别（表头/全部行）', round.records.length === 14 && round.neutralRecords.length === 0,
   `records=${round.records.length} neutral=${round.neutralRecords.length}`);
 const byMerchant = (m) => round.records.find((r) => r.merchant === m);
+check('导出再回导保留多行备注、逗号和双引号', byMerchant('循源-支出')?.note === multilineNote);
 check('type_key 机读列让 14 种类型回导全部 1:1 还原（不再是正则猜标签）',
   CASES.every((c) => byMerchant(c.m)?.type === c.type),
   CASES.filter((c) => byMerchant(c.m)?.type !== c.type).map((c) => `${c.m}→${byMerchant(c.m)?.type}`).join('，'));

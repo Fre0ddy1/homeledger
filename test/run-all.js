@@ -30,6 +30,7 @@ const SUITES = [
   'verify-borrowing.js',
   'verify-finance.js',
   'verify-finance-api.js',
+  'verify-fx.js',
   'verify-advances.js',
   'verify-advance-rounding.js',
   'verify-advances-api.js',

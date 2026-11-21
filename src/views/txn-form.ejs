@@ -167,22 +167,27 @@
           <label class="check"><input type="checkbox" name="no_rhythm" value="1" <%= t.no_rhythm ? 'checked' : '' %>> 一次性大额（不计入月末预测节奏）</label>
         </div>
 
-        <% if(!advance){ %><details style="margin-top:4px">
+        <% if(!advance){ const ledgerCurrency=ledger?.currency||baseCurrency; const foreign=t.currency&&t.currency!==ledgerCurrency; %><details style="margin-top:4px" <%= foreign?'open':'' %>>
           <summary class="small muted" style="cursor:pointer;margin-bottom:10px">多币种 / 汇率（可选）</summary>
           <div class="row wrap" style="gap:12px">
             <div class="field" style="flex:1;min-width:120px">
               <label>币种</label>
               <select name="currency" id="f-currency">
-                <% ['CNY','USD','EUR','HKD','JPY','GBP','KRW','SGD','AUD','CAD','TWD'].forEach(function(c){ %>
+                <% Array.from(new Set(['CNY','USD','EUR','HKD','JPY','GBP','KRW','SGD','AUD','CAD','TWD',ledgerCurrency,t.currency].filter(Boolean))).forEach(function(c){ %>
                   <option value="<%= c %>" <%= t.currency === c ? 'selected' : '' %>><%= c %></option>
                 <% }); %>
               </select>
             </div>
             <div class="field" style="flex:1;min-width:120px">
-              <label>汇率（折算为 <%= baseCurrency %>）</label>
-              <input type="text" name="rate" value="<%= t.rate || 1 %>">
+              <label>汇率（折算为 <%= ledgerCurrency %>）</label>
+              <input type="text" inputmode="decimal" data-fixed="0" name="rate" value="<%= foreign ? (t.rate ?? '') : '' %>" placeholder="留空自动折算">
+            </div>
+            <div class="field" style="flex:1;min-width:140px">
+              <label>外币实际入账金额（<%= ledgerCurrency %>）</label>
+              <input type="text" inputmode="decimal" name="settlement_amount" value="<%= t.settlement_amount || '' %>" placeholder="选填，优先于汇率">
             </div>
           </div>
+          <% if(foreign&&t.amount_base_cents!=null){ %><p class="help">当前折合 <%= helpers.money(t.amount_base_cents,ledgerCurrency) %> · <%= ({settlement:'银行入账金额',manual:'手填汇率',frankfurter:'参考汇率',seed:'内置参考汇率'})[t.rate_source]||'历史折算，请与银行核对' %><%= t.rate_source==='frankfurter'&&t.rate_date?' · '+t.rate_date:'' %></p><% } %>
         </details><% } %>
       </div>
 

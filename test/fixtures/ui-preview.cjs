@@ -12,7 +12,7 @@ db.setSetting('site.allow_register','true');
 if(!db.get("SELECT id FROM users WHERE username='qa_empty'"))db.run("INSERT INTO users(username,password_hash,display_name,created_at)VALUES('qa_empty',?,'新成员',?)",auth.hashPassword('testpass123'),db.nowStr());
 if(!db.get("SELECT id FROM ledger_invites WHERE code='ui-qa-invite'"))db.run("INSERT INTO ledger_invites(ledger_id,code,role,created_by,created_at)VALUES(1,'ui-qa-invite','viewer',1,?)",db.nowStr());
 const uid=db.get("SELECT id FROM users WHERE username='admin'").id;
-const acc=db.get("SELECT id FROM accounts WHERE ledger_id=1 AND name='银行卡'").id;
+const acc=db.get("SELECT id FROM accounts WHERE ledger_id=1 AND is_archived=0 AND type IN ('debit','cash') ORDER BY type='debit' DESC,id LIMIT 1").id;
 if(!db.get("SELECT id FROM transactions WHERE merchant='UI 演示工资'")){
  const salary=db.get("SELECT id FROM categories WHERE name='工资' AND kind='income'").id;
  const bonus=db.get("SELECT id FROM categories WHERE name='奖金' AND kind='income'")?.id||salary;

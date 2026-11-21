@@ -143,16 +143,22 @@ router.post('/accounts/:id/adjust', auth.requireLogin, auth.requireLedgerWrite, 
   const actual = u.parseAmountToCents(req.body.actual_balance);
   const delta = actual - Number(acc.balance_cents);
   if (delta === 0) { res.flash('info', '余额一致，无需调整'); return res.redirect('/accounts'); }
-  txn.createTransaction(ledgerId, req.session.userId, {
-    type: 'adjust',
-    amount_cents: delta,
-    account_id: id,
-    txn_date: req.body.adjust_date || todayStr(),
-    note: `余额调整：${u.fmtAmount(acc.balance_cents)} → ${u.fmtAmount(actual)}${req.body.note ? ' · ' + req.body.note : ''}`,
-    source: 'manual',
-  });
+  try {
+    txn.createTransaction(ledgerId, req.session.userId, {
+      type: 'adjust',
+      amount_cents: delta,
+      currency: acc.currency,
+      account_id: id,
+      txn_date: req.body.adjust_date || todayStr(),
+      note: `余额调整：${u.fmtAmount(acc.balance_cents)} → ${u.fmtAmount(actual)}${req.body.note ? ' · ' + req.body.note : ''}`,
+      source: 'manual',
+    });
+  } catch (error) {
+    res.flash('error', error.message);
+    return res.redirect('/accounts');
+  }
   auth.audit(req, 'account.adjust', { entity: 'account', entityId: id, ledgerId, detail: String(delta) });
-  res.flash('success', `已调整 ${u.signedMoney(delta)}，账面余额已对齐`);
+  res.flash('success', `已调整 ${u.signedMoney(delta, acc.currency)}，账面余额已对齐`);
   res.redirect('/accounts');
 });
 

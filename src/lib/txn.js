@@ -1,9 +1,10 @@
 'use strict';
 /** 记账服务层：交易查询、写入、统计聚合 */
 const { all, get, run, tx, nowStr, todayStr, TXN_TYPE_MAP, ACCOUNT_TYPE_MAP, recalcBalances } = require('../db');
-const { monthOf, pad, lastMonths, toBase } = require('./util');
+const { monthOf, pad, lastMonths } = require('./util');
 const attach = require('./attachments');
 const time = require('./transaction-time');
+const { transactionValuation } = require('./fx');
 
 /** 计入「收入」统计的类型 */
 const INCOME_TYPES = ['income', 'interest', 'refund', 'reimburse'];
@@ -221,8 +222,7 @@ function createTransactionUnchecked(ledgerId, userId, d, options) {
   const rawAmount = Math.round(Number(d.amount_cents) || 0);
   const amount = isAdjust ? rawAmount : Math.abs(rawAmount);
   if (!amount) throw new Error('金额必须大于 0');
-  const rate = (d.currency||'CNY')===(get('SELECT currency FROM ledgers WHERE id=?',ledgerId)?.currency||'CNY')?1:(Number(d.rate)>0?Number(d.rate):1);
-  const currency = d.currency || 'CNY';
+  const currency = String(d.currency || 'CNY').toUpperCase();
   const accountId = pickAccount(ledgerId, d.account_id);
   const toAccountId = ['transfer','invest_buy','invest_sell'].includes(type)?pickAccount(ledgerId,d.to_account_id):null;
   if (['expense', 'income', 'lend', 'borrow', 'repay_pay', 'repay_receive', 'fee', 'interest'].includes(type) && !accountId) {
@@ -237,14 +237,16 @@ function createTransactionUnchecked(ledgerId, userId, d, options) {
   if ((type === 'invest_buy' || type === 'invest_sell') && accountId === toAccountId) throw new Error('投资交易的双方账户不能相同');
 
   require('./account-policy').validate(ledgerId,type,accountId,toAccountId,options.channel);
+  const valuation = transactionValuation(ledgerId, currency, amount, d, accountId, toAccountId);
   const txnDate = time.normalizeDate(d.txn_date, todayStr());
   const txnTime = time.normalizeTime(d.txn_time);
   const info = run(
     `INSERT INTO transactions
      (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id, to_account_id, category_id,
-      user_id, txn_date, txn_time, note, merchant, status, is_reimbursable, group_id, source, ai_json, owner_label, no_rhythm, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    ledgerId, type, amount, currency, rate, toBase(amount, rate), accountId, toAccountId,
+      user_id, txn_date, txn_time, note, merchant, status, is_reimbursable, group_id, source, ai_json, owner_label, no_rhythm, created_at, updated_at,
+      rate_source, rate_date, account_amount_cents, to_account_amount_cents)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ledgerId, type, amount, currency, valuation.rate, valuation.amountBase, accountId, toAccountId,
     PRINCIPAL_TYPES.includes(type)?null:(d.category_snapshot?require('./categories').find(ledgerId,d.category_id)?.id||null:pickCategory(ledgerId, d.category_id)), userId, txnDate, txnTime,
     d.note ? String(d.note).slice(0, 300) : null,
     d.merchant ? String(d.merchant).slice(0, 60) : null,
@@ -255,7 +257,7 @@ function createTransactionUnchecked(ledgerId, userId, d, options) {
     d.ai_json || null,
     cleanOwner(d.owner_label),
     d.no_rhythm ? 1 : 0,
-    nowStr(), nowStr()
+    nowStr(), nowStr(), valuation.source, valuation.date, valuation.accountAmount, valuation.toAccountAmount
   );
   const id = info.lastInsertRowid;
   require('./borrowing').record(ledgerId,id,d.debt_id,true);
@@ -282,7 +284,7 @@ function updateTransactionUnchecked(id, ledgerId, userId, d) {
   const rawAmount = Math.round(Number(d.amount_cents) || 0);
   const amount = type === 'adjust' ? rawAmount : Math.abs(rawAmount);
   if (!amount) throw new Error('金额必须大于 0');
-  const rate = (d.currency||'CNY')===(get('SELECT currency FROM ledgers WHERE id=?',ledgerId)?.currency||'CNY')?1:(Number(d.rate)>0?Number(d.rate):1);
+  const currency = String(d.currency || old.currency).toUpperCase();
   const accountId = pickAccount(ledgerId, d.account_id);
   const toAccountId = ['transfer','invest_buy','invest_sell'].includes(type)?pickAccount(ledgerId,d.to_account_id):null;
   // 与 createTransaction 同规则：编辑把必填账户清空会让该笔在重算中凭空消失
@@ -297,11 +299,14 @@ function updateTransactionUnchecked(id, ledgerId, userId, d) {
   if ((type === 'invest_buy' || type === 'invest_sell') && (!accountId || !toAccountId)) throw new Error('投资买入/卖出需要选择付款与入账账户');
   if ((type === 'invest_buy' || type === 'invest_sell') && accountId === toAccountId) throw new Error('投资交易的双方账户不能相同');
   require('./account-policy').validate(ledgerId,type,accountId,toAccountId);
+  const valuation = transactionValuation(ledgerId, currency, amount, d, accountId, toAccountId, old);
+  if (valuation.amountBase !== old.amount_base_cents)
+    require('./finance/cards').guardTransaction(ledgerId, id, { amount_base_cents: valuation.amountBase });
   run(
     `UPDATE transactions SET type=?, amount_cents=?, currency=?, rate=?, amount_base_cents=?, account_id=?,
        to_account_id=?, category_id=?, txn_date=?, txn_time=?, note=?, merchant=?, status=?, is_reimbursable=?,
-       owner_label=?, no_rhythm=?, updated_at=? WHERE id=?`,
-    type, amount, d.currency || old.currency, rate, toBase(amount, rate),
+       owner_label=?, no_rhythm=?, updated_at=?, rate_source=?, rate_date=?, account_amount_cents=?, to_account_amount_cents=? WHERE id=?`,
+    type, amount, currency, valuation.rate, valuation.amountBase,
     accountId, toAccountId,
     PRINCIPAL_TYPES.includes(type)?null:categoryId,
     time.normalizeDate(d.txn_date, old.txn_date),
@@ -313,7 +318,7 @@ function updateTransactionUnchecked(id, ledgerId, userId, d) {
     cleanOwner(d.owner_label),
     // 未提供时保全原值（openapi 局部更新路径不传该字段，不能把已标记的大额冲掉）
     d.no_rhythm === undefined ? (Number(old.no_rhythm) === 1 ? 1 : 0) : (d.no_rhythm ? 1 : 0),
-    nowStr(), id
+    nowStr(), valuation.source, valuation.date, valuation.accountAmount, valuation.toAccountAmount, id
   );
   require('./borrowing').record(ledgerId,id,d.debt_id);
   applyTags(id, ledgerId, d.tags, true);
@@ -382,6 +387,7 @@ function markReimbursed(ids, ledgerId, userId, accountId, occurrence={}) {
     const txnId = createTransaction(ledgerId, userId, {
       type: 'reimburse',
       amount_cents: total,
+      currency: get('SELECT currency FROM ledgers WHERE id=?', ledgerId)?.currency || 'CNY',
       account_id: accountId,
       category_id: null,
       txn_date: time.normalizeDate(occurrence.date ?? occurrence.txn_date,todayStr()),
@@ -576,39 +582,52 @@ function dailyBreakdown(ledgerId, start, end) {
 /** 账户概览 */
 function accountOverview(ledgerId) {
   const accounts = all('SELECT * FROM accounts WHERE ledger_id = ? AND is_archived = 0 ORDER BY sort_order, id', ledgerId);
-  let assets = 0, liabilities = 0;
+  const fx = require('./fx');
+  const currency = get('SELECT currency FROM ledgers WHERE id=?', ledgerId)?.currency || 'CNY';
+  const rates = fx.quotes();
+  const missing = new Set();
+  let assets = 0, liabilities = 0, net = 0;
   for (const a of accounts) {
-    const b = Number(a.balance_cents);
-    // 统一口径：正余额计资产、负余额计负债（含透支的虚拟账户），
-    // 保证「净资产 = 资产 − 负债」与逐账户求和恒等；负债类账户的溢缴款（正余额）计资产
+    const q = fx.quote(a.currency, currency, rates);
+    if (!q) { if (a.balance_cents) missing.add(a.currency); continue; }
+    const b = Math.round(Number(a.balance_cents) * q.rate);
     if (b > 0) assets += b;
     else liabilities += -b;
+    if (a.include_in_net) net += b;
   }
-  const net = accounts.filter((a) => a.include_in_net).reduce((s, a) => s + Number(a.balance_cents), 0);
-  return { accounts, assets, liabilities, net };
+  return { accounts, assets, liabilities, net, currency, unvaluedCurrencies: [...missing] };
 }
 
-/** 累计净支出（用于净资产走势的近似） */
+/** 用相同的净资产账户范围和当前参考汇率估算各月末余额。 */
 function netWorthTrend(ledgerId, months = 6) {
   const list = lastMonths(months);
   const allTxns = all(
-    `SELECT txn_date, type, amount_base_cents, account_id, to_account_id FROM transactions
+    `SELECT txn_date,type,amount_cents,amount_base_cents,currency,account_id,to_account_id,account_amount_cents,to_account_amount_cents FROM transactions
      WHERE ledger_id = ? AND deleted_at IS NULL ORDER BY txn_date`,
     ledgerId
   );
-  const accounts = all('SELECT id, initial_cents FROM accounts WHERE ledger_id = ?', ledgerId);
-  const initial = accounts.reduce((s, a) => s + Number(a.initial_cents), 0);
+  const accounts = all('SELECT id, initial_cents, currency FROM accounts WHERE ledger_id=? AND is_archived=0 AND include_in_net=1', ledgerId);
+  const fx = require('./fx');
+  const base = get('SELECT currency FROM ledgers WHERE id=?', ledgerId)?.currency || 'CNY';
+  const rates = fx.quotes();
+  const context = { base, rates, currencies: new Map(accounts.map(a => [a.id, a.currency])) };
+  const balances = new Map(accounts.map(a => [a.id, Number(a.initial_cents)]));
   const { txnEffects } = require('../db');
   const out = [];
-  let cum = initial;
   let idx = 0;
   for (const m of list) {
     const end = `${m}-31`;
     while (idx < allTxns.length && allTxns[idx].txn_date <= end) {
-      for (const e of txnEffects(allTxns[idx])) cum += e.delta;
+      for (const e of txnEffects(allTxns[idx], context)) {
+        if (balances.has(e.accountId)) balances.set(e.accountId, balances.get(e.accountId) + e.delta);
+      }
       idx++;
     }
-    out.push({ month: m, value: cum });
+    const value = accounts.reduce((total, a) => {
+      const q = fx.quote(a.currency, base, rates);
+      return total + (q ? Math.round(balances.get(a.id) * q.rate) : 0);
+    }, 0);
+    out.push({ month: m, value });
   }
   return out;
 }

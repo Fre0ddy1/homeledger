@@ -388,16 +388,17 @@ const csrfOf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[1]
   const csrf = csrfOf(r.text);
 
   /* 新建：年付订阅（月均应被摊平） */
+  const annualChargeDay = shift(14);
   const created = await req('POST', '/subscriptions', { form: {
     _csrf: csrf, name: 'Adobe 全家桶', icon: '🎨', plan: '摄影计划', amount: '888.00', currency: 'CNY',
-    cycle: 'yearly', cycle_n: '1', anchor_month: '11', anchor_day: '20', next_charge_at: '2026-11-20',
+    cycle: 'yearly', cycle_n: '1', anchor_month: annualChargeDay.slice(5, 7), anchor_day: annualChargeDay.slice(8), next_charge_at: annualChargeDay,
     status: 'active', reminder_days: '5', auto_renew: '1', note: '年付比月付便宜',
   } });
   check('新建年付订阅', created.status === 302, `HTTP ${created.status}`);
   r = await req('GET', '/subscriptions');
   check('列表出现新订阅', r.text.includes('Adobe 全家桶'));
   check('年付按 1/12 摊平显示月均', r.text.includes('月均') && /74\.00/.test(r.text), '期望月均 ¥74.00');
-  check('展示「每年 / 年付月份」信息', /2026-11-20/.test(r.text));
+  check('展示年付的下一次扣费日期', r.text.includes(annualChargeDay));
   const adobeIdx = r.text.search(/<h2[^>]*>\s*Adobe 全家桶/);
   const idAdobe = adobeIdx >= 0 ? (r.text.slice(adobeIdx).match(/\/subscriptions\/(\d+)\/charge/) || [])[1] : null;
   check('取到订阅 id', !!idAdobe, String(idAdobe));

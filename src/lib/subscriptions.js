@@ -222,18 +222,23 @@ function charge(sub,userId,options={}) {return require('../db').tx(()=>chargeUnc
 function chargeUnchecked(sub, userId, { date = todayStr(), silent = false } = {}) {
   const amount = Math.abs(Number(sub.amount_cents) || 0);
   if (!amount) return null;
-  require('./account-policy').validate(Number(sub.ledger_id),'expense',sub.account_id,null);
+  const ledgerId = Number(sub.ledger_id);
+  const accountId = sub.account_id ? Number(sub.account_id) : null;
+  const currency = String(sub.currency || 'CNY').toUpperCase();
+  require('./account-policy').validate(ledgerId, 'expense', accountId, null);
+  const value = require('./fx').transactionValuation(ledgerId, currency, amount, {}, accountId, null);
   const label = sub.plan ? `${sub.name}（${sub.plan}）` : sub.name;
   const info = run(
     `INSERT INTO transactions
      (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id, to_account_id, category_id,
-      user_id, txn_date, note, merchant, status, source, subscription_id, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?,?)`,
-    Number(sub.ledger_id), 'expense', amount, sub.currency || 'CNY', 1, amount,
-    sub.account_id ? Number(sub.account_id) : null, sub.category_id || null,
+      user_id, txn_date, note, merchant, status, source, subscription_id, created_at, updated_at,
+      rate_source, rate_date, account_amount_cents)
+     VALUES (?,?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ledgerId, 'expense', amount, currency, value.rate, value.amountBase,
+    accountId, sub.category_id || null,
     Number(userId) || Number(sub.created_by_user_id) || 1,
     date, `订阅扣费 · ${label}`, sub.name, 'cleared', 'subscription',
-    Number(sub.id), nowStr(), nowStr()
+    Number(sub.id), nowStr(), nowStr(), value.source, value.date, value.accountAmount
   );
   require('./finance/cards').afterTransactions(Number(sub.ledger_id),[Number(info.lastInsertRowid)]);
   // 不周期/固定到期日：手动记账后不推进"下次扣费日"（保持原日期，不进入自动扣费队列）

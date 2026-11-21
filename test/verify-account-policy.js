@@ -28,6 +28,20 @@ let cookie='';async function page(path,form){const r=await fetch('http://127.0.0
  const imported=require('../src/lib/importers').importRecords({ledgerId:lid,userId:uid,records:[{type:'transfer',amount_cents:300,txn_date:db.todayStr(),to_account_hint:db.get('SELECT name FROM accounts WHERE id=?',loan.account_id).name,merchant:'银行还款',note:'银行实际还款待核对',text:'银行实际还款待核对'}],autoCreateAccount:false,defaultAccountId:cash,source:'generic',fileName:'bank.csv'});check('银行导入保留已发生还款供后续核销',imported.imported===1);
  const debt=require('../src/lib/borrowing').create(lid,uid,{counterparty:'账户筛选借钱',direction:'receivable',amount_cents:1000,account_id:cash,create_txn:true});
  const login=await page('/login'),csrf=login.html.match(/name="_csrf"\s+value="([^"]+)"/)[1];await page('/login',{_csrf:csrf,username:'admin',password:'admin888'});
+ const usd=db.run("INSERT INTO accounts(ledger_id,name,type,currency,created_at) VALUES(?,'美元储蓄','debit','USD',?)",lid,db.nowStr()).lastInsertRowid;
+ r=await api('/accounts/'+usd+'/adjust',{actual_cents:12000});
+ const adjusted=txn.getTransaction(r.data.txn_id,lid);
+ check('API 余额调整以账户原币持久化且与返回余额一致',r.status===200&&r.data.balance_cents===12000&&db.get('SELECT balance_cents FROM accounts WHERE id=?',usd).balance_cents===12000&&adjusted.currency==='USD'&&adjusted.account_amount_cents===12000);
+ const accountsPage=await page('/accounts'),adjustCsrf=accountsPage.html.match(/name="_csrf"\s+value="([^"]+)"/)[1];
+ r=await page('/accounts/'+usd+'/adjust',{_csrf:adjustCsrf,actual_balance:'100.00'});
+ check('网页余额调整按美元差额调减',r.status===302&&db.get('SELECT balance_cents FROM accounts WHERE id=?',usd).balance_cents===10000&&db.get('SELECT account_amount_cents FROM transactions WHERE account_id=? ORDER BY id DESC',usd).account_amount_cents===-2000);
+ const legacy=db.createDefaultLedger(uid,'历史账本币种保护');
+ const legacyAccount=db.get("SELECT id FROM accounts WHERE ledger_id=? AND type='cash'",legacy).id;
+ const legacyTxn=txn.createTransaction(legacy,uid,{type:'expense',account_id:legacyAccount,amount_cents:100});
+ txn.softDelete(legacyTxn,legacy);
+ db.run('UPDATE transactions SET rate_source=NULL WHERE id=?',legacyTxn);
+ r=await page('/ledgers/'+legacy,{_csrf:adjustCsrf,currency:'USD'});
+ check('包含已删除旧流水的账本也保护历史本位币',r.status===302&&db.get('SELECT currency FROM ledgers WHERE id=?',legacy).currency==='CNY');
  r=await page('/transactions/new');const select=r.html.match(/<select name="account_id"[^>]*>([\s\S]*?)<\/select>/)[1];check('无JS支出下拉保留信用卡且排除贷款',select.includes('value="'+card+'"')&&!select.includes('value="'+loan.account_id+'"'));
  r=await page('/transactions/new?type=transfer');const transfers=[...r.html.matchAll(/<select name="(?:account_id|to_account_id)"[^>]*>([\s\S]*?)<\/select>/g)].map(m=>m[1]);check('无JS普通转账两端不展示信用卡或贷款',transfers.length>=2&&transfers.slice(0,2).every(s=>![card,...liabilities].some(id=>s.includes('value="'+id+'"'))));
  for(const path of ['/debts','/debts/'+debt.id]){r=await page(path);const accountOptions=r.html.match(/<select name="account_id"[^>]*>([\s\S]*?)<\/select>/)[1];check('借钱登记和核销下拉排除负债 '+path,![card,...liabilities].some(id=>accountOptions.includes('value="'+id+'"')));}

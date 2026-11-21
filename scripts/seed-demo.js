@@ -88,7 +88,13 @@ function main() {
   T(d(9), 'expense', 3699, '信用卡', '数码电器', { merchant: '京东', note: '空气炸锅+吸尘器' });
   T(d(8), 'expense', 76.8, '微信钱包', '午餐', { merchant: '外婆家' });
   T(d(7), 'expense', 42.3, '支付宝', '打车', { merchant: '滴滴出行' });
-  T(d(6), 'transfer', 6000, '银行卡', null, { to: '信用卡', note: '信用卡还款' });
+  const credit = acc['信用卡'];
+  if (credit && acc['银行卡']) {
+    require('../src/lib/finance/cards').configure(ledgerId, credit, { bill_day: 20, due_day: 10, due_month_offset: 1 });
+    require('../src/lib/finance/payments').payCard(ledgerId, uid, credit, {
+      account_id: acc['银行卡'], amount_cents: 600000, date: d(6), operation_key: 'seed-demo-card-payment',
+    });
+  }
   T(d(6), 'expense', 86.5, '微信钱包', '水果', { merchant: '鲜丰超市', source: 'ai_screenshot', note: 'AI 识别：鲜丰超市账单截图' });
   T(d(5), 'expense', 129, '信用卡', '育儿', { merchant: '孩子王' });
   T(d(4), 'expense', 66.6, '支付宝', '午餐', { merchant: '美团外卖' });

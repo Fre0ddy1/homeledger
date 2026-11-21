@@ -904,7 +904,7 @@ async function handleAssistantText({ text, ledgerId, today = todayStr() }) {
   let usedModel = false;
   const ruleRangeExplicit = !!(parsed && parsed.query.range && !parsed.query.range_from_default);
 
-  if (ai.isAiUsable()) {
+  if (!ai.isSensitiveLocalText(q) && ai.isAiUsable()) {
     try {
       const mp = await parseQueryByModel(q, ctx, today, cfg);
       if (mp && mp.intent === 'record') return null; // 模型确认是记账 → 交回记账管线
@@ -937,7 +937,7 @@ async function handleAssistantText({ text, ledgerId, today = todayStr() }) {
  * 合并时优先于模型），other（闲聊/无关）明确纠正项目方向，record/低置信/解析失败
  * 原样交回记账管线（行为与旧版一致）。无 Key 完全不进此分支，零成本预筛性质保留。
  * 敏感闸：同款收入类词表命中一律不出网交本地记账（宁严勿漏，不受 sensitive_local_only
- * 开关控——开关只控记账路径；主查询分支带信号词的句子目前无此闸，既有口径登记 BOARD）。
+ * 开关控——开关只控记账路径；主查询和结果叙述也先检查敏感词。
  * 带货币语境金额（¥/元/块，如「还房贷 5000 元 本金加利息」）→ 记账意图概率极高，
  * 不花意图调用直进记账；裸数字（「3天前」「10月8号」）不算金额语境，照进意图分支。
  */
@@ -986,7 +986,7 @@ async function finishAnswer(q, parsed, { ledgerId, today, usedModel, cfg, ruleRa
   const data = runQuery(ledgerId, parsed.query, range, today);
   let answer = narrateTemplate(data);
   const warnings = [];
-  if (ai.isAiUsable()) {
+  if (!ai.isSensitiveLocalText(q) && ai.isAiUsable()) {
     try {
       const modelText = await narrateByModel(q, data, cfg);
       // 叙述数字核验：模型漏掉关键金额（如对比句丢上月基数）就退回模板，确定性优先

@@ -306,10 +306,27 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   const accountGroups=accountGroupChecks.every(check=>check.pass);
   const advanceChecks=await require('./ui-advance-checks.cjs')(browser,context,'http://127.0.0.1:5113');
   const notificationChecks=await require('./ui-notification-checks.cjs')(page,'http://127.0.0.1:5113');
+  await page.goto('http://127.0.0.1:5113/transactions/new?account_id='+financeIds.card);
+  await page.locator('#f-amount').fill('10');
+  await page.locator('#txn-form [name=merchant]').fill('外币浏览器验收');
+  await page.getByText('多币种 / 汇率（可选）',{exact:true}).click();
+  await chooseEnhanced(page.locator('#f-currency'),'USD');
+  const autoRateBlank=await page.locator('#txn-form [name=rate]').inputValue()==='';
+  await page.locator('#submit-btn').click();
+  await page.waitForURL('http://127.0.0.1:5113/transactions');
+  const fxTxn=await page.locator('.txn').filter({hasText:'外币浏览器验收'}).first().getAttribute('data-txn-id');
+  await page.goto('http://127.0.0.1:5113/transactions/'+fxTxn+'/edit');
+  const autoRateShown=(await page.locator('#txn-form [name=rate]').inputValue())!=='';
+  await page.locator('#txn-form [name=settlement_amount]').fill('72.35');
+  await page.locator('#submit-btn').click();
+  await page.waitForURL('http://127.0.0.1:5113/transactions');
+  const correctedFx=await page.evaluate(id=>fetch('/transactions/'+id+'/json').then(res=>res.json()),fxTxn);
+  const foreignCardEntry=autoRateBlank&&autoRateShown&&correctedFx.txn?.amount_cents===1000&&correctedFx.txn?.amount_base_cents===7235&&correctedFx.txn?.rate_source==='settlement';
   const interaction={borrowingTimes,transactionTimes,categorySorting,categoryIcons,categoryParentChanged,categoryEditPreserved,adaptiveWorkspace,foreignAmountNotCopied,entryStable,reportCalendarGrid,reportToolbarConsistent,controlFontsConsistent,transferFiltered,expenseCardRestored,recurringAccountFiltered,returnNavigation,financeLayout,menuClosed,focusReturned,rowFocusReturned,trapped,drawerClosed,resizedDrawerReleased,reduced,minimal,coarseTablet,zoom200,wideContentFills,ledgerMenuFits,dashboardGaps,compactLedger,advancedCollapsed,inlineDetails,inspectorFocusReturned,inspectorResizeReleased,mobileDetails,mobileOrder,inspectorControlsReachable,glassMaterial,categorySoftDeleted,categoryRestored,compactPageSize,categoryKindSync,categoryModalFocusReturned,categoryDropdownEscape,recurringClonedSelect,categoryNoJs,naturalCards,boundedPages,variantLayouts,darkLoginTheme,selectReopensAfterOutside};
   interaction.accountGroups=accountGroups;
   interaction.advances=advanceChecks.every(check=>check.pass);
   interaction.notifications=notificationChecks.every(check=>check.pass);
+  interaction.foreignCardEntry=foreignCardEntry;
   const summary={notificationChecks,advanceChecks,accountGroupChecks,borrowingTimeChecks,transactionTimeChecks,categorySortChecks,categoryIconChecks,categoryParentChecks,adaptiveChecks,financeJourneys,pages:results.length,failures:results.filter(x=>x.overflow||x.status>=500),errors,interaction,authChecks,variants,results};
   if(financeJourneys.some(j=>!j.reversed||!j.restored||!j.allocationVisible||j.overflow)||summary.failures.length||errors.length||Object.values(interaction).some(v=>!v)||authChecks.some(x=>x.overflow))process.exitCode=1;
 
