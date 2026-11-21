@@ -1090,7 +1090,8 @@
         if (t.merchant) kv('商家', esc(t.merchant));
         if (t.note) kv('备注', esc(t.note));
         if (t.tag_names) kv('标签', t.tag_names.split(/\s+/).filter(Boolean).map((s) => '<span class="tag-pill">' + esc(s) + '</span>').join(' '));
-        if (t.currency !== 'CNY') kv('原币金额', fmtCents(t.amount_cents) + ' ' + esc(t.currency) + ' × ' + (Number(t.rate) || 1) + ' ≈ ' + fmtCents(t.amount_base_cents) + ' CNY');
+        const ledgerCurrency = data.base_currency || 'CNY';
+        if (t.currency !== ledgerCurrency) kv('原币金额', fmtCents(t.amount_cents) + ' ' + esc(t.currency) + ' × ' + (Number(t.rate) || 1) + ' ≈ ' + fmtCents(t.amount_base_cents) + ' ' + esc(ledgerCurrency));
         if (t.is_reimbursable) kv('报销', t.reimbursed_at ? '已报销（' + esc(t.reimbursed_at) + '）' : '待报销');
         kv('状态', t.status === 'pending' ? '待确认' : '已确认');
         kv('来源', TXN_SOURCE_LABEL[t.source] || esc(t.source || '—'));
@@ -1203,7 +1204,14 @@
     if (!curSel) return;
     const SYM = { CNY: '¥', USD: '$', EUR: '€', GBP: '£', JPY: '¥', HKD: 'HK$', KRW: '₩', SGD: 'S$', AUD: 'A$', CAD: 'C$', TWD: 'NT$' };
     const apply = () => { const el = $('#cur-symbol'); if (el) el.textContent = SYM[curSel.value] || '¤'; };
-    curSel.addEventListener('change', apply);
+    let previousCurrency = curSel.value;
+    curSel.addEventListener('change', () => {
+      if (curSel.value !== previousCurrency) {
+        curSel.form.querySelectorAll('input[name="rate"],input[name="settlement_amount"]').forEach(input => { input.value = ''; });
+        previousCurrency = curSel.value;
+      }
+      apply();
+    });
     apply();
   }
 

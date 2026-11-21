@@ -45,11 +45,24 @@ function parseCsvLine(line) {
 }
 
 function parseCsv(text) {
-  return String(text || '')
-    .split(/\r?\n/)
-    .map((l) => l.trimEnd())
-    .filter((l) => l.length > 0)
-    .map(parseCsvLine);
+  const input = String(text || '');
+  const rows = [];
+  let start = 0;
+  let quoted = false;
+  for (let i = 0; i < input.length; i++) {
+    if (input[i] === '"') {
+      if (quoted && input[i + 1] === '"') i++;
+      else quoted = !quoted;
+    } else if (!quoted && (input[i] === '\n' || input[i] === '\r')) {
+      const row = input.slice(start, i).trimEnd();
+      if (row) rows.push(parseCsvLine(row));
+      if (input[i] === '\r' && input[i + 1] === '\n') i++;
+      start = i + 1;
+    }
+  }
+  const last = input.slice(start).trimEnd();
+  if (last) rows.push(parseCsvLine(last));
+  return rows;
 }
 
 const HEADER_KEYS = ['交易时间', '交易分类', '交易类型', '金额', '收/支', '收/付款方式', '支付方式', '日期', '时间', 'amount', 'date'];
@@ -217,6 +230,7 @@ function parseBill(buffer) {
       noRhythmText: iNoRhythm >= 0 ? r[iNoRhythm] : '',
     });
     if (norm.skip || !norm.amount_cents) { skipped++; continue; }
+    if (iTypeKey >= 0 && iDesc >= 0) norm.note = r[iDesc]?.slice(0, 300) || null;
     if (norm.neutral) neutralRecords.push(norm);
     else records.push(norm);
   }
@@ -260,10 +274,10 @@ function importRecords({
   const dupSet = new Set(),baseSet = new Set(),unknownSet = new Set();
   // 预载已有记录指纹，避免重复导入
   for (const t of all(
-    'SELECT txn_date, txn_time, amount_base_cents, merchant FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND source = ?',
+    'SELECT txn_date, txn_time, amount_cents, merchant FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND source = ?',
     ledgerId, 'import'
   )) {
-    const base=`${t.txn_date}|${t.amount_base_cents}|${t.merchant || ''}`;
+    const base=`${t.txn_date}|${t.amount_cents}|${t.merchant || ''}`;
     baseSet.add(base);
     dupSet.add(`${base}|${t.txn_time||''}`);
     if(!t.txn_time)unknownSet.add(base);
@@ -323,18 +337,21 @@ function importRecords({
         // 余额调整回导保留负金额（调减为带符号数），方向不能翻转；
         // 但 expense/income 直接以负数入库会把方向写反（txnEffects 对 expense 取 -a），钳回正数
         const signedAmount = rec.type === 'adjust' ? rec.amount_cents : Math.abs(rec.amount_cents);
+        const currency = 'CNY';
+        const value = require('./fx').transactionValuation(ledgerId, currency, signedAmount, {}, accountId, toAccountId);
 
         const inserted=run(
           `INSERT INTO transactions
            (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id, to_account_id, category_id,
-            user_id, txn_date, txn_time, note, merchant, status, source, ai_json, owner_label, no_rhythm, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          ledgerId, rec.type, signedAmount, 'CNY', 1, signedAmount,
+            user_id, txn_date, txn_time, note, merchant, status, source, ai_json, owner_label, no_rhythm, created_at, updated_at,
+            rate_source, rate_date, account_amount_cents, to_account_amount_cents)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          ledgerId, rec.type, signedAmount, currency, value.rate, value.amountBase,
           accountId, toAccountId, categoryId, userId, txnDate, txnTime, rec.note, rec.merchant,
           'cleared', 'import', JSON.stringify({ source, order_no: rec.order_no, neutral: !!rec.neutral }),
           rec.owner_label || null,
           rec.no_rhythm ? 1 : 0,
-          nowStr(), nowStr()
+          nowStr(), nowStr(), value.source, value.date, value.accountAmount, value.toAccountAmount
         );
         if(require('./txn').PRINCIPAL_TYPES.includes(rec.type))run('UPDATE transactions SET category_id=NULL WHERE id=?',inserted.lastInsertRowid);
         require('./borrowing').record(ledgerId,inserted.lastInsertRowid,null,true);
@@ -371,7 +388,7 @@ function csvEscape(v) {
   let s = v === null || v === undefined ? '' : String(v);
   // 公式注入防护：以 = + - @ 开头的单元格加前缀，防止 Excel/WPS 打开时当公式执行
   if (/^[=+\-@]/.test(s)) s = `'` + s;
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 function toCsv(header, rows) {

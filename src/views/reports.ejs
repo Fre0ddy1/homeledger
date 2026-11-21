@@ -219,9 +219,10 @@
     }) %>
   </div>
   <div class="row wrap" style="gap:16px">
-    <span class="small muted">当前净资产 <b class="amount"><%= helpers.money(overview.net) %></b></span>
-    <span class="small muted">总资产 <b class="amount"><%= helpers.money(overview.assets) %></b></span>
-    <span class="small muted">总负债 <b class="amount expense"><%= helpers.money(overview.liabilities) %></b></span>
+    <span class="small muted">当前净资产 <b class="amount"><%= helpers.money(overview.net, overview.currency) %></b></span>
+    <span class="small muted">总资产 <b class="amount"><%= helpers.money(overview.assets, overview.currency) %></b></span>
+    <span class="small muted">总负债 <b class="amount expense"><%= helpers.money(overview.liabilities, overview.currency) %></b></span>
   </div>
+  <% if(overview.accounts.some(a=>a.currency!==overview.currency)){ %><p class="help">走势以当前参考汇率折算为 <%= overview.currency %>。<%= overview.unvaluedCurrencies.length ? '缺少参考汇率：'+overview.unvaluedCurrencies.join('、') : '' %></p><% } %>
 </div>
 </aside></div>

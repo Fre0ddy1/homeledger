@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const express = require('express');
 const {
   all, get, run, tx, nowStr, todayStr, DATA_DIR, DB_FILE,
-  getSetting, setSetting, createDefaultAccounts, addLedgerMember,
+  getSetting, setSetting, createDefaultAccounts, addLedgerMember, backupDatabase, restoreDatabase,
 } = require('../db');
 const auth = require('../lib/auth');
 const ai = require('../lib/ai');
@@ -362,9 +362,14 @@ router.post('/ledgers/:id', auth.requireLogin, (req, res) => {
   if (!requireTargetLedgerManage(req, res, id)) return;
   const l = get('SELECT * FROM ledgers WHERE id = ?', id);
   if (!l) { res.flash('error', '账本不存在'); return res.redirect('/ledgers'); }
+  const currency = String(req.body.currency || l.currency).slice(0, 8);
+  if (currency !== l.currency && get('SELECT 1 FROM transactions WHERE ledger_id=? LIMIT 1', id)) {
+    res.flash('error', '已有流水按此账本币种入账，请新建账本来使用其他币种');
+    return res.redirect('/ledgers');
+  }
   run('UPDATE ledgers SET name=?, kind=?, currency=?, icon=?, color=?, note=?, sort_order=? WHERE id=?',
     String(req.body.name || l.name).slice(0, 30), LEDGER_KINDS.includes(req.body.kind) ? req.body.kind : l.kind,
-    String(req.body.currency || l.currency).slice(0, 8),
+    currency,
     req.body.icon || l.icon, u.safeColor(req.body.color, l.color),
     req.body.note ? String(req.body.note).slice(0, 200) : null,
     Number(req.body.sort_order) || l.sort_order, id);
@@ -711,8 +716,8 @@ router.get('/backup/db', auth.requireLogin, auth.requireAdmin, (req, res, next) 
   try {
     // 用 VACUUM INTO 产出一致、紧凑的完整快照（包含 WAL 中尚未合并的写入）。
     // 直接 copyFileSync 活库文件在 WAL 模式下会缺最近写入，-wal 又不会随 .db 一起被下载。
-    const target = path.join(DATA_DIR, `backup-${todayStr()}-${Date.now()}.db`);
-    require('../db').db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
+    const target = path.join(DATA_DIR, `backup-${todayStr()}-${crypto.randomUUID()}.db`);
+    backupDatabase(target);
     auth.audit(req, 'backup.download');
     res.download(target, `homeledger-${todayStr()}.db`, (err) => {
       try { fs.unlinkSync(target); } catch { /* ignore */ }
@@ -741,36 +746,15 @@ router.post('/backup/restore', auth.requireLogin, auth.requireAdmin, (req, res) 
       return done(false, '文件不是有效的 SQLite 数据库');
     }
 
-    // 安全备份当前数据
-    const safety = path.join(DATA_DIR, `pre-restore-${Date.now()}.db`);
-    try { fs.copyFileSync(DB_FILE, safety); } catch { /* 首次启动可能无旧库 */ }
-
-    // 一致性校验：用独立连接打开上传文件
-    const tmpCheck = path.join(DATA_DIR, `restore-check-${Date.now()}.db`);
-    fs.writeFileSync(tmpCheck, buf);
+    const restoreId = crypto.randomUUID();
+    const safety = path.join(DATA_DIR, `pre-restore-${todayStr()}-${restoreId}.db`);
+    const staged = path.join(DATA_DIR, `restore-new-${restoreId}.db`);
     try {
-      const { DatabaseSync } = require('node:sqlite');
-      const checkDb = new DatabaseSync(tmpCheck);
-      checkDb.exec('PRAGMA integrity_check');
-      const hasUsers = checkDb.prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name='users'").get();
-      checkDb.close();
-      fs.unlinkSync(tmpCheck);
-      if (!hasUsers || !hasUsers.c) return done(false, '文件缺少 users 表，不是家账簿数据库');
-    } catch (e) {
-      try { fs.unlinkSync(tmpCheck); } catch { /* ignore */ }
-      return done(false, '上传的文件无法打开：' + e.message);
+      fs.writeFileSync(staged, buf, { flag: 'wx' });
+      restoreDatabase(staged, safety);
+    } finally {
+      try { fs.unlinkSync(staged); } catch { /* already installed or unavailable */ }
     }
-
-    // 写入新文件 → 关闭旧连接 → 替换主库文件 → 热切换连接
-    const newPath = path.join(DATA_DIR, 'restore-new.db');
-    fs.writeFileSync(newPath, buf);
-    const { reopenDatabase } = require('../db');
-    try { DB.close(); } catch { /* ignore */ }
-    for (const suffix of ['-wal', '-shm']) {
-      try { fs.unlinkSync(DB_FILE + suffix); } catch { /* ignore */ }
-    }
-    fs.renameSync(newPath, DB_FILE);
-    reopenDatabase();
 
     // 恢复后当前登录会话已不存在（sessions 表被替换），需重新登录
     try { req.session.destroy(() => {}); } catch { /* ignore */ }
@@ -780,7 +764,6 @@ router.post('/backup/restore', auth.requireLogin, auth.requireAdmin, (req, res) 
     if (wantsJson) {
       return res.json({ ok: true, message: `恢复完成！原数据已备份为 ${path.basename(safety)}。页面即将刷新，请重新登录。`, reload: true });
     }
-    res.flash('success', `恢复完成！原数据已备份为 ${path.basename(safety)}。`);
     res.redirect('/login');
   } catch (e) {
     return done(false, '恢复失败：' + e.message);

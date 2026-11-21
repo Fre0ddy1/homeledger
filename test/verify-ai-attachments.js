@@ -130,8 +130,7 @@ function uploadFiles(dir = path.join(DATA_DIR, 'uploads')) {
   const img = (j.images || [])[0] || {};
   check('图片已关联到该笔记录', Number(img.txn_id) === Number(txnId), `image.txn_id=${img.txn_id} txn=${txnId}`);
   check('图片已落盘', uploadFiles().length === before + 1, `上传目录 ${before} → ${uploadFiles().length} 个文件`);
-  const disk = uploadFiles().filter((f) => f.includes(String(img.path || '').split('/').pop()));
-  check('落盘文件与返回的 path 一致', disk.length === 1, img.path || '(无 path)');
+  check('返回的 path 是 Bearer 附件接口', img.path === `/api/open/attachments/${img.id}`, img.path || '(无 path)');
 
   /* ③ 带令牌取图 */
   res = await req('GET', `/api/open/attachments/${img.id}`, { headers: H });
@@ -171,7 +170,29 @@ function uploadFiles(dir = path.join(DATA_DIR, 'uploads')) {
   /* ⑧ 网页端能看到关联截图 */
   res = await req('GET', `/transactions/${txnId}/edit`);
   check('交易编辑页显示关联截图', res.status === 200 && /关联账单截图/.test(res.text), `HTTP ${res.status}`);
-  check('交易编辑页内嵌图片地址', res.text.includes(String(img.path || '')), img.path || '');
+  const webPath = res.text.match(/\/uploads\/\d+\/[A-Za-z0-9_.-]+\.png/)?.[0];
+  check('交易编辑页内嵌网页凭证地址', !!webPath, webPath || '');
+  res = await req('GET', webPath);
+  check('当前账本成员可读凭证，响应禁止缓存', res.status === 200 && res.buf.equals(png) && /private, no-store/.test(res.headers.get('cache-control')));
+  const ownerCookie = cookie;
+  cookie = '';
+  res = await req('GET', webPath);
+  check('匿名无法通过已知图片地址读取凭证', res.status === 401);
+  const db = require('../src/db');
+  const auth = require('../src/lib/auth');
+  db.run("INSERT INTO users(username,password_hash,display_name,created_at) VALUES('attachment-outsider',?,'外部用户',?)", auth.hashPassword('sandbox-888'), db.nowStr());
+  r = await req('GET', '/login');
+  res = await req('POST', '/login', { form: { _csrf: csrfOf(r.text), username: 'attachment-outsider', password: 'sandbox-888' } });
+  check('外部用户已登录', res.status === 302);
+  res = await req('GET', webPath);
+  check('登录但不是所属账本成员也无法读凭证', res.status === 404);
+  const outsider = db.get("SELECT id FROM users WHERE username='attachment-outsider'").id;
+  const owningLedger = db.get('SELECT ledger_id FROM attachments WHERE id=?', img.id).ledger_id;
+  db.addLedgerMember(owningLedger, outsider, 'viewer');
+  check('所属账本的只读成员可以读取凭证', (await req('GET', webPath)).status === 200);
+  db.run('DELETE FROM ledger_members WHERE ledger_id=? AND user_id=?', owningLedger, outsider);
+  check('移除成员后，同一会话立即失去凭证读取权限', (await req('GET', webPath)).status === 404);
+  cookie = ownerCookie;
   res = await req('GET', '/transactions');
   check('交易列表显示 📎 标记', /📎/.test(res.text));
 

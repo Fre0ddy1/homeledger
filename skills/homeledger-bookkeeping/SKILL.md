@@ -76,14 +76,11 @@ curl -sS -X POST "$HOMELEDGER_URL/api/open/ai/bill" \
 
 ```json
 { "ok": true, "created": 1, "ids": [128],
-  "images": [{ "id": 7, "path": "/uploads/202609/1730f3a2.png", "size": 42813, "txn_id": 128 }] }
+  "images": [{ "id": 7, "path": "/api/open/attachments/7", "size": 42813, "txn_id": 128 }] }
 ```
 
 - 想让 `confirm: false` 的草稿调用也留档，加 `"save_images": true`（默认不留档，避免试探性调用堆积无用图片）。
-- 在聊天里回执时可以附原图：把 `path` 拼到家账簿地址后面即可，如
-  `http://<NAS_IP>:5111/uploads/202609/1730f3a2.png`；
-  或用带令牌的接口取回（适合家账簿不对外直连的场景）：
-  `GET $HOMELEDGER_URL/api/open/attachments/7` + `Authorization: Bearer $HOMELEDGER_TOKEN`。
+- 读取原图要用带令牌的 `GET $HOMELEDGER_URL/api/open/attachments/7`，其中接口路径取自 `images[].path`。凭证仅对所属账本成员可读。
 
 ### 2. 用户口述消费 / 粘贴账单文字
 

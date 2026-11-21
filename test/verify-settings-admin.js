@@ -10,6 +10,9 @@
  * 运行：node test/verify-settings-admin.js
  */
 const BASE = 'http://127.0.0.1:8099';
+const fs = require('node:fs');
+const path = require('node:path');
+const { DatabaseSync } = require('node:sqlite');
 
 let pass = 0, fail = 0;
 function check(name, ok, detail = '') {
@@ -31,7 +34,7 @@ async function req(method, p, { form, json, headers = {}, cookie } = {}) {
   const sc = res.headers.getSetCookie?.() || [];
   if (sc.length && !cookie) jar = sc.map((c) => c.split(';')[0]).join('; ');
   const buf = Buffer.from(await res.arrayBuffer());
-  return { status: res.status, text: buf.toString('utf8'), location: res.headers.get('location'), setCookie: sc };
+  return { status: res.status, text: buf.toString('utf8'), buf, location: res.headers.get('location'), setCookie: sc };
 }
 
 const csrfOf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[1];
@@ -134,6 +137,57 @@ const csrfOf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[1]
   r = await req('GET', '/settings', { cookie });
   const vRef = (r.text.match(/app\.js\?v=([^"]+)/) || [])[1] || '';
   check('JS 引用带缓存戳（版本-mtime）', /-\w+$/.test(vRef), `v=${vRef}`);
+
+  const dataDir = process.env.DATA_DIR;
+  if (!dataDir) throw Error('备份回归必须使用隔离 DATA_DIR');
+  const original = await req('GET', '/backup/db', { cookie });
+  check('下载原始快照成功', original.status === 200 && original.buf.toString('utf8', 0, 15) === 'SQLite format 3');
+  const live = new DatabaseSync(path.join(dataDir, 'homeledger.db'));
+  live.exec('PRAGMA wal_autocheckpoint=0');
+  live.exec("INSERT INTO settings(key,value) VALUES('verify.restore_wal','recent')");
+  live.close();
+  const upload = async (bytes, loginCookie) => {
+    const page = await req('GET', '/export', { cookie: loginCookie });
+    const response = await req('POST', '/backup/restore', { cookie: loginCookie, headers: { accept: 'application/json' },
+      json: { _csrf: csrfOf(page.text), dataUrl: 'data:application/octet-stream;base64,' + bytes.toString('base64') } });
+    return JSON.parse(response.text);
+  };
+  const first = await upload(original.buf, cookie);
+  check('第一次在线恢复成功', first.ok === true && first.reload === true, first.message);
+  const safetyFile = fs.readdirSync(dataDir).find(name => name.startsWith('pre-restore-') && name.endsWith('.db'));
+  const safety = new DatabaseSync(path.join(dataDir, safetyFile), { readOnly: true });
+  check('恢复前快照保留了尚在 WAL 的数据', safety.prepare("SELECT value FROM settings WHERE key='verify.restore_wal'").get()?.value === 'recent');
+  safety.close();
+
+  async function newLogin() {
+    jar = '';
+    const login = await req('GET', '/login');
+    const result = await req('POST', '/login', { form: { _csrf: csrfOf(login.text), username: 'admin', password: 'admin888' } });
+    if (result.status !== 302) throw Error('恢复后无法重新登录');
+    return jar;
+  }
+  const secondCookie = await newLogin();
+  check('恢复后可通过新连接再次下载数据库', (await req('GET', '/backup/db', { cookie: secondCookie })).status === 200);
+  const legacyName = path.join(dataDir, 'verify-legacy-backup.db');
+  fs.writeFileSync(legacyName, original.buf);
+  const legacy = new DatabaseSync(legacyName);
+  legacy.exec('ALTER TABLE transactions DROP COLUMN rate_date; DROP TABLE ai_inputs;');
+  legacy.close();
+  const second = await upload(fs.readFileSync(legacyName), secondCookie);
+  check('同一服务可连续完成两次恢复', second.ok === true, second.message);
+  const migrated = new DatabaseSync(path.join(dataDir, 'homeledger.db'), { readOnly: true });
+  check('恢复历史快照后自动补建表和新字段', !!migrated.prepare("SELECT name FROM sqlite_master WHERE name='ai_inputs'").get() &&
+    !!migrated.prepare("SELECT name FROM pragma_table_info('transactions') WHERE name='rate_date'").get());
+  migrated.close();
+
+  const invalidName = path.join(dataDir, 'verify-invalid-backup.db');
+  const invalid = new DatabaseSync(invalidName);
+  invalid.exec('CREATE TABLE users(id INTEGER PRIMARY KEY)');
+  invalid.close();
+  const thirdCookie = await newLogin();
+  const rejected = await upload(fs.readFileSync(invalidName), thirdCookie);
+  check('非完整账本备份被拒，现有账本仍可下载', rejected.ok === false && /缺少/.test(rejected.message) &&
+    (await req('GET', '/backup/db', { cookie: thirdCookie })).status === 200, rejected.message);
 
   console.log(`\n=== 结果：${pass} 通过 / ${fail} 失败 ===`);
   process.exit(fail ? 1 : 0);

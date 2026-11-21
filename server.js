@@ -95,10 +95,12 @@ app.use(express.json({ limit: '30mb' }));
 app.use('/static', express.static(path.join(ROOT, 'public'), { maxAge: '7d' }));
 // SVG 可内嵌脚本：上传侧已禁止，历史遗留的 .svg 附件也一律不再回显
 app.use('/uploads', (req, res, next) => {
-  if (/\.svg$/i.test(req.path || '')) return res.status(403).end('Forbidden');
+  try {
+    if (/\.svg$/i.test(decodeURIComponent(req.path || ''))) return res.status(403).end('Forbidden');
+  } catch { return res.status(400).end(); }
   next();
 });
-app.use('/uploads', express.static(path.join(db.DATA_DIR, 'uploads'), { maxAge: '30d' }));
+app.use('/uploads/avatars', express.static(path.join(db.DATA_DIR, 'uploads', 'avatars'), { maxAge: '30d', index: false }));
 
 app.use(
   session({
@@ -128,6 +130,17 @@ app.use((req, res, next) => {
     res.locals.flash = null;
   }
   auth.context(req, res, next);
+});
+
+app.get('/uploads/*', (req, res) => {
+  if (!res.locals.user) return res.status(401).end();
+  const attachments = require('./src/lib/attachments');
+  const found = attachments.resolveForUser(res.locals.user.id, req.params[0]);
+  if (!found) return res.status(404).end();
+  res.type(attachments.safeMime(found.row.mime));
+  res.set('Cache-Control', 'private, no-store');
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.sendFile(found.abs, { cacheControl: false });
 });
 
 app.use((req, res, next) => {
@@ -272,6 +285,7 @@ const server = app.listen(PORT, HOST, () => {
 });
 
 scheduler.initScheduler();
+require('./src/lib/fx').init();
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {

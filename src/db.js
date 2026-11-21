@@ -5,6 +5,7 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
@@ -22,20 +23,64 @@ db.exec('PRAGMA busy_timeout = 5000;');
  * 关闭当前连接并重新打开（用于备份恢复：文件被外部替换后调用此函数刷新连接）。
  * 清空预编译语句缓存（旧语句绑定在旧连接上）并重跑初始化。
  */
-function reopenDatabase() {
+function reopenDatabase({ restored = true } = {}) {
   try { db.close(); } catch { /* ignore */ }
-  // 清理 WAL/SHM 残留（旧连接的写入已通过 WAL checkpoint 合并或随 close 丢弃）
-  for (const suffix of ['-wal', '-shm']) {
-    try { fs.unlinkSync(DB_FILE + suffix); } catch { /* ignore */ }
-  }
   db = new DatabaseSync(DB_FILE);
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA busy_timeout = 5000;');
   cache.clear();
   initialized = false;
+  ensureCoreSchema();
   init();
-  require('./lib/notification-schema').afterRestore(db);
+  if (restored) require('./lib/notification-schema').afterRestore(db);
+}
+
+function backupDatabase(filename) {
+  db.prepare('VACUUM INTO ?').run(filename);
+}
+
+function validateBackup(filename) {
+  const candidate = new DatabaseSync(filename, { readOnly: true });
+  try {
+    const checks = candidate.prepare('PRAGMA quick_check').all();
+    if (checks.length !== 1 || Object.values(checks[0])[0] !== 'ok') throw Error('备份数据库未通过完整性校验');
+    const template = new DatabaseSync(':memory:');
+    try {
+      template.exec(CORE_SCHEMA);
+      for (const table of ['users', 'ledgers', 'ledger_members', 'accounts', 'transactions', 'settings']) {
+        const columns = template.prepare('SELECT name FROM pragma_table_info(?)').all(table);
+        const names = new Set(candidate.prepare('SELECT name FROM pragma_table_info(?)').all(table).map(row => row.name));
+        const present = candidate.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
+        if (!present || columns.some(row => !names.has(row.name))) throw Error(`备份缺少必需的 ${table} 表或字段`);
+      }
+    } finally { template.close(); }
+  } finally { candidate.close(); }
+}
+
+function restoreDatabase(staged, safety) {
+  validateBackup(staged);
+  backupDatabase(safety);
+  const checkpoint = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+  if (checkpoint.busy) throw Error('数据库仍被其他进程使用，请稍后恢复');
+  const previous = DB_FILE + '.restore-' + randomUUID();
+  db.close();
+  let movedPrevious = false;
+  let installedCandidate = false;
+  try {
+    fs.renameSync(DB_FILE, previous);
+    movedPrevious = true;
+    fs.renameSync(staged, DB_FILE);
+    installedCandidate = true;
+    reopenDatabase();
+  } catch (error) {
+    try { db.close(); } catch { /* already closed */ }
+    if (installedCandidate) fs.unlinkSync(DB_FILE);
+    if (movedPrevious) fs.renameSync(previous, DB_FILE);
+    reopenDatabase({ restored: false });
+    throw error;
+  }
+  try { fs.unlinkSync(previous); } catch { /* safety snapshot is already available */ }
 }
 
 /* ---------------------------------- 小工具 --------------------------------- */
@@ -89,7 +134,7 @@ function tx(fn) {
 
 /* ---------------------------------- 建表 ---------------------------------- */
 
-db.exec(`
+const CORE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   username      TEXT NOT NULL UNIQUE,
@@ -421,6 +466,7 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
   quote  TEXT NOT NULL,
   rate   REAL NOT NULL,
   noted_at TEXT NOT NULL,
+  source   TEXT NOT NULL DEFAULT 'seed',
   UNIQUE(base, quote)
 );
 
@@ -462,7 +508,7 @@ CREATE TABLE IF NOT EXISTS habit_feedback (
   created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_habit_feedback_lookup ON habit_feedback(ledger_id, merchant, field);
-`);
+`;
 
 /* ----------------------------- 增量迁移（幂等） ----------------------------- */
 
@@ -478,6 +524,8 @@ function ensureColumn(table, column, ddl) {
   return true;
 }
 
+function ensureCoreSchema() {
+db.exec(CORE_SCHEMA);
 const migrated = [];
 if (ensureColumn('transactions', 'txn_time', 'TEXT')) migrated.push('transactions.txn_time');
 if (ensureColumn('categories', 'deleted_at', 'TEXT')) migrated.push('categories.deleted_at');
@@ -488,11 +536,18 @@ if (ensureColumn('users', 'avatar_ver', 'INTEGER')) migrated.push('users.avatar_
 if (ensureColumn('transactions', 'owner_label', 'TEXT')) migrated.push('transactions.owner_label');
 // P7 修订：人工标记「一次性大额」（草稿卡/手动表单勾选）——预测节奏外推必剔的事实级信号
 if (ensureColumn('transactions', 'no_rhythm', 'INTEGER DEFAULT 0')) migrated.push('transactions.no_rhythm');
+ensureColumn('transactions', 'rate_source', 'TEXT');
+ensureColumn('transactions', 'rate_date', 'TEXT');
+ensureColumn('transactions', 'account_amount_cents', 'INTEGER');
+ensureColumn('transactions', 'to_account_amount_cents', 'INTEGER');
+ensureColumn('exchange_rates', 'source', "TEXT NOT NULL DEFAULT 'seed'");
 if (migrated.length) console.log(`[db] 已补齐字段：${migrated.join('、')}`);
 // 订阅扣费生成的流水按订阅维度回查（必须在 ensureColumn 之后建索引）
 db.exec('CREATE INDEX IF NOT EXISTS idx_txn_subscription ON transactions(subscription_id);');
 require('./lib/finance-schema').ensure(db,ensureColumn);
 require('./lib/advance-schema').ensure(db);
+}
+ensureCoreSchema();
 
 /* ------------------------------- 账户类型常量 ------------------------------- */
 
@@ -695,8 +750,20 @@ function createDefaultLedger(userId, displayName) {
  * 单笔交易对账户余额的影响（返回 [{accountId, delta}]）
  * 所有金额均为「分」
  */
-function txnEffects(t) {
-  const a = t.amount_base_cents;
+function transactionLegs(t, context, fallback = true) {
+  const value = (id, recorded) => {
+    if (recorded != null) return recorded;
+    const target = context?.currencies.get(Number(id));
+    if (!target || !t.currency) return t.amount_base_cents;
+    return require('./lib/fx').amountInCurrency(
+      t.amount_cents, t.amount_base_cents, t.currency, context.base, target, context.rates
+    ) ?? (fallback ? t.amount_base_cents : null);
+  };
+  return [value(t.account_id, t.account_amount_cents), value(t.to_account_id, t.to_account_amount_cents)];
+}
+
+function txnEffects(t, context) {
+  const [a, b] = transactionLegs(t, context);
   const out = [];
   const push = (id, d) => { if (id) out.push({ accountId: Number(id), delta: d }); };
   switch (t.type) {
@@ -716,15 +783,15 @@ function txnEffects(t) {
       break;
     case 'transfer':
       push(t.account_id, -a);
-      push(t.to_account_id, a);
+      push(t.to_account_id, b);
       break;
     case 'invest_buy':
       // 资金从出资账户流向投资账户
       push(t.account_id, -a);
-      push(t.to_account_id, a);
+      push(t.to_account_id, b);
       break;
     case 'invest_sell':
-      push(t.to_account_id || t.account_id, -a);
+      push(t.to_account_id || t.account_id, t.to_account_id ? -b : -a);
       push(t.account_id, a);
       break;
     case 'adjust':
@@ -737,15 +804,27 @@ function txnEffects(t) {
 }
 
 /** 重算某账本全部账户余额（幂等，写入后调用） */
-function recalcBalances(ledgerId) {
-  const accounts = all('SELECT id, initial_cents FROM accounts WHERE ledger_id = ?', ledgerId);
+function recalcBalances(ledgerId, backfill = false) {
+  const accounts = all('SELECT id, initial_cents, currency FROM accounts WHERE ledger_id = ?', ledgerId);
+  const context = {
+    base: get('SELECT currency FROM ledgers WHERE id=?', ledgerId)?.currency || 'CNY',
+    currencies: new Map(accounts.map(account => [account.id, account.currency])),
+    rates: require('./lib/fx').quotes(),
+  };
   const rows = all(
-    'SELECT * FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL',
+    `SELECT id,type,account_id,to_account_id,amount_cents,amount_base_cents,currency,account_amount_cents,to_account_amount_cents
+     FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL`,
     ledgerId
   );
   const delta = new Map();
   for (const t of rows) {
-    for (const e of txnEffects(t)) {
+    if (backfill) {
+      const [from, to] = transactionLegs(t, context, false);
+      const a = t.account_id == null ? null : from, b = t.to_account_id == null ? null : to;
+      if (a !== t.account_amount_cents || b !== t.to_account_amount_cents)
+        run('UPDATE transactions SET account_amount_cents=?,to_account_amount_cents=? WHERE id=?', a, b, t.id);
+    }
+    for (const e of txnEffects(t, context)) {
       delta.set(e.accountId, (delta.get(e.accountId) || 0) + e.delta);
     }
   }
@@ -775,15 +854,22 @@ function init() {
   seedSystemCategories();
   seedSettings();
   seedExchangeRates();
+  if (!getSetting('fx.native_account_balances', '')) {
+    tx(() => {
+      for (const row of all('SELECT DISTINCT a.ledger_id FROM accounts a JOIN ledgers l ON l.id=a.ledger_id WHERE a.currency<>l.currency'))
+        recalcBalances(row.ledger_id, true);
+      setSetting('fx.native_account_balances', '1');
+    });
+  }
   initialized = true;
   // 清理过期会话
   run('DELETE FROM sessions WHERE expires_at < ?', Date.now());
 }
 
 module.exports = {
-  db, all, get, run, tx, prep,
+  get db() { return db; }, all, get, run, tx, prep,
   DATA_DIR, DB_FILE, nowStr, todayStr, B, N,
-  tableColumns, ensureColumn, reopenDatabase,
+  tableColumns, ensureColumn, reopenDatabase, backupDatabase, restoreDatabase,
   ACCOUNT_TYPES, ACCOUNT_TYPE_MAP,
   TXN_TYPES, TXN_TYPE_MAP, PRIMARY_TXN_TYPES,
   getSetting, setSetting, allSettings,

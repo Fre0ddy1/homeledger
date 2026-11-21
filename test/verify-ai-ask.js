@@ -649,10 +649,12 @@ const noComma = (s) => String(s).replace(/,/g, '');
 
   /* --- B2. 残余句 AI 意图（mock 模型）：query 回查账且规则区间优先 / other 纠正方向 / 关 Key 回原样 --- */
   console.log('\n=== B2. 残余句 AI 意图（mock 模型）===\n');
+  let modelRequests = 0;
   const mock = http.createServer((mq, mr) => {
     let body = '';
     mq.on('data', (c) => { body += c; });
     mq.on('end', () => {
+      modelRequests++;
       let content;
       if (body.includes('统计结果')) {
         // 叙述调用（narrate 提示词特征）返回规范空数据叙述，验证叙述链而非 JSON 糊脸（审查 P3-4）
@@ -677,6 +679,9 @@ const noComma = (s) => String(s).replace(/,/g, '');
     && r.json.text.includes('还没有支出记录'), JSON.stringify(r.json.data && r.json.data.label) + ' | ' + r.json.text);
   r = await req('POST', '/api/ai/chat', { json: { text: '你好呀，在忙啥' } });
   check('闲聊句 → AI 判 other → 明确纠正项目方向（非记账模式）', r.json.mode === 'clarify' && r.json.text.includes('只做记账和查账'), r.json.text);
+  const beforeSensitive = modelRequests;
+  r = await req('POST', '/api/ai/chat', { json: { text: '这个月工资发了多少' } });
+  check('工资查账在本地回答，意图和叙述均不访问模型', r.json.mode === 'answer' && modelRequests === beforeSensitive, r.json.text);
   r = await req('POST', '/settings/ai', { form: { _csrf: csrf, 'ai.enabled': 'false' } });
   check('关闭 AI 还原', r.status === 302, `HTTP ${r.status}`);
   r = await req('POST', '/api/ai/chat', { json: { text: '你好呀，在忙啥' } });

@@ -80,6 +80,8 @@ POST /transactions 及编辑、订阅、定期规则会在服务端检查，不�
 
 `GET /finance/cards/:id`返回余额、溢缴款、未分配预还款、账单及分期；`GET /finance/cards/:id/statements`；`POST /finance/cards/:id/refresh`重新归集。真实流水变更也会刷新。pending流水不归集，消费与退款按posted_date（缺省txn_date）入账，分期本金替代原消费全额归集，入账还款不会当收入抵销消费。
 
+本位币信用卡按流水的 `amount_base_cents` 归集外币消费、退款与分期。普通交易写入可提供 `currency` 和 `rate`；外币留空使用最新缓存的参考汇率。用户确认银行实际入账金额后，可传 `settlement_amount_cents`（本位币分），优先于汇率。已有流水省略汇率时保留原折算。读取 `rate_source` 和 `rate_date` 可辨别参考、手工、银行入账及历史数据。还款依旧使用同币种资金账户。确认后的账单先撤销确认，再改原流水并重新核对。
+
 `GET /finance/statements/:id`返回items快照、expected_items当前归集、computed_cents、confirmed_cents、dirty、paid_cents、remaining_cents及修订记录。草稿可自动更新，已确认银行账单不会静默被覆盖。
 
 `POST /finance/statements/:id/confirm`传`confirm:true,confirmed_cents,note`（金额省略采用当前归集）。银行金额允许有符号的贷项。低于已核销时，须用户明确同意`release_credit:true`，多余核销释放为未分配预还款，不移动现金。`/:id/unconfirm`传confirm:true，必要时release_credit，撤销确认后可整理原流水，旧版本保留。dirty账单须重新核对确认后再核销。金额校正不是造消费；缺少真实费用时使用下述费用接口。

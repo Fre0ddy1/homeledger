@@ -159,14 +159,24 @@ function getById(ledgerId, id) {
 }
 
 /** 取附件的磁盘路径（做目录穿越校验），文件不存在返回 null */
-function resolveFile(ledgerId, id) {
-  const row = getById(ledgerId, id);
+function resolveRow(row) {
   if (!row) return null;
   const root = path.resolve(uploadsRoot());
   const abs = path.resolve(root, String(row.rel_path));
   if (abs !== root && !abs.startsWith(root + path.sep)) return null;
   if (!fs.existsSync(abs)) return null;
   return { abs, row };
+}
+
+function resolveFile(ledgerId, id) {
+  return resolveRow(getById(ledgerId, id));
+}
+
+function resolveForUser(userId, relativePath) {
+  return resolveRow(get(`SELECT a.* FROM attachments a
+    JOIN ledger_members m ON m.ledger_id=a.ledger_id
+    JOIN ledgers l ON l.id=a.ledger_id
+    WHERE m.user_id=? AND a.rel_path=?`, Number(userId), relativePath));
 }
 
 /** 附件回显时的安全 Content-Type：库里记录的 mime 只允许位图白名单，其余按二进制流下发 */
@@ -192,6 +202,6 @@ module.exports = {
   MIME_EXT, MAX_IMAGE_BYTES, MAX_IMAGES,
   uploadsRoot, webUrl, parseDataUrl, safeMime,
   saveDataUrlImage, linkImagesToTxns,
-  listByTxnIds, listByTxn, countByTxnIds, attachCounts,
+  listByTxnIds, listByTxn, countByTxnIds, attachCounts, resolveForUser,
   getById, resolveFile, removeById,
 };

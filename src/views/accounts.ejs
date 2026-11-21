@@ -2,20 +2,21 @@
 <div class="grid grid-3 mb16">
   <div class="stat">
     <div class="label">净资产</div>
-    <div class="value amount <%= overview.net >= 0 ? '' : 'expense' %>"><%= helpers.money(overview.net) %></div>
-    <div class="delta">资产 − 负债</div>
+    <div class="value amount <%= overview.net >= 0 ? '' : 'expense' %>"><%= helpers.money(overview.net, overview.currency) %></div>
+    <div class="delta">按所选账户计算</div>
   </div>
   <div class="stat">
     <div class="label">总资产</div>
-    <div class="value amount"><%= helpers.money(overview.assets) %></div>
+    <div class="value amount"><%= helpers.money(overview.assets, overview.currency) %></div>
     <div class="delta">现金、储蓄、虚拟、投资等</div>
   </div>
   <div class="stat">
     <div class="label">总负债</div>
-    <div class="value amount expense"><%= helpers.money(overview.liabilities) %></div>
+    <div class="value amount expense"><%= helpers.money(overview.liabilities, overview.currency) %></div>
     <div class="delta">信用卡、贷款、应付款</div>
   </div>
 </div>
+<% if(overview.accounts.some(a=>a.currency!==overview.currency)){ %><p class="help mb16">外币余额按参考汇率折算为 <%= overview.currency %>。<%= overview.unvaluedCurrencies.length ? '缺少参考汇率：'+overview.unvaluedCurrencies.join('、') : '' %></p><% } %>
 
 <div class="row between mb12">
   <div class="muted small">共 <%= accounts.length %> 个在用账户<%= archived.length ? '，' + archived.length + ' 个已停用' : '' %></div>
@@ -48,7 +49,7 @@
               </a>
               <div class="right">
                 <div class="amount <%= Number(a.balance_cents) < 0 ? 'expense' : (a.isLiability ? 'expense' : '') %>"><%= helpers.money(a.balance_cents, a.currency) %></div>
-                <div class="tiny muted">近30天 −<%= helpers.fmtAmount(a.flow.out) %> / +<%= helpers.fmtAmount(a.flow.inflow) %></div>
+                <div class="tiny muted">近30天（<%= overview.currency %>） −<%= helpers.fmtAmount(a.flow.out) %> / +<%= helpers.fmtAmount(a.flow.inflow) %></div>
               </div>
             </div>
             <div class="entry-actions"><a class="btn btn-sm" href="/accounts/<%= a.id %>">明细</a><% if(a.finance_url){ %><a class="btn btn-sm" href="<%= a.finance_url %>"><%= a.managed_advance?'代垫与回收':a.type==='credit'?'账单与还款':'贷款管理' %></a><% } %>
