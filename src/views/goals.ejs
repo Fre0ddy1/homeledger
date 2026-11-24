@@ -38,7 +38,7 @@
           <form method="post" action="/goals/<%= g.id %>/deposit" class="row" style="gap:6px">
             <input type="hidden" name="_csrf" value="<%= csrf %>">
             <input type="text" name="amount" inputmode="decimal" placeholder="存入金额" style="width:110px">
-            <label class="check tiny"><input type="checkbox" name="create_txn" value="1" checked> 生成流水</label>
+            <label class="check tiny"><input type="checkbox" name="create_txn" value="1" <%= g.account_id ? 'checked' : '' %>> 生成流水</label>
             <button class="btn btn-sm btn-primary" type="submit">存入</button>
           </form>
           <form method="post" action="/goals/<%= g.id %>/delete" data-confirm="删除储蓄目标「<%= g.name %>」？">

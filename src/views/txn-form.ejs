@@ -298,6 +298,8 @@
   var curType = <%- helpers.jsonForScript(cur) %>;
   var firstType=true;
   function applyType(type){
+    if (!firstType && type === curType) return;
+    curType = type;
     document.querySelectorAll('[data-for-type]').forEach(function(el){
       el.classList.toggle('hidden', !el.dataset.forType.split(',').includes(type));
     });

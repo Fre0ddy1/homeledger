@@ -10,6 +10,7 @@ const http = require('node:http');
 
 const ROOT = path.join(__dirname, '..');
 const PORT = 8099;
+const SUITE_TIMEOUT_MS = Math.max(1000, Number(process.env.RUN_ALL_TIMEOUT_MS) || 120000);
 const SUITES = [
   'verify-about.js',
   'verify-startup.js',
@@ -51,10 +52,11 @@ function healthz(timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
     (function probe() {
-      const req = http.get(`http://127.0.0.1:${PORT}/healthz`, (res) => {
+      const req = http.get({ host: '127.0.0.1', port: PORT, path: '/healthz', timeout: 2000 }, (res) => {
         res.resume();
         res.statusCode === 200 ? resolve() : retry();
       });
+      req.on('timeout', () => { req.destroy(); retry(); });
       req.on('error', retry);
       function retry() {
         if (Date.now() > deadline) return reject(new Error('healthz 超时'));
@@ -86,13 +88,31 @@ function waitPortFree(timeoutMs = 15000) {
   });
 }
 
-function run(cmd, args, opts) {
+function run(cmd, args, opts, timeoutMs = SUITE_TIMEOUT_MS) {
   return new Promise((resolve) => {
     const p = spawn(cmd, args, { ...opts, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
+    let timedOut = false;
+    let forceTimer = null;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      out += `\n[run-all] 套件执行超时（>${timeoutMs}ms），已终止子进程 PID=${p.pid}\n`;
+      try { p.kill(); } catch {}
+      forceTimer = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} }, 2000);
+      forceTimer.unref();
+    }, timeoutMs);
     p.stdout.on('data', (d) => (out += d));
     p.stderr.on('data', (d) => (out += d));
-    p.on('close', (code) => resolve({ code, out }));
+    p.on('error', (err) => {
+      clearTimeout(timer);
+      if (forceTimer) clearTimeout(forceTimer);
+      resolve({ code: 1, out: out + '\n' + err.message, timedOut });
+    });
+    p.on('close', (code) => {
+      clearTimeout(timer);
+      if (forceTimer) clearTimeout(forceTimer);
+      resolve({ code: timedOut ? 124 : code, out, timedOut });
+    });
   });
 }
 
@@ -103,22 +123,26 @@ function run(cmd, args, opts) {
   for (const suite of SUITES) {
     const dataDir = path.join(ROOT, 'data-verify-runall');
     fs.rmSync(dataDir, { recursive: true, force: true });
+    let serverErr = '';
     const server = spawn(process.execPath, ['server.js'], {
       cwd: ROOT,
       env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', DATA_DIR: dataDir, NODE_ENV: 'test' },
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', 'pipe'],
     });
+    server.stderr.on('data', (d) => { if (serverErr.length < 2000) serverErr += d; });
     try {
       await healthz(15000);
       // DATA_DIR 必须同步传给套件进程：部分套件（如 ai-attachments）要读服务端的上传目录核对落盘文件
-      const { code, out } = await run(process.execPath, [path.join('test', suite)], { cwd: ROOT, env: { ...process.env, DATA_DIR: dataDir } });
-      if (code !== 0) console.error(`\n===== ${suite} 失败（退出码 ${code}）完整输出 =====\n${out}`);
+      const { code, out, timedOut } = await run(process.execPath, [path.join('test', suite)], { cwd: ROOT, env: { ...process.env, DATA_DIR: dataDir } });
+      if (code !== 0) console.error(`\n===== ${suite} ${timedOut ? '超时' : '失败'}（退出码 ${code}）完整输出 =====\n${out}`);
       const m = out.match(/(\d+)\s*通过\s*\/\s*(\d+)\s*失败/);
-      results.push({ suite, ok: code === 0, pass: m ? Number(m[1]) : null, fail: m ? Number(m[2]) : null, tail: out.trim().split('\n').slice(-3).join(' | ') });
+      results.push({ suite, ok: code === 0, pass: m ? Number(m[1]) : null, fail: m ? Number(m[2]) : null, tail: (timedOut ? 'TIMEOUT ' : '') + out.trim().split('\n').slice(-3).join(' | ') });
     } catch (e) {
-      results.push({ suite, ok: false, pass: null, fail: null, tail: 'SERVER_FAIL ' + e.message });
+      results.push({ suite, ok: false, pass: null, fail: null, tail: 'SERVER_FAIL ' + e.message + (serverErr ? ' | ' + serverErr.trim().split('\n').slice(-2).join(' ') : '') });
     } finally {
+      const closed = new Promise((r) => server.exitCode !== null ? r() : server.once('close', r));
       server.kill();
+      await Promise.race([closed, new Promise((r) => setTimeout(r, 5000))]);
       await waitPortFree();
       fs.rmSync(dataDir, { recursive: true, force: true });
     }

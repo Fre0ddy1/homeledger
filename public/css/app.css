@@ -754,6 +754,28 @@ a.rank-name:hover { color: var(--primary); opacity: 1; }
 .txn-detail-gallery { gap: 8px; }
 .txn-detail-gallery figure { border-radius: 9px; }
 .txn-detail-gallery img { height: 92px; cursor: zoom-in; }
+.txn-detail .modal-actions { justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
+.txn-detail .modal-actions [data-act="del"] { margin-right: auto; }
+.txn-refund-card { margin-top: 16px; }
+.txn-refund-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.txn-refund-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.txn-refund-head h2, .txn-refund-head h3 { font-size: 16px; margin: 0; }
+.txn-refund-form { display: flex; flex-direction: column; gap: 12px; }
+.txn-refund-form .field { margin: 0; }
+.txn-refund-form .field > label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+.txn-refund-amount-row { display: flex; align-items: center; gap: 8px; }
+.txn-refund-amount-row input { flex: 1; min-width: 0; }
+.txn-refund-datetime { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.txn-refund-clock-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.txn-refund-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
+.txn-refund-history { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.txn-refund-history.is-only { margin-top: 0; padding-top: 0; border-top: 0; }
+.txn-refund-history h3 { font-size: 13px; color: var(--text-2); margin: 0 0 10px; }
+.txn-refund-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.txn-refund-item:last-child { border-bottom: 0; padding-bottom: 0; }
+.txn-refund-item-meta { min-width: 0; overflow-wrap: anywhere; }
+.txn-refund-item-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+@media (max-width: 460px) { .txn-refund-datetime { grid-template-columns: 1fr; } }
 .modal.danger .modal-title .icon { color: var(--expense); }
 .modal-body { font-size: 13.5px; color: var(--text-2); line-height: 1.65; word-break: break-word; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }

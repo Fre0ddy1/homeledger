@@ -99,7 +99,7 @@ const SKIP_STATUS = /已关闭|交易关闭|已退款|全额退款|退款成功|
 /** 导出 CSV type_key 列的合法值 */
 const TXN_KEYS = new Set(['expense','income','transfer','lend','borrow','repay_receive','repay_pay','reimburse','refund','fee','interest','invest_buy','invest_sell','adjust']);
 
-function normalizeRow({ date, time, clockSource, direction, amountText, merchant, desc, categoryText, accountText, toAccountText, status, orderNo, typeKey, ownerText, noRhythmText }) {
+function normalizeRow({ date, time, clockSource, direction, amountText, currencyText, baseAmountText, merchant, desc, categoryText, accountText, toAccountText, status, orderNo, typeKey, ownerText, noRhythmText }) {
   const amountCents = parseAmountToCents(amountText);
   const dir = String(direction || '').trim();
   const key = String(typeKey || '').trim();
@@ -130,11 +130,34 @@ function normalizeRow({ date, time, clockSource, direction, amountText, merchant
     txnDate=String(date||'').slice(0,40);
     importError=e.message;
   }
+  const rawCurrency = String(currencyText || '').trim().toUpperCase();
+  let currency = null;
+  if (rawCurrency) {
+    if (/^[A-Z]{3}$/.test(rawCurrency)) currency = rawCurrency;
+    else {
+      currency = rawCurrency.slice(0, 10);
+      if (!importError) importError = '币种格式无效，应为三位字母代码（如 CNY、USD）';
+    }
+  }
+  const rawBase = String(baseAmountText || '').trim();
+  let baseAmountCents = null;
+  if (rawBase) {
+    const parsedBase = parseAmountToCents(rawBase);
+    if (!parsedBase) {
+      if (!importError) importError = '折算金额格式无效';
+    } else if (type === 'adjust' && amountCents && Math.sign(parsedBase) !== Math.sign(amountCents)) {
+      if (!importError) importError = '折算金额方向与原币金额不一致';
+    } else {
+      baseAmountCents = parsedBase;
+    }
+  }
   return {
     skip: false,
     neutral,
     type,
     amount_cents: amountCents,
+    currency,
+    base_amount_cents: baseAmountCents,
     txn_date: txnDate,
     txn_time: txnTime,
     import_error: importError,
@@ -193,6 +216,8 @@ function parseBill(buffer) {
   const iTime = exactHeaderIndex(header,['时间','时刻','交易时刻','time','txn_time']);
   const iDir = headerIndex(header, ['收/支', '收支', '类型', '方向']);
   const iAmount = headerIndex(header, ['金额(元)', '金额', 'amount']);
+  const iCurrency = exactHeaderIndex(header, ['币种', '货币', 'currency']);
+  const iBaseAmount = exactHeaderIndex(header, ['折算金额', '本位币金额', 'amount_base', 'base_amount']);
   const iMerchant = headerIndex(header, ['交易对方', '对方', 'merchant', '商家']);
   const iOwner = headerIndex(header, ['归属人', 'owner']);
   const iNoRhythm = headerIndex(header, ['一次性大额', 'no_rhythm']);
@@ -218,6 +243,8 @@ function parseBill(buffer) {
       clockSource: timestampIndex===undefined?undefined:headerName(header[timestampIndex])==='交易创建时间'?'':r[timestampIndex],
       direction: iDir >= 0 ? r[iDir] : '',
       amountText: iAmount >= 0 ? r[iAmount] : '',
+      currencyText: iCurrency >= 0 ? r[iCurrency] : '',
+      baseAmountText: iBaseAmount >= 0 ? r[iBaseAmount] : '',
       merchant: iMerchant >= 0 ? r[iMerchant] : '',
       desc: iDesc >= 0 ? r[iDesc] : '',
       categoryText: iCategory >= 0 ? r[iCategory] : '',
@@ -239,7 +266,7 @@ function parseBill(buffer) {
 
 /* --------------------------------- 执行导入 -------------------------------- */
 
-function ensureAccount(ledgerId, name, createdList) {
+function ensureAccount(ledgerId, name, createdList, defaultCurrency = 'CNY') {
   if (!name) return null;
   const id = resolveAccountId(ledgerId, name);
   if (id) return id;
@@ -248,10 +275,32 @@ function ensureAccount(ledgerId, name, createdList) {
   const r = run(
     `INSERT INTO accounts (ledger_id, name, type, icon, currency, initial_cents, balance_cents, sort_order, note, created_at)
      VALUES (?,?,?,?,?,0,0,999,?,?)`,
-    ledgerId, String(name).slice(0, 30), type, icon, 'CNY', '由账单导入自动创建', nowStr()
+    ledgerId, String(name).slice(0, 30), type, icon, defaultCurrency, '由账单导入自动创建', nowStr()
   );
   createdList.push(name);
   return r.lastInsertRowid;
+}
+
+/** 规范化单条导入记录的币种与估值参数（预览与提交共用同一边界规则） */
+function resolveImportValuation(ledgerId, rec, accountId = null, toAccountId = null) {
+  const ledgerBase = get('SELECT currency FROM ledgers WHERE id = ?', ledgerId)?.currency || 'CNY';
+  const currency = rec.currency ? String(rec.currency).trim().toUpperCase() : ledgerBase;
+  if (!/^[A-Z]{3}$/.test(currency)) throw Error('币种格式无效，应为三位字母代码（如 CNY、USD）');
+  const signedAmount = rec.type === 'adjust' ? rec.amount_cents : Math.abs(rec.amount_cents);
+  if (!signedAmount) throw Error('金额必须大于 0');
+  const fxOptions = {};
+  if (rec.base_amount_cents != null) {
+    const signedBase = rec.type === 'adjust' ? rec.base_amount_cents : Math.abs(rec.base_amount_cents);
+    if (!signedBase) throw Error('折算金额格式无效');
+    if (rec.type === 'adjust' && Math.sign(signedBase) !== Math.sign(signedAmount)) throw Error('折算金额方向与原币金额不一致');
+    if (currency === ledgerBase) {
+      if (signedBase !== signedAmount) throw Error(`本位币（${ledgerBase}）记录的折算金额与原币金额不一致`);
+    } else {
+      fxOptions.settlement_amount_cents = signedBase;
+    }
+  }
+  const value = require('./fx').transactionValuation(ledgerId, currency, signedAmount, fxOptions, accountId, toAccountId);
+  return { ledgerBase, currency, signedAmount, value };
 }
 
 /** 「不计收支」记录（提现/充值）找不到对方账户时使用的兜底账户，保证转账双边平衡 */
@@ -270,14 +319,16 @@ function importRecords({
   const createdAccounts = [];
   const errors = [];
   let imported = 0, skipped = 0, failed = 0;
+  const ledgerBase = get('SELECT currency FROM ledgers WHERE id = ?', ledgerId)?.currency || 'CNY';
   const list = includeNeutral ? records.concat(neutralRecords) : records.slice();
   const dupSet = new Set(),baseSet = new Set(),unknownSet = new Set();
-  // 预载已有记录指纹，避免重复导入
+  // 预载已有记录指纹，避免重复导入（含币种，防止同额不同币误判重）
   for (const t of all(
-    'SELECT txn_date, txn_time, amount_cents, merchant FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND source = ?',
+    'SELECT txn_date, txn_time, currency, amount_cents, merchant FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND source = ?',
     ledgerId, 'import'
   )) {
-    const base=`${t.txn_date}|${t.amount_cents}|${t.merchant || ''}`;
+    const cur = String(t.currency || 'CNY').toUpperCase();
+    const base=`${t.txn_date}|${cur}|${t.amount_cents}|${t.merchant || ''}`;
     baseSet.add(base);
     dupSet.add(`${base}|${t.txn_time||''}`);
     if(!t.txn_time)unknownSet.add(base);
@@ -285,32 +336,38 @@ function importRecords({
 
   tx(() => {
     for (const rec of list) {
+      const createdBefore = createdAccounts.length;
       try {
         require('../db').db.exec('SAVEPOINT import_row');
         if(rec.import_error)throw Error(rec.import_error);
         const txnDate=transactionTime.normalizeDate(rec.txn_date,todayStr());
         const txnTime=transactionTime.normalizeTime(rec.txn_time);
-        const base = `${txnDate}|${rec.amount_cents}|${rec.merchant || ''}`;
+        const currency = rec.currency ? String(rec.currency).trim().toUpperCase() : ledgerBase;
+        if (!/^[A-Z]{3}$/.test(currency)) throw Error('币种格式无效，应为三位字母代码（如 CNY、USD）');
+        // 余额调整回导保留负金额（调减为带符号数），方向不能翻转；
+        // 但 expense/income 直接以负数入库会把方向写反（txnEffects 对 expense 取 -a），钳回正数
+        const signedAmount = rec.type === 'adjust' ? rec.amount_cents : Math.abs(rec.amount_cents);
+        const base = `${txnDate}|${currency}|${signedAmount}|${rec.merchant || ''}`;
         const fp = `${base}|${txnTime||''}`;
         if (txnTime ? dupSet.has(fp)||unknownSet.has(base) : baseSet.has(base)) { skipped++; require('../db').db.exec('RELEASE import_row'); continue; }
 
         let categoryId = null;
         let toAccountId = null;
         const accountId = autoCreateAccount
-          ? ensureAccount(ledgerId, rec.account_hint, createdAccounts) || defaultAccountId
+          ? ensureAccount(ledgerId, rec.account_hint, createdAccounts, ledgerBase) || defaultAccountId
           : resolveAccountId(ledgerId, rec.account_hint) || defaultAccountId;
 
         if (rec.neutral) {
           // 提现 / 充值：账户之间搬钱，不计入收支。对方账户优先取回导的「转入账户」列，再从说明文字推断
           const cpName = rec.to_account_hint || guessAccountName(rec.text) || NEUTRAL_FALLBACK_ACCOUNT;
           toAccountId = autoCreateAccount
-            ? ensureAccount(ledgerId, cpName, createdAccounts) || ensureAccount(ledgerId, NEUTRAL_FALLBACK_ACCOUNT, createdAccounts)
+            ? ensureAccount(ledgerId, cpName, createdAccounts, ledgerBase) || ensureAccount(ledgerId, NEUTRAL_FALLBACK_ACCOUNT, createdAccounts, ledgerBase)
             : resolveAccountId(ledgerId, rec.to_account_hint) || resolveAccountId(ledgerId, guessAccountName(rec.text)) || null;
         } else if (rec.type === 'transfer' || rec.type === 'invest_buy' || rec.type === 'invest_sell') {
           // 回导的双边类型（转账/借贷/投资）：对方账户优先取「转入账户」列，其次从说明文字推断；推不出就按 transfer 兜底（一方账户仍保留）
           const cpName = rec.to_account_hint || guessAccountName(rec.text) || NEUTRAL_FALLBACK_ACCOUNT;
           toAccountId = autoCreateAccount
-            ? ensureAccount(ledgerId, cpName, createdAccounts)
+            ? ensureAccount(ledgerId, cpName, createdAccounts, ledgerBase)
             : resolveAccountId(ledgerId, rec.to_account_hint) || resolveAccountId(ledgerId, guessAccountName(rec.text)) || null;
           if (!toAccountId) rec.type = 'transfer';
         } else if (!require('./txn').PRINCIPAL_TYPES.includes(rec.type)) {
@@ -334,11 +391,7 @@ function importRecords({
         if(toAccountId)require('./finance/common').account(ledgerId,toAccountId);
         if(['transfer','invest_buy','invest_sell'].includes(rec.type)&&(!toAccountId||Number(toAccountId)===Number(accountId)))throw Error('转账与投资交易须有两个不同的当前账本账户');
         require('./account-policy').validate(ledgerId,rec.type,accountId,toAccountId,'import');
-        // 余额调整回导保留负金额（调减为带符号数），方向不能翻转；
-        // 但 expense/income 直接以负数入库会把方向写反（txnEffects 对 expense 取 -a），钳回正数
-        const signedAmount = rec.type === 'adjust' ? rec.amount_cents : Math.abs(rec.amount_cents);
-        const currency = 'CNY';
-        const value = require('./fx').transactionValuation(ledgerId, currency, signedAmount, {}, accountId, toAccountId);
+        const { value } = resolveImportValuation(ledgerId, { ...rec, currency }, accountId, toAccountId);
 
         const inserted=run(
           `INSERT INTO transactions
@@ -364,6 +417,7 @@ function importRecords({
         imported++;
       } catch (e) {
         require('../db').db.exec('ROLLBACK TO import_row');require('../db').db.exec('RELEASE import_row');
+        createdAccounts.length = createdBefore;
         if(errors.length<50)errors.push({date:rec.txn_date,merchant:rec.merchant||null,error:e.message});
         failed++;
       }
@@ -412,4 +466,4 @@ function exportRows(ledgerId, rows) {
   ]);
 }
 
-module.exports = { parseBill, importRecords, toCsv, csvEscape, EXPORT_HEADER, exportRows, decodeBuffer, normalizeDate, parseCsvLine };
+module.exports = { parseBill, importRecords, resolveImportValuation, toCsv, csvEscape, EXPORT_HEADER, exportRows, decodeBuffer, normalizeDate, parseCsvLine };

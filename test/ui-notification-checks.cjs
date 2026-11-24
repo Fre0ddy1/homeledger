@@ -8,6 +8,8 @@ module.exports = async function checkNotifications(page, base) {
   await page.goto(settings);
   const panel = page.locator('[data-tab="notifications"]');
   record('手机设置可打开通知与推送', await panel.isVisible());
+  const addDetails = panel.locator('details').filter({ has: page.locator('summary', { hasText: '添加推送渠道' }) });
+  if (!(await addDetails.evaluate(el => el.open))) await addDetails.locator('> summary').click();
   const form = panel.locator('form[action="/settings/notifications/channels"]');
   await form.locator('[name="name"]').fill('手机测试渠道');
   await form.locator('[name="url"]').fill('http://127.0.0.1:5/test-sensitive-config');

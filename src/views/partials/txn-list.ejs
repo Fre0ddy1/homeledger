@@ -59,6 +59,9 @@
               <% if (t.is_reimbursable) { %>
                 <span class="chip <%= t.reimbursed_at ? 'income' : 'warn' %>"><%= t.reimbursed_at ? '已报销' : '待报销' %></span>
               <% } %>
+              <% if (t.refunded_cents > 0) { %>
+                <span class="chip <%= t.refunded_cents >= t.amount_cents ? 'income' : 'warn' %>"><%= t.refunded_cents >= t.amount_cents ? '已退款' : '部分退款 ' + helpers.fmtAmount(t.refunded_cents) %></span>
+              <% } %>
               <% if(t.advance_collection&&t.advance_collection.excess_cents){ %><span>回本 <%= helpers.fmtAmount(t.advance_collection.principal_cents) %> · 凑整收入 <%= helpers.fmtAmount(t.advance_collection.excess_cents) %></span><% } %>
               <% if(t.advance){
                 const personalAmount = helpers.fmtAmount(t.advance.personal_cents);

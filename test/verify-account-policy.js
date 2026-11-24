@@ -46,5 +46,37 @@ let cookie='';async function page(path,form){const r=await fetch('http://127.0.0
  r=await page('/transactions/new?type=transfer');const transfers=[...r.html.matchAll(/<select name="(?:account_id|to_account_id)"[^>]*>([\s\S]*?)<\/select>/g)].map(m=>m[1]);check('无JS普通转账两端不展示信用卡或贷款',transfers.length>=2&&transfers.slice(0,2).every(s=>![card,...liabilities].some(id=>s.includes('value="'+id+'"'))));
  for(const path of ['/debts','/debts/'+debt.id]){r=await page(path);const accountOptions=r.html.match(/<select name="account_id"[^>]*>([\s\S]*?)<\/select>/)[1];check('借钱登记和核销下拉排除负债 '+path,![card,...liabilities].some(id=>accountOptions.includes('value="'+id+'"')));}
  const from='2020-02-02',to='2020-02-20';for(const basis of ['cashflow','consumption']){r=await page('/reports?basis='+basis+'&preset=custom&from='+from+'&to='+to+'&kind=income');check(basis+'使用同一完整工具栏',r.status===200&&r.html.includes('class="card report-toolbar"')&&r.html.includes('id="report-month"')&&r.html.includes('id="report-from"')&&r.html.includes('aria-label="收支方向"'));check(basis+'切换保留日期和方向',r.html.includes('from='+from+'&amp;to='+to)&&r.html.includes('kind=income'));}
+ /* 储蓄目标网页存入原子性回归（A3） */
+ const goalsPage=await page('/goals'),goalCsrf=goalsPage.html.match(/name="_csrf"\s+value="([^"]+)"/)[1];
+ await page('/goals',{_csrf:goalCsrf,name:'无账户目标',target_amount:'1.00'});
+ const noAccGoal=db.get("SELECT * FROM goals WHERE ledger_id=? AND name='无账户目标' ORDER BY id DESC",lid);
+ const txnCountBefore=db.get('SELECT COUNT(*) AS c FROM transactions WHERE ledger_id=?',lid).c;
+ const notifCountBefore=db.get("SELECT COUNT(*) AS c FROM notifications WHERE event_type='goal_reached'").c;
+ const failDep1=await page('/goals/'+noAccGoal.id+'/deposit',{_csrf:goalCsrf,amount:'1.00',create_txn:'1'});
+ const failDep2=await page('/goals/'+noAccGoal.id+'/deposit',{_csrf:goalCsrf,amount:'1.00',create_txn:'1'});
+ const afterFailGoal=db.get('SELECT * FROM goals WHERE id=?',noAccGoal.id);
+ const goalsAfterFail=await page('/goals');
+ check('储蓄目标无账户勾选生成流水时返回明确错误且不产生500、不改进度/状态/流水/通知',
+   failDep1.status===302&&failDep2.status===302&&afterFailGoal.saved_cents===0&&afterFailGoal.status==='active'&&
+   db.get('SELECT COUNT(*) AS c FROM transactions WHERE ledger_id=?',lid).c===txnCountBefore&&
+   db.get("SELECT COUNT(*) AS c FROM notifications WHERE event_type='goal_reached'").c===notifCountBefore&&
+   goalsAfterFail.html.includes('flash error'));
+ const failLoanDep=await page('/goals/'+noAccGoal.id+'/deposit',{_csrf:goalCsrf,amount:'1.00',create_txn:'1',account_id:String(loan.account_id)});
+ check('储蓄目标同步记账传入不可用负债账户时整笔回滚',
+   failLoanDep.status===302&&db.get('SELECT saved_cents,status FROM goals WHERE id=?',noAccGoal.id).saved_cents===0&&
+   db.get('SELECT COUNT(*) AS c FROM transactions WHERE ledger_id=?',lid).c===txnCountBefore);
+ const progressOnly=await page('/goals/'+noAccGoal.id+'/deposit',{_csrf:goalCsrf,amount:'0.50'});
+ check('储蓄目标不勾选生成流水时可独立更新进度且不建流水',
+   progressOnly.status===302&&db.get('SELECT saved_cents,status FROM goals WHERE id=?',noAccGoal.id).saved_cents===50&&
+   db.get('SELECT COUNT(*) AS c FROM transactions WHERE ledger_id=?',lid).c===txnCountBefore);
+ await page('/goals',{_csrf:goalCsrf,name:'绑定账户目标',target_amount:'2.00',account_id:String(cash)});
+ const accGoal=db.get("SELECT * FROM goals WHERE ledger_id=? AND name='绑定账户目标' ORDER BY id DESC",lid);
+ const okDep=await page('/goals/'+accGoal.id+'/deposit',{_csrf:goalCsrf,amount:'2.00',create_txn:'1'});
+ const okWith=await page('/goals/'+accGoal.id+'/deposit',{_csrf:goalCsrf,amount:'-0.50',create_txn:'1'});
+ const goalTxns=db.all("SELECT type,amount_cents,account_id FROM transactions WHERE ledger_id=? AND note LIKE '储蓄目标「绑定账户目标」%' ORDER BY id",lid);
+ check('储蓄目标绑定有效账户可同步存入达成并支持取出',
+   okDep.status===302&&okWith.status===302&&db.get('SELECT saved_cents,status FROM goals WHERE id=?',accGoal.id).saved_cents===150&&
+   goalTxns.length===2&&goalTxns[0].type==='expense'&&goalTxns[0].amount_cents===200&&goalTxns[1].type==='income'&&goalTxns[1].amount_cents===50&&
+   db.get("SELECT COUNT(*) AS c FROM notifications WHERE event_type='goal_reached'").c>notifCountBefore);
  console.log(`\n${pass} 通过 / ${fail} 失败`);process.exitCode=fail?1:0;
 })().catch(e=>{console.error(e);process.exitCode=1;});

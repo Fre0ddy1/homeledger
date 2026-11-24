@@ -69,6 +69,7 @@ DATA_DIR=./data-demo node scripts/seed-demo.js   # 演示数据（独立目录�
 - 改完服务端代码须按实际端口/PID重启本任务实例（无 watch）并告知；默认开发 5111、独立演示 5112；不得误重启他人实例
 - 测试调试只用隔离 `DATA_DIR` 实例；临时 8099/5113 实例用完即清，演示 5112 与真实 `data/` 分开
 - Windows 下删除数据目录前先停持有它的进程（文件锁）
+- 功能开发并验证通过后，自动以后台方式启动隔离本地演示预览（`npm run preview:ui`，`http://localhost:5112`，账号 `admin` / `admin123456`，不碰真实 `data/`）并给出访问地址；若一次性演示目录 `.tmp/data-ui-preview` 残留导致启动失败，先清理该临时目录再重启
 
 ---
 指针：协作细则见 `docs/collaboration.md`；路线图与开放问题见 `docs/ai-roadmap.md`；版本登记台账与发版状态见 `docs/versions.md`；踩坑见 `docs/solutions/`

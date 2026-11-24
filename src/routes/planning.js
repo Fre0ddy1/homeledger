@@ -298,10 +298,17 @@ router.post('/goals', auth.requireLogin, auth.requireLedgerWrite, (req, res) => 
   const name = String(req.body.name || '').trim();
   const target = u.parseAmountToCents(req.body.target_amount);
   if (!name || !target) { res.flash('error', '请填写目标名称与目标金额'); return res.redirect('/goals'); }
+  let accountId = null;
+  if (req.body.account_id) {
+    accountId = validAccountId(ledgerId, req.body.account_id);
+    if (!accountId) { res.flash('error', '请选择当前账本的有效账户'); return res.redirect('/goals'); }
+    try { require('../lib/account-policy').validate(ledgerId, 'expense', accountId, null); }
+    catch (e) { res.flash('error', e.message); return res.redirect('/goals'); }
+  }
   run(
     'INSERT INTO goals (ledger_id, name, icon, target_cents, saved_cents, account_id, target_date, status, note, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
     ledgerId, name.slice(0, 30), req.body.icon || '🎯', target, u.parseAmountToCents(req.body.saved_amount),
-    req.body.account_id || null, req.body.target_date || null, 'active',
+    accountId, req.body.target_date || null, 'active',
     req.body.note ? String(req.body.note).slice(0, 200) : null, nowStr()
   );
   res.flash('success', `储蓄目标「${name}」已创建`);
@@ -314,19 +321,28 @@ router.post('/goals/:id/deposit', auth.requireLogin, auth.requireLedgerWrite, (r
   if (!g) { res.flash('error', '目标不存在'); return res.redirect('/goals'); }
   const delta = u.parseAmountToCents(req.body.amount);
   if (!delta) { res.flash('error', '请填写金额（取出请填负数）'); return res.redirect('/goals'); }
-  if(req.body.create_txn) { try { require('../lib/account-policy').validate(ledgerId,delta>0?'expense':'income',req.body.account_id||g.account_id,null); } catch(e) { res.flash('error',e.message); return res.redirect('/goals'); } }
   const saved = Math.max(0, Number(g.saved_cents) + delta);
   const status = saved >= Number(g.target_cents) ? 'done' : 'active';
-  run('UPDATE goals SET saved_cents = ?, status = ? WHERE id = ?', saved, status, g.id);
-  if (req.body.create_txn) {
-    txn.createTransaction(ledgerId, req.session.userId, {
-      type: delta > 0 ? 'expense' : 'income',
-      amount_cents: Math.abs(delta),
-      account_id: req.body.account_id || g.account_id || null,
-      txn_date: todayStr(),
-      note: `储蓄目标「${g.name}」${delta > 0 ? '存入' : '取出'}`,
-      source: 'manual',
+  const createTxn = !!req.body.create_txn;
+  const accountId = req.body.account_id ? Number(req.body.account_id) : (g.account_id ? Number(g.account_id) : null);
+  try {
+    tx(() => {
+      if (createTxn && !accountId) throw new Error('同步生成流水需要指定有效账户，请先绑定账户或取消勾选「生成流水」');
+      run('UPDATE goals SET saved_cents = ?, status = ? WHERE id = ?', saved, status, g.id);
+      if (createTxn) {
+        txn.createTransaction(ledgerId, req.session.userId, {
+          type: delta > 0 ? 'expense' : 'income',
+          amount_cents: Math.abs(delta),
+          account_id: accountId,
+          txn_date: todayStr(),
+          note: `储蓄目标「${g.name}」${delta > 0 ? '存入' : '取出'}`,
+          source: 'manual',
+        });
+      }
     });
+  } catch (e) {
+    res.flash('error', e.message);
+    return res.redirect('/goals');
   }
   if (status === 'done') {
     for (const uid of auth.ledgerWriterIds(ledgerId)) {

@@ -273,6 +273,111 @@ check('非法日期/时刻按行失败且没有污染流水',badClock.failed===2
 
 check('无表头的文件给出可读错误', (() => { const p = importer.parseBill(Buffer.from('随便一行\n另一行', 'utf8')); return !!p.error; })());
 
+/* ==================== A4. 多币种 CSV 往返保真与拒收边界 ==================== */
+
+console.log('\n=== A4. 多币种 CSV 往返保真与拒收边界（进程内）===\n');
+
+const fxSrcLedger = Number(db.run(
+  "INSERT INTO ledgers (name, kind, currency, icon, color, owner_id, note, created_at) VALUES ('多币导出源','personal','CNY','💱','#4f7cff',?,NULL,?)",
+  uid, db.nowStr()
+).lastInsertRowid);
+const mkFxAcc = (lid, name, type, cur) => Number(db.run(
+  'INSERT INTO accounts (ledger_id, name, type, icon, currency, initial_cents, balance_cents, sort_order, note, created_at) VALUES (?,?,?,?,?,0,0,0,NULL,?)',
+  lid, name, type, '💳', cur, db.nowStr()
+).lastInsertRowid);
+const fxCard = mkFxAcc(fxSrcLedger, '全币种信用卡', 'credit', 'CNY');
+const fxUsdAcc = mkFxAcc(fxSrcLedger, '美元储蓄卡', 'debit', 'USD');
+const fxEurAcc = mkFxAcc(fxSrcLedger, '欧元储蓄卡', 'debit', 'EUR');
+const fxCnyAcc = mkFxAcc(fxSrcLedger, '人民币储蓄卡', 'debit', 'CNY');
+
+txn.createTransaction(fxSrcLedger, uid, { type: 'expense', amount_cents: 1000, currency: 'CNY', account_id: fxCnyAcc, txn_date: '2026-10-01', merchant: '多币-CNY支出' });
+txn.createTransaction(fxSrcLedger, uid, { type: 'expense', amount_cents: 1000, currency: 'USD', settlement_amount_cents: 7250, account_id: fxCard, txn_date: '2026-10-01', merchant: '多币-USD刷卡' });
+txn.createTransaction(fxSrcLedger, uid, { type: 'income', amount_cents: 2500, currency: 'EUR', settlement_amount_cents: 19750, account_id: fxEurAcc, txn_date: '2026-10-02', merchant: '多币-EUR收入' });
+txn.createTransaction(fxSrcLedger, uid, { type: 'transfer', amount_cents: 5000, currency: 'USD', settlement_amount_cents: 36000, account_id: fxCnyAcc, to_account_id: fxUsdAcc, txn_date: '2026-10-03', merchant: '多币-USD转账' });
+txn.createTransaction(fxSrcLedger, uid, { type: 'adjust', amount_cents: -1200, currency: 'USD', settlement_amount_cents: -8640, account_id: fxUsdAcc, txn_date: '2026-10-04', merchant: '多币-USD调减' });
+
+const fxExportRows = txn.listTransactions(fxSrcLedger, { sort: 'date_asc', page: 1, pageSize: 50 }).rows;
+const fxCsv = importer.toCsv(importer.EXPORT_HEADER, importer.exportRows(fxSrcLedger, fxExportRows));
+const fxParsed = importer.parseBill(Buffer.from(fxCsv, 'utf8'));
+check('多币导出 CSV 正确解析 5 条及各自币种与折算金额',
+  fxParsed.records.length === 5 &&
+  fxParsed.records.find((r) => r.merchant === '多币-USD刷卡')?.currency === 'USD' &&
+  fxParsed.records.find((r) => r.merchant === '多币-USD刷卡')?.base_amount_cents === 7250 &&
+  fxParsed.records.find((r) => r.merchant === '多币-EUR收入')?.currency === 'EUR' &&
+  fxParsed.records.find((r) => r.merchant === '多币-USD调减')?.base_amount_cents === -8640);
+
+const fxDstLedger = Number(db.run(
+  "INSERT INTO ledgers (name, kind, currency, icon, color, owner_id, note, created_at) VALUES ('多币回导目标','personal','CNY','💱','#4f7cff',?,NULL,?)",
+  uid, db.nowStr()
+).lastInsertRowid);
+const dstCard = mkFxAcc(fxDstLedger, '全币种信用卡', 'credit', 'CNY');
+const dstUsdAcc = mkFxAcc(fxDstLedger, '美元储蓄卡', 'debit', 'USD');
+const dstEurAcc = mkFxAcc(fxDstLedger, '欧元储蓄卡', 'debit', 'EUR');
+const dstCnyAcc = mkFxAcc(fxDstLedger, '人民币储蓄卡', 'debit', 'CNY');
+
+const fxImp = importer.importRecords({
+  ledgerId: fxDstLedger, userId: uid, records: fxParsed.records, source: fxParsed.source, fileName: 'fx-roundtrip.csv',
+});
+const fxDst = (m) => db.get('SELECT * FROM transactions WHERE ledger_id = ? AND merchant = ? AND deleted_at IS NULL', fxDstLedger, m);
+check('CNY/USD/EUR 多币往返全部入库 0 失败', fxImp.imported === 5 && fxImp.failed === 0, JSON.stringify(fxImp.errors));
+check('USD 刷卡原币 1000、本位币 7250、卡账户 7250 1:1 保真（不误当 CNY）',
+  fxDst('多币-USD刷卡')?.currency === 'USD' &&
+  Number(fxDst('多币-USD刷卡')?.amount_cents) === 1000 &&
+  Number(fxDst('多币-USD刷卡')?.amount_base_cents) === 7250 &&
+  Number(fxDst('多币-USD刷卡')?.account_amount_cents) === 7250);
+check('EUR 收入原币与欧元账户金额 1:1 保真',
+  fxDst('多币-EUR收入')?.currency === 'EUR' &&
+  Number(fxDst('多币-EUR收入')?.amount_cents) === 2500 &&
+  Number(fxDst('多币-EUR收入')?.amount_base_cents) === 19750 &&
+  Number(fxDst('多币-EUR收入')?.account_amount_cents) === 2500);
+check('跨币转账方向、两账户原生币种金额及余额保真',
+  fxDst('多币-USD转账')?.type === 'transfer' &&
+  Number(fxDst('多币-USD转账')?.account_id) === dstCnyAcc &&
+  Number(fxDst('多币-USD转账')?.to_account_id) === dstUsdAcc &&
+  Number(fxDst('多币-USD转账')?.account_amount_cents) === 36000 &&
+  Number(fxDst('多币-USD转账')?.to_account_amount_cents) === 5000);
+check('外币负数余额调整方向与原币/折算金额保真',
+  fxDst('多币-USD调减')?.type === 'adjust' &&
+  Number(fxDst('多币-USD调减')?.amount_cents) === -1200 &&
+  Number(fxDst('多币-USD调减')?.amount_base_cents) === -8640 &&
+  Number(fxDst('多币-USD调减')?.account_amount_cents) === -1200);
+check('多币回导后各账户余额与源账本完全一致',
+  db.get('SELECT balance_cents FROM accounts WHERE id = ?', dstCard).balance_cents === -7250 &&
+  db.get('SELECT balance_cents FROM accounts WHERE id = ?', dstCnyAcc).balance_cents === -37000 &&
+  db.get('SELECT balance_cents FROM accounts WHERE id = ?', dstUsdAcc).balance_cents === 3800 &&
+  db.get('SELECT balance_cents FROM accounts WHERE id = ?', dstEurAcc).balance_cents === 2500);
+
+const fxRepeat = importer.importRecords({
+  ledgerId: fxDstLedger, userId: uid, records: fxParsed.records, source: fxParsed.source, fileName: 'fx-roundtrip-2.csv',
+});
+check('多币 CSV 重复导入全部去重', fxRepeat.imported === 0 && fxRepeat.skipped === 5);
+
+// 同日同商家同数额不同币种不误判重
+const sameNumOtherCur = importer.parseBill(Buffer.from(
+  '日期,类型,金额,币种,折算金额,账户,商家,type_key\n2026-10-01,支出,10.00,EUR,79.00,人民币储蓄卡,多币-CNY支出,expense', 'utf8'
+));
+const diffCurImp = importer.importRecords({
+  ledgerId: fxDstLedger, userId: uid, records: sameNumOtherCur.records, source: 'generic', fileName: 'diff-cur.csv',
+});
+check('同日同商家同数额不同币种不被误去重', diffCurImp.imported === 1 && diffCurImp.failed === 0);
+
+// 异常币种与缺参考汇率拒收（不部分入账）
+const badFxCsv = [
+  '日期,类型,金额,币种,折算金额,账户,商家,type_key',
+  '2026-10-05,支出,10.00,US,,人民币储蓄卡,非法币种行,expense',
+  '2026-10-05,支出,10.00,ZZZ,,人民币储蓄卡,无参考汇率行,expense',
+  '2026-10-05,支出,10.00,CNY,72.00,人民币储蓄卡,本币折算不一致行,expense',
+].join('\n');
+const badFxParsed = importer.parseBill(Buffer.from(badFxCsv, 'utf8'));
+const fxCountBeforeBad = db.get('SELECT COUNT(*) AS c FROM transactions WHERE ledger_id = ?', fxDstLedger).c;
+const badFxImp = importer.importRecords({
+  ledgerId: fxDstLedger, userId: uid, records: badFxParsed.records, source: 'generic', fileName: 'bad-fx.csv',
+});
+check('非法币种、无汇率外币、本币折算冲突全部逐行拒绝且不产生部分入账',
+  badFxImp.imported === 0 && badFxImp.failed === 3 && badFxImp.errors.length === 3 &&
+  db.get('SELECT COUNT(*) AS c FROM transactions WHERE ledger_id = ?', fxDstLedger).c === fxCountBeforeBad,
+  JSON.stringify(badFxImp.errors));
+
 /* ============================ B. HTTP 端到端 ============================ */
 
 const BASE = 'http://127.0.0.1:8099';
@@ -560,6 +665,25 @@ const formCsrf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[
     setSet('ai.base_url', savedAi.base);
     setSet('ai.model', savedAi.model);
   }
+
+  // 多币种 HTTP 预览与提交：外币按本位币计入预览合计，无汇率币种在预览即标错、提交时逐行拒收
+  const httpFxCsv = [
+    '日期,类型,金额,币种,折算金额,账户,商家,type_key',
+    '2026-10-10,支出,10.00,USD,72.50,微信零钱,HTTP外币正常,expense',
+    '2026-10-10,支出,5.00,ZZZ,,微信零钱,HTTP无汇率拒收,expense',
+  ].join('\n');
+  r = await req('POST', '/api/import/preview', { json: { dataUrl: 'data:text/csv;base64,' + Buffer.from(httpFxCsv, 'utf8').toString('base64'), fileName: 'http-fx.csv' } });
+  check('HTTP 预览多币合计按本位币折算并提前标出缺汇率行',
+    r.body?.ok === true && r.body.invalidCount === 1 && r.body.stat?.expense === 7250 &&
+    r.body.sample?.find((s) => s.merchant === 'HTTP外币正常')?.currency === 'USD' &&
+    !!r.body.sample?.find((s) => s.merchant === 'HTTP无汇率拒收')?.import_error,
+    JSON.stringify({ invalid: r.body?.invalidCount, stat: r.body?.stat }));
+  r = await req('POST', '/api/import/commit', { json: { token: r.body?.token } });
+  const httpFxRow = raw.prepare("SELECT currency, amount_cents, amount_base_cents FROM transactions WHERE ledger_id = ? AND merchant = 'HTTP外币正常' AND deleted_at IS NULL").get(homeId);
+  check('HTTP 多币提交正常行按外币入账、缺汇率行失败不入库',
+    r.body?.ok === true && r.body.imported === 1 && r.body.failed === 1 &&
+    httpFxRow?.currency === 'USD' && Number(httpFxRow?.amount_cents) === 1000 && Number(httpFxRow?.amount_base_cents) === 7250,
+    JSON.stringify({ res: r.body && { imported: r.body.imported, failed: r.body.failed }, row: httpFxRow }));
 
   raw.close();
   console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`);

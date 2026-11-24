@@ -84,15 +84,44 @@ const csrfOf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[1]
   check('详情含分类/账户/类型', !!t && !!t.category_name && !!t.account_name && !!t.type_label, `${t && t.category_name} / ${t && t.account_name} / ${t && t.type_label}`);
   check('详情含创建时间/收支方向', !!t && !!t.created_at && (t.is_expense === 1 || t.is_expense === true), '');
   check('详情附件字段为数组', r.json && Array.isArray(r.json.attachments), `${r.json && r.json.attachments && r.json.attachments.length} 个`);
+  check('支出详情返回可退款元数据与可选账户', r.json?.can_write === true && t?.can_refund === true && Number(t?.refundable_cents) === 3850 && Array.isArray(r.json?.refund_accounts) && r.json.refund_accounts.length >= 2);
 
-  // 转账：to_account_name
+  // 转账：to_account_name 且不可退款
   const tr = await req('POST', '/transactions', { form: {
     _csrf: csrf, type: 'transfer', amount: '500', currency: 'CNY',
     account_id: accId, to_account_id: toAccId, txn_date: d, status: 'cleared',
   }, headers: { accept: 'application/json' } });
   check('创建转账', tr.json && tr.json.ok === true, '');
   r = await req('GET', `/transactions/${tr.json.id}/json`);
-  check('转账详情含双账户', r.json && r.json.txn && !!r.json.txn.to_account_name, r.json && r.json.txn && `${r.json.txn.account_name} → ${r.json.txn.to_account_name}`);
+  check('转账详情含双账户且不可退款', r.json && r.json.txn && !!r.json.txn.to_account_name && r.json.txn.can_refund === false, r.json && r.json.txn && `${r.json.txn.account_name} → ${r.json.txn.to_account_name}`);
+  const trRefund = await req('POST', `/transactions/${tr.json.id}/refund`, { form: { _csrf: csrf, _json: '1' }, headers: { accept: 'application/json' } });
+  check('非支出记录拒绝一键退款 400', trRefund.status === 400 && trRefund.json?.ok === false, `HTTP ${trRefund.status}`);
+
+  // 支出部分退款（自定义金额/时刻/渠道/备注）+ 超额拒绝 + 一键退还余款 + 重复退款拒绝 + 删除退款恢复额度
+  const partialRefund = await req('POST', `/transactions/${id}/refund`, {
+    form: { _csrf: csrf, _json: '1', amount: '10.00', account_id: toAccId, txn_date: d, txn_time: '14:20:05', note: '部分退货' },
+    headers: { accept: 'application/json' },
+  });
+  check('支出部分退款成功并计算剩余可退', partialRefund.status === 200 && partialRefund.json?.ok === true && partialRefund.json.refund?.amount_cents === 1000 && partialRefund.json.refund?.remaining_cents === 2850 && partialRefund.json.refund?.fully_refunded === false);
+  const partialId = partialRefund.json?.id;
+  const partialDetail = await req('GET', `/transactions/${partialId}/json`);
+  check('退款流水关联原支出并继承商家/分类/指定账户与时刻', partialDetail.status === 200 && partialDetail.json?.txn?.type === 'refund' && Number(partialDetail.json.txn.refund_of_id) === Number(id) && Number(partialDetail.json.txn.refund_of?.id) === Number(id) && partialDetail.json.txn.merchant === '沃尔玛' && Number(partialDetail.json.txn.category_id) === Number(catId) && Number(partialDetail.json.txn.account_id) === Number(toAccId) && partialDetail.json.txn.txn_time === '14:20:05' && partialDetail.json.txn.can_refund === false);
+  const overRefund = await req('POST', `/transactions/${id}/refund`, { form: { _csrf: csrf, _json: '1', amount: '30.00' }, headers: { accept: 'application/json' } });
+  check('超过剩余可退金额的退款被拒绝 400', overRefund.status === 400 && overRefund.json?.ok === false, overRefund.json?.error);
+  const fullRest = await req('POST', `/transactions/${id}/refund`, { form: { _csrf: csrf, _json: '1' }, headers: { accept: 'application/json' } });
+  check('一键退还剩余全部金额成功', fullRest.status === 200 && fullRest.json?.ok === true && fullRest.json.refund?.amount_cents === 2850 && fullRest.json.refund?.remaining_cents === 0 && fullRest.json.refund?.fully_refunded === true);
+  const afterFull = await req('GET', `/transactions/${id}/json`);
+  check('全额退款后原支出展示已退总额并禁止重复退款', afterFull.json?.txn?.refunded_cents === 3850 && afterFull.json?.txn?.refundable_cents === 0 && afterFull.json?.txn?.can_refund === false && afterFull.json?.txn?.refunds?.length === 2);
+  const dupRefund = await req('POST', `/transactions/${id}/refund`, { form: { _csrf: csrf, _json: '1' }, headers: { accept: 'application/json' } });
+  check('已全额退款再次一键退款被拒绝 400', dupRefund.status === 400 && dupRefund.json?.ok === false);
+  r = await req('GET', '/transactions');
+  check('列表行展示已退款徽标', r.text.includes('已退款'));
+  await req('POST', `/transactions/${partialId}/delete`, { form: { _csrf: csrf, _json: '1' } });
+  const afterDelRefund = await req('GET', `/transactions/${id}/json`);
+  check('删除一笔退款后原支出恢复可退额度', afterDelRefund.json?.txn?.refunded_cents === 2850 && afterDelRefund.json?.txn?.refundable_cents === 1000 && afterDelRefund.json?.txn?.can_refund === true);
+  const pend = await req('POST', '/transactions', { form: { _csrf: csrf, type: 'expense', amount: '12.00', currency: 'CNY', account_id: accId, txn_date: d, merchant: '待确认消费', status: 'pending' }, headers: { accept: 'application/json' } });
+  const pendRefund = await req('POST', `/transactions/${pend.json.id}/refund`, { form: { _csrf: csrf, _json: '1' }, headers: { accept: 'application/json' } });
+  check('待确认支出拒绝一键退款 400', pendRefund.status === 400 && pendRefund.json?.ok === false);
   const amountInRow=(html,tid)=>{const row=html.split(`data-txn-id="${tid}"`)[1]||'';return (row.match(/class="txn-amt[^\"]*"[^>]*>([\s\S]*?)<\/div>/)||[])[1]?.replace(/<[^>]*>/g,'').trim();};
   for(const path of ['/transactions?type=transfer','/',`/accounts/${accId}`]){const list=await req('GET',path);check('转账金额在列表实际显示 '+path,amountInRow(list.text,tr.json.id)==='500.00');}
   for(const [type,amount] of [['invest_buy','51.23'],['invest_sell','67.89']]){const saved=await req('POST','/transactions',{form:{_csrf:csrf,type,amount,currency:'CNY',account_id:accId,to_account_id:toAccId,txn_date:d,status:'cleared'},headers:{accept:'application/json'}});const list=await req('GET','/transactions?type='+type);check('中性投资交易也显示金额 '+type,amountInRow(list.text,saved.json.id)===amount);}

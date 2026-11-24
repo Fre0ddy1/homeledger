@@ -26,7 +26,7 @@ const jsFiles = [];
 function walk(dir, depth) {
   if (depth > 3) return;
   for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (f.name === 'node_modules' || f.name.startsWith('data') || f.name === 'dist' || f.name === 'fpk-work') continue;
+    if (f.name === 'node_modules' || f.name.startsWith('data') || f.name.startsWith('.') || f.name === 'dist' || f.name === 'fpk-work' || f.name === 'HANDOFF_PACKAGE') continue;
     const p = path.join(dir, f.name);
     if (f.isDirectory()) walk(p, depth + 1);
     else if (f.name.endsWith('.js')) jsFiles.push(p);
@@ -69,6 +69,18 @@ ok('根目录无遗留临时文件', leftovers.length === 0, leftovers.join(', '
 // 7) 静态资源与数据目录约定
 ok('public/css/app.css 与 public/js/app.js 存在', fs.existsSync(path.join(ROOT, 'public/css/app.css')) && fs.existsSync(path.join(ROOT, 'public/js/app.js')));
 ok('fpk 打包脚本存在', fs.existsSync(path.join(ROOT, 'packaging/fpk/make-fpk.py')));
+
+// 8) 图标构建脚本 ICONS 清单与 icons.ejs symbol 一致
+const buildIconsSrc = fs.readFileSync(path.join(ROOT, 'scripts/build-icons.mjs'), 'utf8');
+const iconsListMatch = buildIconsSrc.match(/const ICONS = \[([\s\S]*?)\];/);
+const scriptIcons = iconsListMatch ? [...iconsListMatch[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : [];
+const spriteSrc = fs.readFileSync(path.join(ROOT, 'src/views/partials/icons.ejs'), 'utf8');
+const spriteIcons = [...spriteSrc.matchAll(/<symbol\s+id="i-([^"]+)"/g)].map((x) => x[1]);
+const missingInScript = spriteIcons.filter((id) => !scriptIcons.includes(id));
+const missingInSprite = scriptIcons.filter((id) => !spriteIcons.includes(id));
+ok(`图标清单与 icons.ejs 完全一致（${scriptIcons.length}/${spriteIcons.length}）`,
+  scriptIcons.length > 0 && missingInScript.length === 0 && missingInSprite.length === 0,
+  [missingInScript.length ? '脚本缺: ' + missingInScript.join(',') : '', missingInSprite.length ? 'sprite缺: ' + missingInSprite.join(',') : ''].filter(Boolean).join('；'));
 
 console.log(out.join('\n'));
 const fails = out.filter((l) => l.startsWith('FAIL')).length;

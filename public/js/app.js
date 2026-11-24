@@ -792,7 +792,16 @@
         '<button class="btn btn-primary" id="imp-commit">确认导入 ' + res.count + ' 条</button></div>';
       html += '</div>';
 
-      if(res.invalidCount)html+='<div class="notice warn">'+Number(res.invalidCount)+' 条日期或时刻无效，确认导入时会逐行拒绝，请先核对。</div>';
+      if(res.invalidCount)html+='<div class="notice warn">'+Number(res.invalidCount)+' 条数据无效（日期/时刻/币种或汇率异常），确认导入时会逐行拒绝，请先核对。</div>';
+      const fmtImportAmt = (r) => {
+        const cur = r.currency || res.ledgerCurrency || 'CNY';
+        const baseCur = res.ledgerCurrency || 'CNY';
+        if (cur !== baseCur) {
+          const orig = esc(cur) + ' ' + (Number(r.amount_cents || 0) / 100).toFixed(2);
+          return r.import_error ? orig : orig + '<div class="tiny muted">≈ ' + money(r.amount_base_cents) + '</div>';
+        }
+        return money(r.amount_cents);
+      };
       if (res.neutralCount) {
         html += '<div class="card">';
         html += '<div class="card-head"><h2>「不计收支」记录</h2><span class="chip">' + res.neutralCount + ' 条</span></div>';
@@ -802,7 +811,7 @@
         html += '<div class="scroll-x"><table class="table responsive"><thead><tr><th>日期</th><th class="num">金额</th><th>说明</th><th>账户</th></tr></thead><tbody>';
         res.neutralSample.forEach((r) => {
           html += '<tr><td class="nowrap">' + esc(r.txn_date) + ' ' + esc(r.txn_time || '（未提供时刻）') + '</td>' +
-            '<td class="num amount neutral">' + money(r.amount_cents) + '</td>' +
+            '<td class="num amount neutral">' + fmtImportAmt(r) + '</td>' +
             '<td>' + esc(r.merchant || r.note || '—') + (r.import_error?'<div class="flash error">'+esc(r.import_error)+'</div>':'') + '</td>' +
             '<td class="small muted">' + esc(r.guess_account || '—') + '</td></tr>';
         });
@@ -819,7 +828,7 @@
       res.sample.slice(0, 60).forEach((r) => {
         html += '<tr><td class="nowrap">' + esc(r.txn_date) + ' ' + esc(r.txn_time || '（未提供时刻）') + '</td>' +
           '<td><span class="chip ' + (r.type === 'income' ? 'income' : r.type === 'transfer' ? '' : 'expense') + '">' + esc(r.type_label) + '</span></td>' +
-          '<td class="num amount ' + (r.type === 'income' ? 'income' : 'expense') + '">' + money(r.amount_cents) + '</td>' +
+          '<td class="num amount ' + (r.type === 'income' ? 'income' : 'expense') + '">' + fmtImportAmt(r) + '</td>' +
           '<td>' + esc(r.merchant || r.note || '—') + (r.import_error?'<div class="flash error">'+esc(r.import_error)+'</div>':'') + '</td>' +
           '<td class="small muted">' + esc(r.guess_category || '—') + '</td>' +
           '<td class="small muted">' + esc(r.guess_account || '—') + '</td></tr>';
@@ -1049,8 +1058,8 @@
   let detailVersion = 0;
   let activeDetail = null;
   const inspectorMedia = window.matchMedia('(min-width: 1200px)');
-  inspectorMedia.addEventListener('change', () => {
-    if (activeDetail && activeDetail.inline) activeDetail.close();
+  inspectorMedia.addEventListener('change', (e) => {
+    if (!e.matches && activeDetail && activeDetail.inline) activeDetail.close();
   });
   function showTxnDetail(id) {
     const version = ++detailVersion;
@@ -1091,8 +1100,19 @@
         if (t.note) kv('备注', esc(t.note));
         if (t.tag_names) kv('标签', t.tag_names.split(/\s+/).filter(Boolean).map((s) => '<span class="tag-pill">' + esc(s) + '</span>').join(' '));
         const ledgerCurrency = data.base_currency || 'CNY';
+        const fmtOrig = (cents) => t.currency !== ledgerCurrency ? fmtCents(cents) + ' ' + esc(t.currency) : fmtCents(cents);
         if (t.currency !== ledgerCurrency) kv('原币金额', fmtCents(t.amount_cents) + ' ' + esc(t.currency) + ' × ' + (Number(t.rate) || 1) + ' ≈ ' + fmtCents(t.amount_base_cents) + ' ' + esc(ledgerCurrency));
         if (t.is_reimbursable) kv('报销', t.reimbursed_at ? '已报销（' + esc(t.reimbursed_at) + '）' : '待报销');
+        if (t.refunds && t.refunds.length) {
+          kv('退款状态', t.refundable_cents === 0
+            ? '<span class="chip income">已全额退款</span> ' + fmtOrig(t.refunded_cents)
+            : '<span class="chip warn">部分退款</span> 已退 ' + fmtOrig(t.refunded_cents) + ' · 剩余 ' + fmtOrig(t.refundable_cents));
+        }
+        if (t.refund_of) {
+          kv('对应原支出', t.refund_of.deleted_at
+            ? '原支出 #' + Number(t.refund_of.id) + '（已删除）'
+            : '<button type="button" class="btn btn-sm" data-open-txn="' + Number(t.refund_of.id) + '">' + esc(t.refund_of.txn_date) + ' ' + esc(t.refund_of.merchant || '原支出') + ' (' + fmtOrig(t.refund_of.amount_cents) + ')</button>');
+        }
         kv('状态', t.status === 'pending' ? '待确认' : '已确认');
         kv('来源', TXN_SOURCE_LABEL[t.source] || esc(t.source || '—'));
         kv('录入时间', esc(String(t.created_at || '').replace('T', ' ').slice(0, 16)));
@@ -1103,10 +1123,82 @@
           '<figure><img data-zoom src="' + esc(a.url) + '" alt="' + esc(a.file_name) + '" loading="lazy"></figure>'
         ).join('');
 
-        // 写权限：与列表行的操作按钮同源（只读成员行内没有编辑/删除钮）
-        const canWrite = !!selectedRow?.querySelector('[data-del-txn]');
+        // 写权限：区分账本写权限与单条记录是否允许普通编辑/删除（代垫回款及附属分项须走「管理代垫」）
+        const canWrite = data.can_write !== undefined ? !!data.can_write : !!selectedRow?.querySelector('[data-del-txn]');
+        const isAdvanceManaged = Boolean(t.advance_collection || (t.advance && Number(t.id) !== Number(t.advance.primary_transaction_id)));
+        const canDirectEdit = canWrite && !isAdvanceManaged;
+        const canRefund = canDirectEdit && !!t.can_refund;
+        const hasRefundHistory = Array.isArray(t.refunds) && t.refunds.length > 0;
+        const showRefundModule = canRefund || hasRefundHistory;
+        const refundAccounts = Array.isArray(data.refund_accounts) ? data.refund_accounts : [];
+        const refundAmtPlain = (Number(t.refundable_cents || 0) / 100).toFixed(2);
+        const refundAmtLabel = t.currency !== ledgerCurrency
+          ? (refundAmtPlain + ' ' + t.currency)
+          : fmtCents(t.refundable_cents);
+
+        const buildRefundInner = () => {
+          const statusChip = t.refundable_cents === 0
+            ? '<span class="chip income">已全额退款</span>'
+            : (t.refunded_cents > 0
+              ? '<span class="chip warn">剩余可退 ' + fmtOrig(t.refundable_cents) + '</span>'
+              : '<span class="chip">可退 ' + fmtOrig(t.refundable_cents) + '</span>');
+          const formHtml = canRefund ? (
+            '<form class="txn-refund-form" data-refund-form>' +
+              '<div class="field">' +
+                '<label for="txn-refund-amount"><span>退款金额（' + esc(t.currency) + '）</span>' +
+                  '<button type="button" class="btn btn-sm" data-refund-fill>' + (t.refunded_cents ? '填入余款' : '全额') + '</button></label>' +
+                '<input id="txn-refund-amount" type="text" name="amount" inputmode="decimal" value="' + esc(refundAmtPlain) + '" placeholder="支持部分或全额退款" required autocomplete="off">' +
+              '</div>' +
+              '<div class="txn-refund-datetime">' +
+                '<div class="field"><label for="txn-refund-date">退款日期</label>' +
+                  '<input id="txn-refund-date" type="date" name="txn_date" value="' + esc(data.today || '') + '" required></div>' +
+                '<div class="field"><label for="txn-refund-time">退款时刻（可选）</label>' +
+                  '<input id="txn-refund-time" type="time" name="txn_time" step="1" value=""></div>' +
+              '</div>' +
+              '<div class="txn-refund-clock-tools">' +
+                '<button type="button" class="btn btn-sm" data-refund-now>此刻</button>' +
+                '<button type="button" class="btn btn-sm" data-refund-clear-time>时刻留空</button>' +
+              '</div>' +
+              '<div class="field"><label for="txn-refund-account">退款渠道 / 入账账户</label><select id="txn-refund-account" name="account_id" data-native>' +
+                refundAccounts.map((a) =>
+                  '<option value="' + Number(a.id) + '"' + (Number(a.id) === Number(t.account_id) ? ' selected' : '') + '>' +
+                  esc((a.icon ? a.icon + ' ' : '') + a.name + (a.type_label ? ' · ' + a.type_label : '')) + '</option>'
+                ).join('') +
+              '</select></div>' +
+              (t.currency !== ledgerCurrency
+                ? '<div class="field"><label for="txn-refund-settle">实际入账金额（' + esc(ledgerCurrency) + '，选填）</label><input id="txn-refund-settle" type="text" name="settlement_amount" inputmode="decimal" placeholder="留空按参考汇率折算" autocomplete="off"></div>'
+                : '') +
+              '<div class="field"><label for="txn-refund-note">退款备注（选填）</label><input id="txn-refund-note" type="text" name="note" maxlength="300" placeholder="留空自动生成退款备注"></div>' +
+              '<div class="txn-refund-actions">' +
+                '<button type="button" class="btn" data-act="refund">' + (t.refunded_cents ? '一键退还余款' : '一键全额退款') + '</button>' +
+                '<button type="submit" class="btn btn-primary">确认退款</button>' +
+              '</div>' +
+            '</form>'
+          ) : '';
+          const historyHtml = hasRefundHistory ? (
+            '<div class="txn-refund-history' + (canRefund ? '' : ' is-only') + '">' +
+              '<h3>已退记录（' + t.refunds.length + ' 笔 · 共 ' + fmtOrig(t.refunded_cents) + '）</h3>' +
+              t.refunds.map((rf) =>
+                '<div class="txn-refund-item">' +
+                  '<div class="txn-refund-item-meta">' +
+                    '<div class="amount income">+' + fmtOrig(rf.amount_cents) + '</div>' +
+                    '<div class="tiny muted">' + esc(rf.txn_date) + (rf.txn_time ? ' ' + esc(rf.txn_time) : '') + ' · ' + esc(rf.account_name || '原账户') + '</div>' +
+                  '</div>' +
+                  '<div class="txn-refund-item-actions">' +
+                    '<button type="button" class="btn btn-sm" data-open-txn="' + Number(rf.id) + '">查看</button>' +
+                    (canDirectEdit ? '<button type="button" class="btn btn-sm btn-danger" data-del-refund="' + Number(rf.id) + '">撤销</button>' : '') +
+                  '</div>' +
+                '</div>'
+              ).join('') +
+            '</div>'
+          ) : '';
+          return '<div class="txn-refund-head"><h2>退款</h2>' + statusChip + '</div>' + formHtml + historyHtml;
+        };
+
         const inspector = $('#txnInspector');
+        const refundSlot = $('#txnRefundSlot');
         const inline = !!inspector && inspectorMedia.matches;
+        const externalRefundCard = inline && !!refundSlot;
         const placeholder = $('#txnInspectorEmpty');
         const mask = document.createElement('div');
         mask.className = inline ? 'inspector-detail' : 'modal-mask';
@@ -1116,13 +1208,27 @@
             '<div class="txn-detail-amt amount ' + signCls + '">' + sign + fmtCents(t.advance?.total_cents??(t.advance_collection?.role==='principal'?t.advance_collection.total_cents:t.amount_cents)) + (t.currency !== 'CNY' ? ' <span class="tiny muted">' + esc(t.currency) + '</span>' : '') + '</div>' +
             '<div class="modal-body">' + rows.join('') +
               (atts ? '<div class="txn-detail-att tiny muted">附件（点击放大）</div><div class="gallery txn-detail-gallery">' + atts + '</div>' : '') +
+              (!externalRefundCard && showRefundModule ? '<section class="txn-refund-section" aria-label="退款">' + buildRefundInner() + '</section>' : '') +
             '</div>' +
             '<div class="modal-actions">' +
-              '<button type="button" class="btn btn-ghost" data-act="close">关闭</button>' +
-              (canWrite ? '<button type="button" class="btn btn-ghost" style="color:var(--expense)" data-act="del">删除</button>' : '') +
-              (canWrite ? '<a class="btn btn-primary" href="/transactions/' + t.id + '/edit?back=' + encodeURIComponent(location.pathname+location.search) + '">编辑</a>' : t.advance||t.advance_collection ? '<a class="btn btn-primary" href="/advances/'+Number(t.advance?.id||t.advance_collection.advance_id)+'">'+(unifiedAdvance?'查看代垫详情':'管理代垫')+'</a>' : '') +
+              (canDirectEdit ? '<button type="button" class="btn btn-danger" data-act="del">删除</button>' : '') +
+              '<button type="button" class="btn" data-act="close">关闭</button>' +
+              (canDirectEdit ? '<a class="btn btn-primary" href="/transactions/' + t.id + '/edit?back=' + encodeURIComponent(location.pathname+location.search) + '">编辑</a>' : t.advance||t.advance_collection ? '<a class="btn btn-primary" href="/advances/'+Number(t.advance?.id||t.advance_collection.advance_id)+'">'+(unifiedAdvance?'查看代垫详情':'管理代垫')+'</a>' : '') +
             '</div>' +
           '</div>';
+        let refundCardEl = null;
+        if (externalRefundCard) {
+          if (showRefundModule) {
+            refundCardEl = document.createElement('section');
+            refundCardEl.className = 'card txn-refund-card';
+            refundCardEl.setAttribute('role', 'region');
+            refundCardEl.setAttribute('aria-label', '退款');
+            refundCardEl.innerHTML = buildRefundInner();
+            refundSlot.replaceChildren(refundCardEl);
+          } else {
+            refundSlot.replaceChildren();
+          }
+        }
         if (inline) {
           inspector.replaceChildren(mask);
           if (placeholder) placeholder.hidden = true;
@@ -1130,21 +1236,111 @@
           const region = $('.txn-detail', mask); region.tabIndex = -1; region.focus({ preventScroll: true });
         } else document.body.appendChild(mask);
         const releaseFocus = inline ? () => { if (origin && origin.isConnected) origin.focus({ preventScroll: true }); } : containFocus($('.modal', mask));
-        const onKey = (e) => { if (e.key === 'Escape' && (inline ? !$('.modal-mask') && mask.contains(e.target) : topDialog(mask))) close(); };
+        const onKey = (e) => {
+          const inDetail = mask.contains(e.target) || (refundCardEl && refundCardEl.contains(e.target));
+          if (e.key === 'Escape' && (inline ? !$('.modal-mask') && inDetail : topDialog(mask))) close();
+        };
         const close = (restore = true) => {
-          mask.remove(); document.removeEventListener('keydown', onKey);
+          mask.remove();
+          if (refundCardEl) refundCardEl.remove();
+          document.removeEventListener('keydown', onKey);
           if (inline && placeholder) placeholder.hidden = false;
           if (selectedRow) selectedRow.classList.remove('is-selected');
           if (activeDetail && activeDetail.close === close) activeDetail = null;
           if (restore) releaseFocus();
         };
         activeDetail = { close, inline };
+
+        const bindRefundRoot = (rootEl) => {
+          if (!rootEl) return;
+          let explicitUnknownTime = false;
+          const refundForm = $('[data-refund-form]', rootEl);
+          if (refundForm) {
+            const timeInput = $('[name="txn_time"]', refundForm);
+            const amountInput = $('[name="amount"]', refundForm);
+            timeInput?.addEventListener('input', () => { explicitUnknownTime = false; });
+            $('[data-refund-fill]', refundForm)?.addEventListener('click', () => {
+              if (amountInput) { amountInput.value = refundAmtPlain; amountInput.focus(); }
+            });
+            $('[data-refund-now]', refundForm)?.addEventListener('click', () => {
+              const now = new Date();
+              const hh = String(now.getHours()).padStart(2, '0');
+              const mm = String(now.getMinutes()).padStart(2, '0');
+              const ss = String(now.getSeconds()).padStart(2, '0');
+              if (timeInput) timeInput.value = hh + ':' + mm + ':' + ss;
+              explicitUnknownTime = false;
+            });
+            $('[data-refund-clear-time]', refundForm)?.addEventListener('click', () => {
+              if (timeInput) timeInput.value = '';
+              explicitUnknownTime = true;
+            });
+            refundForm.addEventListener('submit', async (ev) => {
+              ev.preventDefault();
+              const submitBtn = $('button[type="submit"]', refundForm);
+              if (submitBtn) submitBtn.disabled = true;
+              const fdObj = new FormData(refundForm);
+              const tVal = String(fdObj.get('txn_time') || '').trim();
+              const res = await postJson('/transactions/' + t.id + '/refund', {
+                _json: '1',
+                amount: fdObj.get('amount'),
+                txn_date: fdObj.get('txn_date'),
+                txn_time: tVal,
+                txn_time_mode: !tVal && explicitUnknownTime ? 'unknown' : undefined,
+                account_id: fdObj.get('account_id'),
+                settlement_amount: fdObj.get('settlement_amount') || '',
+                note: fdObj.get('note') || '',
+              });
+              if (res.ok) {
+                toast(res.message || '已退款', 'success');
+                return location.reload();
+              }
+              if (submitBtn) submitBtn.disabled = false;
+              toast(res.error || '退款失败', 'error');
+            });
+          }
+          rootEl.addEventListener('click', async (e) => {
+            const openBtn = e.target.closest('[data-open-txn]');
+            if (openBtn) return showTxnDetail(openBtn.dataset.openTxn);
+            const delRef = e.target.closest('[data-del-refund]');
+            if (delRef) {
+              if (!(await hlConfirm('确认撤销这笔退款记录？撤销后对应可退金额将恢复。', { danger: true, title: '撤销退款', okText: '确认撤销' }))) return;
+              delRef.disabled = true;
+              const res = await postJson('/transactions/' + delRef.dataset.delRefund + '/delete', { _json: '1' });
+              if (res.ok) {
+                toast('已撤销退款', 'success');
+                return location.reload();
+              }
+              delRef.disabled = false;
+              toast(res.error || '撤销失败', 'error');
+              return;
+            }
+            const quickBtn = e.target.closest('[data-act="refund"]');
+            if (quickBtn) {
+              const label = t.refunded_cents ? '退还剩余' : '全额退款';
+              const accLabel = t.account_name || '原账户';
+              if (!(await hlConfirm('确认对该笔支出' + label + ' ' + refundAmtLabel + ' 到「' + accLabel + '」？', { title: '一键退款', okText: '确认退款' }))) return;
+              quickBtn.disabled = true;
+              const res = await postJson('/transactions/' + t.id + '/refund', { _json: '1' });
+              if (res.ok) {
+                toast(res.message || '已退款', 'success');
+                return location.reload();
+              }
+              quickBtn.disabled = false;
+              toast(res.error || '退款失败', 'error');
+            }
+          });
+        };
+        if (refundCardEl) bindRefundRoot(refundCardEl);
+        else bindRefundRoot($('.txn-refund-section', mask));
+
         mask.addEventListener('click', async (e) => {
           if (e.target === mask) return close();
           const img = e.target.closest('[data-zoom]');
           if (img) return openZoom(img.currentSrc || img.src);
+          const openBtn = e.target.closest('[data-open-txn]');
+          if (openBtn && !e.target.closest('.txn-refund-section')) return showTxnDetail(openBtn.dataset.openTxn);
           const act = e.target.closest('[data-act]');
-          if (!act) return;
+          if (!act || act.dataset.act === 'refund') return;
           if (act.dataset.act === 'close') return close();
           if (act.dataset.act === 'del') {
             if (!(await hlConfirm(t.advance?'删除这笔记录将撤销整笔代垫。确认删除？':'删除这笔记录？', { danger: true, okText: '删除' }))) return;

@@ -28,6 +28,8 @@ SELECT t.*,
   ac.id AS collection_id, ac.advance_id AS collection_advance_id, ac.amount_cents AS collection_total_cents,
   ac.principal_cents AS collection_principal_cents, ac.excess_cents AS collection_excess_cents,
   CASE WHEN ac.transaction_id=t.id THEN 'principal' ELSE 'excess' END AS collection_role, ca.person AS collection_person,
+  (SELECT COALESCE(SUM(rf.amount_cents), 0) FROM transactions rf WHERE rf.ledger_id = t.ledger_id AND rf.refund_of_id = t.id AND rf.deleted_at IS NULL) AS refunded_cents,
+  (SELECT COUNT(*) FROM transactions rf WHERE rf.ledger_id = t.ledger_id AND rf.refund_of_id = t.id AND rf.deleted_at IS NULL) AS refund_count,
   (SELECT GROUP_CONCAT(tg.name, ' ') FROM transaction_tags tt JOIN tags tg ON tg.id = tt.tag_id WHERE tt.transaction_id = t.id) AS tag_names
 FROM transactions t
 LEFT JOIN categories c ON c.id = t.category_id
@@ -58,6 +60,8 @@ function decorate(t) {
   // 统计口径仍以 INCOME_TYPES/EXPENSE_TYPES 为准（borrow 等不计收支）
   t.is_income = INCOME_TYPES.includes(t.type) || ['repay_receive', 'borrow'].includes(t.type);
   t.is_expense = EXPENSE_TYPES.includes(t.type) || ['lend', 'repay_pay'].includes(t.type);
+  t.refunded_cents = Number(t.refunded_cents || 0);
+  t.refund_count = Number(t.refund_count || 0);
   return t;
 }
 
@@ -193,8 +197,25 @@ function groupByDate(rows, sort = 'date_desc') {
 
 function getTransaction(id, ledgerId) {
   const t = get(`${TXN_SELECT} WHERE t.id = ? AND t.ledger_id = ? AND t.deleted_at IS NULL`, id, ledgerId);
-  if(t){t.finance_payments=all('SELECT p.id,p.target_kind,p.target_id,p.deleted_at,p.replaced_by,l.role FROM finance_payment_txns l JOIN finance_payments p ON p.id=l.payment_id WHERE p.ledger_id=? AND l.transaction_id=? ORDER BY p.id DESC',ledgerId,t.id);t.credit_statements=require('./finance/cards').statementForTransaction(ledgerId,t.id);t.credit_plan=get('SELECT * FROM credit_plans WHERE ledger_id=? AND transaction_id=? AND deleted_at IS NULL',ledgerId,t.id)||null;}
-  return decorate(t);
+  if (!t) return t;
+  t.finance_payments = all('SELECT p.id,p.target_kind,p.target_id,p.deleted_at,p.replaced_by,l.role FROM finance_payment_txns l JOIN finance_payments p ON p.id=l.payment_id WHERE p.ledger_id=? AND l.transaction_id=? ORDER BY p.id DESC', ledgerId, t.id);
+  t.credit_statements = require('./finance/cards').statementForTransaction(ledgerId, t.id);
+  t.credit_plan = get('SELECT * FROM credit_plans WHERE ledger_id=? AND transaction_id=? AND deleted_at IS NULL', ledgerId, t.id) || null;
+  decorate(t);
+  t.refunds = all(
+    `SELECT r.id, r.amount_cents, r.amount_base_cents, r.currency, r.txn_date, r.txn_time, r.account_id, a.name AS account_name, r.note
+     FROM transactions r LEFT JOIN accounts a ON a.id = r.account_id
+     WHERE r.ledger_id = ? AND r.refund_of_id = ? AND r.deleted_at IS NULL ORDER BY r.id`,
+    ledgerId, t.id
+  );
+  t.refund_of = t.refund_of_id
+    ? get('SELECT id, type, amount_cents, currency, txn_date, merchant, note, deleted_at FROM transactions WHERE ledger_id = ? AND id = ?', ledgerId, t.refund_of_id) || null
+    : null;
+  const hasProtectedLink = Boolean(t.advance || t.advance_collection || t.finance_payments.some((p) => !p.deleted_at));
+  const refundable = Math.max(0, Number(t.amount_cents || 0) - t.refunded_cents);
+  t.refundable_cents = EXPENSE_TYPES.includes(t.type) && t.status !== 'pending' && !hasProtectedLink ? refundable : 0;
+  t.can_refund = t.refundable_cents > 0;
+  return t;
 }
 
 /* -------------------------------- 写入逻辑 -------------------------------- */
@@ -244,8 +265,8 @@ function createTransactionUnchecked(ledgerId, userId, d, options) {
     `INSERT INTO transactions
      (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id, to_account_id, category_id,
       user_id, txn_date, txn_time, note, merchant, status, is_reimbursable, group_id, source, ai_json, owner_label, no_rhythm, created_at, updated_at,
-      rate_source, rate_date, account_amount_cents, to_account_amount_cents)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      rate_source, rate_date, account_amount_cents, to_account_amount_cents, refund_of_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ledgerId, type, amount, currency, valuation.rate, valuation.amountBase, accountId, toAccountId,
     PRINCIPAL_TYPES.includes(type)?null:(d.category_snapshot?require('./categories').find(ledgerId,d.category_id)?.id||null:pickCategory(ledgerId, d.category_id)), userId, txnDate, txnTime,
     d.note ? String(d.note).slice(0, 300) : null,
@@ -257,7 +278,8 @@ function createTransactionUnchecked(ledgerId, userId, d, options) {
     d.ai_json || null,
     cleanOwner(d.owner_label),
     d.no_rhythm ? 1 : 0,
-    nowStr(), nowStr(), valuation.source, valuation.date, valuation.accountAmount, valuation.toAccountAmount
+    nowStr(), nowStr(), valuation.source, valuation.date, valuation.accountAmount, valuation.toAccountAmount,
+    d.refund_of_id ? Number(d.refund_of_id) : null
   );
   const id = info.lastInsertRowid;
   require('./borrowing').record(ledgerId,id,d.debt_id,true);
@@ -399,6 +421,84 @@ function markReimbursed(ids, ledgerId, userId, accountId, occurrence={}) {
       run('UPDATE transactions SET reimbursed_at = ?, related_id = ? WHERE id = ?', nowStr(), txnId, r.id);
     }
     return { txnId, total, count: rows.length };
+  });
+}
+
+/** 对一笔支出（expense/fee）执行一键退款（支持全额或部分退款，关联 refund_of_id） */
+function refundTransaction(id, ledgerId, userId, d = {}) {
+  return tx(() => {
+    const origId = Number(id);
+    const orig = getTransaction(origId, ledgerId);
+    if (!orig) throw new Error('原支出记录不存在');
+    if (!EXPENSE_TYPES.includes(orig.type)) throw new Error('只有支出或手续费记录支持一键退款');
+    if (orig.status === 'pending') throw new Error('待确认记录请先确认或直接删除，暂不支持退款');
+    require('./advances').guardTransaction(ledgerId, origId);
+    require('./finance/payments').guardTransaction(ledgerId, origId);
+    const alreadyRefunded = Number(get(
+      'SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE ledger_id = ? AND refund_of_id = ? AND deleted_at IS NULL',
+      ledgerId, origId
+    )?.total || 0);
+    const refundable = Math.max(0, Number(orig.amount_cents) - alreadyRefunded);
+    if (refundable <= 0) throw new Error('该笔支出已全额退款，不能重复退款');
+    const hasExplicitAmount = d.amount_cents !== undefined && d.amount_cents !== null && d.amount_cents !== '';
+    const requestedAmount = hasExplicitAmount ? Math.round(Number(d.amount_cents)) : refundable;
+    if (!Number.isSafeInteger(requestedAmount) || requestedAmount <= 0) throw new Error('退款金额必须大于 0');
+    if (requestedAmount > refundable) {
+      throw new Error(`退款金额不能超过剩余可退金额（${(refundable / 100).toFixed(2)} ${orig.currency}）`);
+    }
+    const targetAccountId = d.account_id ? Number(d.account_id) : (orig.account_id ? Number(orig.account_id) : null);
+    if (!targetAccountId) throw new Error('请指定退款入账账户');
+    const acc = get('SELECT id, is_archived FROM accounts WHERE id = ? AND ledger_id = ?', targetAccountId, ledgerId);
+    if (!acc || acc.is_archived) throw new Error(d.account_id ? '请选择当前账本的有效账户' : '原支付账户已归档，请指定退款入账账户');
+
+    const ledgerBase = get('SELECT currency FROM ledgers WHERE id = ?', ledgerId)?.currency || 'CNY';
+    const fxPayload = {};
+    if (d.settlement_amount_cents !== undefined && d.settlement_amount_cents !== null && d.settlement_amount_cents !== '') {
+      fxPayload.settlement_amount_cents = Math.round(Number(d.settlement_amount_cents));
+    } else if (d.rate !== undefined && d.rate !== null && d.rate !== '') {
+      fxPayload.rate = d.rate;
+    } else if (orig.currency !== ledgerBase) {
+      const fx = require('./fx');
+      if (!fx.quote(orig.currency, ledgerBase) && Number(orig.rate) > 0) fxPayload.rate = orig.rate;
+    }
+
+    const txnDate = time.normalizeDate(d.txn_date ?? d.date, todayStr());
+    const hasExplicitTime = (Object.prototype.hasOwnProperty.call(d, 'txn_time') && d.txn_time !== undefined)
+      || (Object.prototype.hasOwnProperty.call(d, 'time') && d.time !== undefined);
+    const rawTime = Object.prototype.hasOwnProperty.call(d, 'txn_time') ? d.txn_time : d.time;
+    const txnTime = hasExplicitTime
+      ? time.normalizeTime(rawTime)
+      : (d.txn_time_mode ? time.manualTime({ txn_date: txnDate, txn_time: '', txn_time_mode: d.txn_time_mode }, nowStr()) : null);
+    const defaultNote = orig.note ? `退款：${orig.note}` : (orig.merchant ? `退款：${orig.merchant}` : '退款');
+    const note = d.note !== undefined && String(d.note).trim() ? String(d.note).trim() : defaultNote;
+
+    const refundId = createTransactionUnchecked(ledgerId, userId, {
+      type: 'refund',
+      amount_cents: requestedAmount,
+      currency: orig.currency,
+      ...fxPayload,
+      account_id: targetAccountId,
+      category_id: orig.category_id,
+      txn_date: txnDate,
+      txn_time: txnTime,
+      merchant: orig.merchant,
+      note,
+      owner_label: orig.owner_label,
+      tags: orig.tag_names || '',
+      status: 'cleared',
+      source: 'manual',
+      refund_of_id: origId,
+    }, {});
+
+    return {
+      id: refundId,
+      refund_of_id: origId,
+      amount_cents: requestedAmount,
+      currency: orig.currency,
+      refunded_cents: alreadyRefunded + requestedAmount,
+      remaining_cents: refundable - requestedAmount,
+      fully_refunded: refundable - requestedAmount === 0,
+    };
   });
 }
 
@@ -635,7 +735,7 @@ function netWorthTrend(ledgerId, months = 6) {
 module.exports = {
   INCOME_TYPES, EXPENSE_TYPES, PRINCIPAL_TYPES, TXN_SELECT, decorate,
   listTransactions, groupByDate, getTransaction,
-  createTransaction, updateTransaction, softDelete, restore, restoreMany, bulkDelete, markReimbursed,
+  createTransaction, updateTransaction, softDelete, restore, restoreMany, bulkDelete, markReimbursed, refundTransaction,
   applyTags, saveSplits, splitsOf,
   summary, categoryBreakdown, subcategoryBreakdown, monthlyTrend, memberBreakdown, ownerBreakdown,
   dailyBreakdown, accountOverview, netWorthTrend, rangeOf, syncDebts,

@@ -57,12 +57,24 @@ function safeBack(back) {
 
 /* ---------------------------------- 列表 ---------------------------------- */
 
-/* 单笔详情（列表行点击弹窗用）：字段与列表同源，另带附件清单 */
+/* 单笔详情（列表行点击弹窗用）：字段与列表同源，另带附件清单与退款可选账户 */
 router.get('/:id/json', auth.requireLogin, (req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
   const t = txn.getTransaction(Number(req.params.id), ledgerId);
   if (!t) return res.status(404).json({ ok: false, error: '记录不存在' });
-  res.json({ ok: true, txn: t, base_currency: res.locals.ledger.currency, attachments: att.listByTxn(t.id) });
+  const policy = require('../lib/account-policy');
+  const refundAccounts = fd.accounts(ledgerId)
+    .filter((a) => !a.is_archived && policy.allowed('refund', a.type))
+    .map((a) => ({ id: a.id, name: a.name, icon: a.icon, type_label: a.type_label, currency: a.currency }));
+  res.json({
+    ok: true,
+    txn: t,
+    base_currency: res.locals.ledger.currency,
+    today: todayStr(),
+    can_write: auth.canWrite(res.locals.ledger.role),
+    refund_accounts: refundAccounts,
+    attachments: att.listByTxn(t.id),
+  });
 });
 
 router.get('/', auth.requireLogin, (req, res) => {
@@ -325,6 +337,48 @@ router.post('/:id', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
       splitRows: data.splits, splits: data.splits, back: safeBack(req.body.back), error: e.message,
       family: require('../lib/ai').familyMembers(ledgerId),
     });
+  }
+});
+
+router.post('/:id/refund', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
+  const ledgerId = Number(res.locals.ledger.id);
+  const id = Number(req.params.id);
+  const wantsJson = req.body._json === '1' || (req.headers.accept || '').includes('application/json');
+  try {
+    const rawAmount = req.body.amount !== undefined ? String(req.body.amount).trim() : '';
+    const rawSettle = req.body.settlement_amount !== undefined ? String(req.body.settlement_amount).trim() : '';
+    const txnDate = String(req.body.txn_date || req.body.date || todayStr()).trim();
+    const payload = {
+      amount_cents: rawAmount !== '' ? u.parseAmountToCents(rawAmount) : undefined,
+      account_id: req.body.account_id ? Number(req.body.account_id) : undefined,
+      txn_date: txnDate,
+      note: req.body.note,
+      settlement_amount_cents: rawSettle !== '' ? u.parseAmountToCents(rawSettle) : undefined,
+    };
+    if (req.body.txn_time !== undefined && String(req.body.txn_time).trim() !== '') {
+      payload.txn_time = req.body.txn_time;
+    } else if (req.body.txn_time_mode === 'unknown') {
+      payload.txn_time = null;
+    } else if (txnDate === todayStr()) {
+      payload.txn_time_mode = 'auto';
+    }
+    const r = txn.refundTransaction(id, ledgerId, req.session.userId, payload);
+    auth.audit(req, 'txn.refund', {
+      entity: 'transaction',
+      entityId: r.id,
+      ledgerId,
+      detail: `原支出 #${id} 退款 ${(r.amount_cents / 100).toFixed(2)} ${r.currency}`,
+    });
+    const baseCur = res.locals.ledger.currency || 'CNY';
+    const amtText = r.currency === baseCur ? `¥${(r.amount_cents / 100).toFixed(2)}` : `${(r.amount_cents / 100).toFixed(2)} ${r.currency}`;
+    const msg = r.fully_refunded ? `已全额退款 ${amtText}` : `已退款 ${amtText}`;
+    res.flash('success', msg);
+    if (wantsJson) return res.json({ ok: true, id: r.id, refund: r, message: msg });
+    res.redirect(safeBack(req.body.back));
+  } catch (e) {
+    if (wantsJson) return res.status(400).json({ ok: false, error: e.message });
+    res.flash('error', e.message);
+    res.redirect(safeBack(req.body.back));
   }
 });
 

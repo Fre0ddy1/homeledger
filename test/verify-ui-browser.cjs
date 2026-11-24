@@ -7,6 +7,7 @@ const fs=require('node:fs');
 const root=path.resolve(__dirname,'..');
 function findContentScrollers(){return [...document.querySelectorAll('.page-body *')].filter(el=>el.getClientRects().length&&!el.matches('textarea,select,input')&&!el.closest('.hl-select-menu,.hl-date-menu')&&['auto','scroll'].includes(getComputedStyle(el).overflowY)&&el.scrollHeight>el.clientHeight+2).map(el=>el.tagName+'.'+el.className);}
 const demoEnv={...process.env, DATA_DIR:path.join(root,'.tmp/data-ui-browser'), UI_FIXTURE_DIR:path.join(root,'.tmp/data-ui-browser')};
+fs.rmSync(demoEnv.DATA_DIR,{recursive:true,force:true});
 execFileSync(process.execPath,['scripts/seed-demo.js'],{cwd:root,env:demoEnv,stdio:'ignore'});
 execFileSync(process.execPath,['test/fixtures/ui-preview.cjs'],{cwd:root,env:demoEnv,stdio:'ignore'});
 execFileSync(process.execPath,['test/fixtures/finance-preview.cjs'],{cwd:root,env:demoEnv,stdio:'ignore'});
@@ -214,14 +215,22 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   const transactionTimes=transactionTimeChecks.every(check=>check.pass);
   const borrowingTimeChecks=await require('./ui-borrowing-time-checks.cjs')(browser,context,'http://127.0.0.1:5113');
   const borrowingTimes=borrowingTimeChecks.every(check=>check.pass);
+  // Earlier /categories edits materialize system templates into ledger-private copies and remap transactions.category_id.
+  // Verify each row's migrated category_id matches resolveId(preMaterializationId) and survives editing with JS off and on.
+  const currentCategoryEdits=JSON.parse(execFileSync(process.execPath,['-e',"const d=require('./src/db'),cats=require('./src/lib/categories');console.log(JSON.stringify(d.all(\"SELECT id,category_id FROM transactions WHERE merchant LIKE '分类保留-%' ORDER BY id\").map(r=>({...r,resolved:cats.resolveId(1,r.category_id)}))));"],{cwd:root,env:demoEnv,encoding:'utf8',stdio:['ignore','pipe','ignore']}));
+  const remappedOk=financeIds.categoryEdits.length===3&&currentCategoryEdits.length===3&&financeIds.categoryEdits.every(orig=>{
+    const cur=currentCategoryEdits.find(r=>r.id===orig.id);
+    const resolved=JSON.parse(execFileSync(process.execPath,['-e',`const cats=require('./src/lib/categories');console.log(JSON.stringify(cats.resolveId(1,${Number(orig.category_id)})));`],{cwd:root,env:demoEnv,encoding:'utf8',stdio:['ignore','pipe','ignore']}));
+    return cur&&Number(cur.category_id)===Number(resolved);
+  });
   const preservedCategories=[];
-  for(const checkPage of [noJsPage,page])for(const row of financeIds.categoryEdits){
+  for(const checkPage of [noJsPage,page])for(const row of currentCategoryEdits){
     await checkPage.goto('http://127.0.0.1:5113/transactions/'+row.id+'/edit');
     let preserved=await checkPage.locator('#txn-form').evaluate((el,id)=>new FormData(el).get('category_id')===String(id),row.category_id);
     if(checkPage===page){const type=await page.locator('#f-type').inputValue();await page.locator('[data-type='+type+']').first().click();preserved=preserved&&await page.locator('#txn-form').evaluate((el,id)=>new FormData(el).get('category_id')===String(id),row.category_id);}
     preservedCategories.push(preserved);
   }
-  const categoryEditPreserved=preservedCategories.length===6&&preservedCategories.every(Boolean);
+  const categoryEditPreserved=remappedOk&&preservedCategories.length===6&&preservedCategories.every(Boolean);
   const returnNavigation=results.every(r=>r.hasReturn!==false);
   const financeLayout=results.filter(r=>r.commonWidth).every(r=>r.actionAlignment!==false&&r.createAligned!==false)&&[390,820,1280,1920,2560].every(w=>{const rows=results.filter(r=>r.commonWidth&&r.width===w);return rows.every(r=>Math.abs(r.commonWidth-rows[0].commonWidth)<=1);});
   const naturalCards=results.filter(r=>r.cards).every(r=>r.cards.every(c=>c.slack<=80))&&results.every(r=>r.contentScrollers.length===0&&r.flatCategories!==false)&&variants.every(r=>r.contentScrollers.length===0);
@@ -322,11 +331,68 @@ const routes=['/transactions/new?type=repayment','/?basis=consumption','/reports
   await page.waitForURL('http://127.0.0.1:5113/transactions');
   const correctedFx=await page.evaluate(id=>fetch('/transactions/'+id+'/json').then(res=>res.json()),fxTxn);
   const foreignCardEntry=autoRateBlank&&autoRateShown&&correctedFx.txn?.amount_cents===1000&&correctedFx.txn?.amount_base_cents===7235&&correctedFx.txn?.rate_source==='settlement';
+  // 账单明细右侧独立退款卡片与统一按钮风格验收（桌面 1920 亮色 + 手机 390 暗色）
+  await page.setViewportSize({width:1920,height:1080});await page.goto('http://127.0.0.1:5113/theme/light');
+  await page.goto('http://127.0.0.1:5113/transactions/new');
+  await page.locator('#f-amount').fill('60');
+  await page.locator('#txn-form [name=merchant]').fill('一键退款浏览器验收');
+  await page.locator('#submit-btn').click();
+  await page.waitForURL('http://127.0.0.1:5113/transactions');
+  const refundRow=page.locator('.txn').filter({hasText:'一键退款浏览器验收'}).first();
+  const refundTxnId=await refundRow.getAttribute('data-txn-id');
+  await refundRow.click();
+  const refundCard=page.locator('#txnRefundSlot .txn-refund-card');
+  await refundCard.locator('[data-refund-form]').waitFor();
+  const detailButtonsUnified=await page.locator('.inspector-detail .modal-actions').evaluate(el=>{
+    const btns=[...el.querySelectorAll('a,button')];
+    return btns.length===3&&btns.every(b=>b.classList.contains('btn')&&!b.classList.contains('btn-ghost'))&&
+      !!el.querySelector('.btn-danger[data-act=del]')&&!!el.querySelector('.btn[data-act=close]')&&!!el.querySelector('a.btn-primary');
+  });
+  const noBareDetails=await refundCard.locator('details').count()===0;
+  await refundCard.locator('[data-refund-form] [name=amount]').fill('20');
+  await refundCard.locator('[data-refund-form] [name=txn_time]').fill('14:20:00');
+  await refundCard.locator('[data-refund-form] [name=note]').fill('部分退货测试');
+  await page.locator('.transactions-secondary').screenshot({path:root+'/.screenshots/audit-after/refund-inspector-light-1920.png',animations:'disabled'});
+  const refundDesktopNoOverflow=await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1);
+  await Promise.all([page.waitForNavigation(),refundCard.locator('[data-refund-form] button[type=submit]').click()]);
+  const partialRow=page.locator('.txn[data-txn-id="'+refundTxnId+'"]');
+  const partialChipShown=(await partialRow.textContent()).includes('部分退款');
+  await partialRow.click();
+  await refundCard.locator('[data-open-txn]').first().waitFor();
+  const restBtnText=(await refundCard.locator('[data-act=refund]').textContent()).trim();
+  await refundCard.locator('[data-open-txn]').first().click();
+  await page.locator('.inspector-detail [data-open-txn="'+refundTxnId+'"]').waitFor();
+  await page.locator('.inspector-detail [data-open-txn="'+refundTxnId+'"]').click();
+  await refundCard.locator('[data-act=refund]').waitFor();
+  await refundCard.locator('[data-act=refund]').click();
+  await page.locator('.modal [data-act=ok]').waitFor();
+  await Promise.all([page.waitForNavigation(),page.locator('.modal [data-act=ok]').click()]);
+  const fullRow=page.locator('.txn[data-txn-id="'+refundTxnId+'"]');
+  const fullChipShown=(await fullRow.textContent()).includes('已退款');
+  await fullRow.click();
+  await refundCard.waitFor();
+  const refundHiddenAfterFull=(await refundCard.locator('[data-refund-form]').count())===0&&(await refundCard.textContent()).includes('已全额退款');
+  await refundCard.locator('[data-del-refund]').first().click();
+  await page.locator('.modal [data-act=ok]').waitFor();
+  await Promise.all([page.waitForNavigation(),page.locator('.modal [data-act=ok]').click()]);
+  await page.locator('.txn[data-txn-id="'+refundTxnId+'"]').click();
+  await refundCard.locator('[data-refund-form]').waitFor();
+  const revokeRestoredRefund=(await refundCard.locator('[data-refund-form] [name=amount]').inputValue())==='20.00';
+  await page.goto('http://127.0.0.1:5113/theme/dark');await page.setViewportSize({width:390,height:844});
+  await page.goto('http://127.0.0.1:5113/transactions?kind=expense');
+  const mobileExp=page.locator('.txn').filter({hasNotText:'已退款'}).first();
+  await mobileExp.click();
+  await page.locator('.modal-mask .txn-refund-section [data-refund-form]').waitFor();
+  await page.screenshot({path:root+'/.screenshots/audit-after/refund-modal-dark-390.png',animations:'disabled'});
+  const refundMobileNoOverflow=await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1);
+  await page.keyboard.press('Escape');
+  const expenseRefund=detailButtonsUnified&&noBareDetails&&refundDesktopNoOverflow&&partialChipShown&&restBtnText==='一键退还余款'&&fullChipShown&&refundHiddenAfterFull&&revokeRestoredRefund&&refundMobileNoOverflow;
   const interaction={borrowingTimes,transactionTimes,categorySorting,categoryIcons,categoryParentChanged,categoryEditPreserved,adaptiveWorkspace,foreignAmountNotCopied,entryStable,reportCalendarGrid,reportToolbarConsistent,controlFontsConsistent,transferFiltered,expenseCardRestored,recurringAccountFiltered,returnNavigation,financeLayout,menuClosed,focusReturned,rowFocusReturned,trapped,drawerClosed,resizedDrawerReleased,reduced,minimal,coarseTablet,zoom200,wideContentFills,ledgerMenuFits,dashboardGaps,compactLedger,advancedCollapsed,inlineDetails,inspectorFocusReturned,inspectorResizeReleased,mobileDetails,mobileOrder,inspectorControlsReachable,glassMaterial,categorySoftDeleted,categoryRestored,compactPageSize,categoryKindSync,categoryModalFocusReturned,categoryDropdownEscape,recurringClonedSelect,categoryNoJs,naturalCards,boundedPages,variantLayouts,darkLoginTheme,selectReopensAfterOutside};
   interaction.accountGroups=accountGroups;
   interaction.advances=advanceChecks.every(check=>check.pass);
   interaction.notifications=notificationChecks.every(check=>check.pass);
   interaction.foreignCardEntry=foreignCardEntry;
+  interaction.expenseRefund=expenseRefund;
   const summary={notificationChecks,advanceChecks,accountGroupChecks,borrowingTimeChecks,transactionTimeChecks,categorySortChecks,categoryIconChecks,categoryParentChecks,adaptiveChecks,financeJourneys,pages:results.length,failures:results.filter(x=>x.overflow||x.status>=500),errors,interaction,authChecks,variants,results};
   if(financeJourneys.some(j=>!j.reversed||!j.restored||!j.allocationVisible||j.overflow)||summary.failures.length||errors.length||Object.values(interaction).some(v=>!v)||authChecks.some(x=>x.overflow))process.exitCode=1;
 

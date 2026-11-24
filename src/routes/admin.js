@@ -552,6 +552,18 @@ router.post('/api/import/preview', auth.requireLogin, auth.requireLedgerWrite, a
     const parsed = importer.parseBill(buf);
     if (parsed.error) return res.status(400).json({ ok: false, error: parsed.error });
 
+    const ledgerCurrency = res.locals.ledger.currency || 'CNY';
+    for (const r of parsed.records.concat(parsed.neutralRecords || [])) {
+      if (r.import_error) continue;
+      try {
+        const val = importer.resolveImportValuation(ledgerId, r);
+        r.preview_currency = val.currency;
+        r.preview_base_cents = val.value.amountBase;
+      } catch (e) {
+        r.import_error = e.message;
+      }
+    }
+
     // P8 导入兜底分类：词表/习惯（零 token）先行，仍未定的唯一商户批量给模型（失败静默，行为同现状）
     const enriched = await ai.enrichImportCategories(ledgerId, parsed.records.filter(r=>!r.import_error));
 
@@ -584,6 +596,8 @@ router.post('/api/import/preview', auth.requireLogin, auth.requireLedgerWrite, a
     };
     const sample = parsed.records.slice(0, 200).map((r) => ({
       ...r,
+      currency: r.preview_currency || r.currency || ledgerCurrency,
+      amount_base_cents: r.preview_base_cents ?? r.base_amount_cents ?? r.amount_cents,
       type_label: require('../db').TXN_TYPE_MAP[r.type]?.label || r.type,
       guess_category: guessCat(r),
       guess_account: r.account_hint || '—',
@@ -592,15 +606,18 @@ router.post('/api/import/preview', auth.requireLogin, auth.requireLedgerWrite, a
     const stat = { income: 0, expense: 0, transfer: 0, minDate: null, maxDate: null };
     for (const r of parsed.records) {
       if(r.import_error)continue;
-      if (r.type === 'income') stat.income += r.amount_cents;
-      else if (r.type === 'transfer') stat.transfer += r.amount_cents;
-      else stat.expense += r.amount_cents;
+      const baseAmt = r.preview_base_cents ?? r.amount_cents;
+      if (r.type === 'income') stat.income += baseAmt;
+      else if (r.type === 'transfer') stat.transfer += baseAmt;
+      else stat.expense += baseAmt;
       if (!stat.minDate || r.txn_date < stat.minDate) stat.minDate = r.txn_date;
       if (!stat.maxDate || r.txn_date > stat.maxDate) stat.maxDate = r.txn_date;
     }
 
     const neutralSample = (parsed.neutralRecords || []).slice(0, 20).map((r) => ({
       ...r,
+      currency: r.preview_currency || r.currency || ledgerCurrency,
+      amount_base_cents: r.preview_base_cents ?? r.base_amount_cents ?? r.amount_cents,
       type_label: require('../db').TXN_TYPE_MAP[r.type]?.label || r.type,
       guess_category: guessCat(r),
       guess_account: r.account_hint || '—',
@@ -608,6 +625,7 @@ router.post('/api/import/preview', auth.requireLogin, auth.requireLedgerWrite, a
 
     res.json({
       ok: true, token,
+      ledgerCurrency,
       source: parsed.source,
       sourceLabel: { alipay: '支付宝账单', wechat: '微信支付账单', generic: '通用 CSV' }[parsed.source] || parsed.source,
       encoding: parsed.encoding,
