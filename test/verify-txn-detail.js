@@ -152,6 +152,43 @@ const csrfOf = (html) => (html.match(/name="_csrf"\s+value="([^"]+)"/) || [])[1]
   r = await req('GET', '/transactions');
   check('批量删除后记录消失', !r.text.includes('批量回归-1') && !r.text.includes('批量回归-2'), '');
 
+  // 开放 API 退款回归（POST /api/open/transactions/:id/refund）
+  await req('POST', '/settings/api-tokens', { form: { _csrf: csrf, name: '退款API验证' } });
+  const settingsHtml = await req('GET', '/settings');
+  const apiToken = (settingsHtml.text.match(/hl_[A-Za-z0-9_-]{16,}/) || [])[0];
+  check('生成临时开放 API 令牌', !!apiToken);
+  const openReq = async (method, p, body) => {
+    const res = await fetch(BASE + '/api/open' + p, {
+      method,
+      headers: { authorization: 'Bearer ' + apiToken, ...(body ? { 'content-type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return { status: res.status, json: await res.json() };
+  };
+  const apiExp = await openReq('POST', '/transactions', { type: 'expense', amount: 50, account_id: Number(accId), date: d, merchant: '开放API退款测试' });
+  const apiExpId = apiExp.json?.id;
+  check('开放 API 创建待退支出', apiExp.status === 200 && !!apiExpId);
+  const apiPart = await openReq('POST', `/transactions/${apiExpId}/refund`, { amount: 15, account: '支付宝', date: d, time: '16:45', note: 'API部分退款' });
+  check('开放 API 支持部分退款、按账户名解析与自定义时刻',
+    apiPart.status === 200 && apiPart.json?.ok === true &&
+    apiPart.json.refund?.amount_cents === 1500 &&
+    apiPart.json.refund?.remaining_cents === 3500 &&
+    apiPart.json.transaction?.txn_time === '16:45:00' &&
+    apiPart.json.transaction?.account_name === '支付宝' &&
+    apiPart.json.transaction?.source === 'api_open',
+    JSON.stringify(apiPart.json || {}));
+  const apiBadAcc = await openReq('POST', `/transactions/${apiExpId}/refund`, { amount: 5, account: '不存在的退款账户XYZ' });
+  check('开放 API 退款拒绝不存在的账户名 400', apiBadAcc.status === 400 && apiBadAcc.json?.ok === false);
+  const apiRest = await openReq('POST', `/transactions/${apiExpId}/refund`, {});
+  check('开放 API 省略金额一键退还全部余款',
+    apiRest.status === 200 && apiRest.json?.refund?.amount_cents === 3500 && apiRest.json?.refund?.fully_refunded === true);
+  const apiGet = await openReq('GET', `/transactions/${apiExpId}`);
+  const apiList = await openReq('GET', '/transactions?q=' + encodeURIComponent('开放API退款测试'));
+  check('开放 API 详情与列表同步返回退款进度与关联记录',
+    apiGet.status === 200 && apiGet.json?.transaction?.refunded_cents === 5000 &&
+    apiGet.json?.transaction?.can_refund === false && apiGet.json?.transaction?.refunds?.length === 2 &&
+    apiList.json?.transactions?.some((row) => row.id === apiExpId && row.refunded_cents === 5000 && row.refund_count === 2));
+
   console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error('FATAL', e); process.exit(1); });

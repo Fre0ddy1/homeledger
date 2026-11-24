@@ -82,6 +82,13 @@ ok(`图标清单与 icons.ejs 完全一致（${scriptIcons.length}/${spriteIcons
   scriptIcons.length > 0 && missingInScript.length === 0 && missingInSprite.length === 0,
   [missingInScript.length ? '脚本缺: ' + missingInScript.join(',') : '', missingInSprite.length ? 'sprite缺: ' + missingInSprite.join(',') : ''].filter(Boolean).join('；'));
 
+// 9) 两份记账技能主副本与兼容副本内容一致
+const mainSkill = fs.readFileSync(path.join(ROOT, 'skills/homeledger-bookkeeping/SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
+const compatSkill = fs.readFileSync(path.join(ROOT, 'openclaw-skill/homeledger-bookkeeping/SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
+const mainFinRef = fs.readFileSync(path.join(ROOT, 'skills/homeledger-bookkeeping/references/finance-api.md'), 'utf8').replace(/\r\n/g, '\n');
+const compatFinRef = fs.readFileSync(path.join(ROOT, 'openclaw-skill/homeledger-bookkeeping/references/finance-api.md'), 'utf8').replace(/\r\n/g, '\n');
+ok('记账技能双副本内容完全一致（skills = openclaw-skill）', mainSkill === compatSkill && mainFinRef === compatFinRef);
+
 console.log(out.join('\n'));
 const fails = out.filter((l) => l.startsWith('FAIL')).length;
 console.log(`\n=== 静态自检：${out.length - fails} 通过 / ${fails} 失败 ===`);

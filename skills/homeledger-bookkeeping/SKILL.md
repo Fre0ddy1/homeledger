@@ -148,8 +148,8 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 
 | 接口 | 用途 |
 | --- | --- |
-| `GET /api/open/transactions?type=&kind=&category_id=&account_id=&month=&from=&to=&q=&sort=&page=&page_size=` | 明细筛选（支持关键词、时间区间、分页，含每笔发生日期/时刻、录入时间、金额/分类/两端账户类型/标签/截图） |
-| `GET /api/open/transactions/:id` | 单笔详情（含实际时间/录入时间、两端账户类型、分账与截图） |
+| `GET /api/open/transactions?type=&kind=&category_id=&account_id=&month=&from=&to=&q=&sort=&page=&page_size=` | 明细筛选（支持关键词、时间区间、分页，含每笔发生日期/时刻、录入时间、金额/分类/两端账户类型/标签/截图/退款进度 `refunded_cents`） |
+| `GET /api/open/transactions/:id` | 单笔详情（含实际时间/录入时间、两端账户类型、分账、截图及退款元数据 `refunded_cents/refundable_cents/can_refund/refunds/refund_of`） |
 | `GET /api/open/summary?from=&to=` | 区间收入/支出/结余 |
 | `GET /api/open/reports/categories?kind=expense&from=&to=` | 分类构成（`top=分类名` 下钻二级） |
 | `GET /api/open/reports/trend?months=6` | 近 N 月收支趋势；可选 month=YYYY-MM 指定截止月 |
@@ -167,6 +167,7 @@ curl -sS "$HOMELEDGER_URL/api/open/transactions/recent?limit=10" -H "Authorizati
 | `POST /api/open/transactions/:id` | **修改一笔**——只传要改的字段，其余沿用（如 `{"amount":58,"note":"改备注"}`） |
 | `POST /api/open/transactions/:id/delete` 或 `DELETE /api/open/transactions/:id` | **删除**（软删，可恢复） |
 | `POST /api/open/transactions/:id/restore` | 恢复已删除记录 |
+| `POST /api/open/transactions/:id/refund` | **支出退款（全额/部分）**——针对已确认普通支出/手续费生成关联 `refund` 流水（`refund_of_id`）；省略 `amount`/`amount_cents` 默认退还全部剩余可退金额，可自定义 `amount`/`amount_cents`、`date`/`time`、`account_id`/`account`（默认原账户）、外币 `settlement_amount`/`rate` 与 `note`；超额/重复/待确认/代垫与金融受控支出被拒，删除退款自动恢复可退额度 |
 | `POST /api/open/transactions/bulk-delete` / `bulk-category` / `bulk-tag` / `bulk-reimburse` | 批量删除 / 改分类 / 加标签 / 报销入账（body: `ids` 数组；`bulk-reimburse`可传实际入账`date/time`） |
 | `POST /api/open/accounts` / `:id` / `:id/archive` / `:id/delete` / `:id/adjust` | 账户增改停删；`adjust` 传 `actual_balance` 对齐余额（差额自动记余额调整） |
 | `POST /api/open/categories` / `:id` / `:id/delete` / `:id/restore`；`POST /api/open/tags` / `:id/delete` | 内置/自建分类的增改、软删除与恢复；标签管理 |

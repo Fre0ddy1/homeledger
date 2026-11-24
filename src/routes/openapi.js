@@ -328,6 +328,9 @@ router.get('/transactions', (req, res) => {
       owner_label: t.owner_label || null,
       no_rhythm: !!Number(t.no_rhythm),
       is_reimbursable: !!t.is_reimbursable, reimbursed_at: t.reimbursed_at,
+      refund_of_id: t.refund_of_id || null,
+      refunded_cents: Number(t.refunded_cents || 0),
+      refund_count: Number(t.refund_count || 0),
       source: t.source, attachment_count: t.attachment_count || 0,
       images: (imgMap.get(Number(t.id)) || []).map((i) => ({ id: i.id, path: `/api/open/attachments/${i.id}`, size: i.size })),
     })),
@@ -604,6 +607,56 @@ function softDeleteHandler(req, res) {
 }
 router.post('/transactions/:id/delete', requireWrite, softDeleteHandler);
 router.delete('/transactions/:id', requireWrite, softDeleteHandler);
+
+router.post('/transactions/:id/refund', requireWrite, (req, res) => {
+  const { ledgerId, userId } = req.openAuth;
+  const id = Number(req.params.id);
+  const body = req.body || {};
+  try {
+    let amountCents;
+    if (body.amount_cents !== undefined && body.amount_cents !== null && body.amount_cents !== '') {
+      amountCents = Math.round(Number(body.amount_cents));
+    } else if (body.amount !== undefined && body.amount !== null && String(body.amount).trim() !== '') {
+      amountCents = cents(body.amount);
+    }
+    let accountId;
+    if (body.account_id !== undefined && body.account_id !== null && body.account_id !== '') {
+      accountId = Number(body.account_id);
+    } else if (body.account || body.account_name) {
+      accountId = ai.resolveAccountId(ledgerId, String(body.account || body.account_name));
+      if (!accountId) throw Error('指定的退款入账账户不存在，请先查询 GET /api/open/accounts');
+    }
+    const hasDate = Object.prototype.hasOwnProperty.call(body, 'date') || Object.prototype.hasOwnProperty.call(body, 'txn_date');
+    const rawDate = Object.prototype.hasOwnProperty.call(body, 'date') ? body.date : body.txn_date;
+    if (hasDate && (rawDate === null || String(rawDate).trim() === '')) throw Error('退款日期不能为空');
+    const payload = {
+      amount_cents: amountCents,
+      account_id: accountId,
+      txn_date: hasDate ? rawDate : todayStr(),
+      note: body.note,
+      rate: body.rate,
+      source: 'api_open',
+    };
+    if (Object.prototype.hasOwnProperty.call(body, 'time') || Object.prototype.hasOwnProperty.call(body, 'txn_time')) {
+      payload.txn_time = Object.prototype.hasOwnProperty.call(body, 'time') ? body.time : body.txn_time;
+    }
+    if (body.settlement_amount_cents !== undefined && body.settlement_amount_cents !== null && body.settlement_amount_cents !== '') {
+      payload.settlement_amount_cents = Math.round(Number(body.settlement_amount_cents));
+    } else if (body.settlement_amount !== undefined && body.settlement_amount !== null && String(body.settlement_amount).trim() !== '') {
+      payload.settlement_amount_cents = cents(body.settlement_amount);
+    }
+    const r = txn.refundTransaction(id, ledgerId, userId, payload);
+    auth.audit(req, 'api.txn.refund', {
+      ledgerId,
+      entity: 'transaction',
+      entityId: r.id,
+      detail: `开放API·${req.openAuth.tokenName} 原支出 #${id} 退款 ${(r.amount_cents / 100).toFixed(2)} ${r.currency}`,
+    });
+    ok(res, { id: r.id, refund: r, transaction: txn.getTransaction(r.id, ledgerId) });
+  } catch (e) {
+    bad(res, 400, e.message);
+  }
+});
 
 router.post('/transactions/:id/restore', requireWrite, (req, res) => {
   const { ledgerId } = req.openAuth;

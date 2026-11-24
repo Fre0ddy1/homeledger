@@ -486,7 +486,7 @@ function refundTransaction(id, ledgerId, userId, d = {}) {
       owner_label: orig.owner_label,
       tags: orig.tag_names || '',
       status: 'cleared',
-      source: 'manual',
+      source: d.source || 'manual',
       refund_of_id: origId,
     }, {});
 
